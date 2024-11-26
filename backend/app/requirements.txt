@@ -1,0 +1,14 @@
+fastapi
+uvicorn
+pydantic
+aiofiles
+yt-dlp
+pandas
+openpyxl
+markdown2
+pdfkit
+reportlab
+faster-whisper
+python-dotenv
+aiohttp
+sse-starlette
