@@ -34,7 +34,6 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { transcriptionReducer, initialState as transcriptionInitialState, ACTIONS } from './reducers/transcriptionReducer';
 import { storage } from './utils/storage';
-import { ThemeToggle } from "@/components/theme-toggle";
 import {
   Accordion,
   AccordionContent,
@@ -42,8 +41,7 @@ import {
   AccordionTrigger,
 } from "@/components/ui/accordion";
 import { permanentMarker, fZeroFont } from './fonts';
-
-const BACKEND_URL = 'http://127.0.0.1:8000';
+import { BACKEND_URL } from '@/lib/constants';
 
 const steps = [
   'Enter YouTube URL',
@@ -552,7 +550,37 @@ useEffect(() => {
  
     checkTranscriptionStatus();
  }, []);
- 
+
+ // Auto-scroll status updates to bottom
+ useEffect(() => {
+    if (statusBoxRef.current && state.statusUpdates.length > 0) {
+      const scrollArea = statusBoxRef.current.parentElement;
+      if (scrollArea) {
+        setTimeout(() => {
+          scrollArea.scrollTo({
+            top: scrollArea.scrollHeight,
+            behavior: 'smooth'
+          });
+        }, 100);
+      }
+    }
+ }, [state.statusUpdates]);
+
+ // Auto-scroll transcription to bottom
+ useEffect(() => {
+    if (transcriptionBoxRef.current && state.transcriptionSegments.length > 0) {
+      const scrollArea = transcriptionBoxRef.current.parentElement;
+      if (scrollArea) {
+        setTimeout(() => {
+          scrollArea.scrollTo({
+            top: scrollArea.scrollHeight,
+            behavior: 'smooth'
+          });
+        }, 100);
+      }
+    }
+ }, [state.transcriptionSegments]);
+
  // Update the status display component to show model type
  const StatusUpdates = ({ updates, model }) => (
     <div className="space-y-2">
@@ -589,32 +617,6 @@ useEffect(() => {
  
  return (
     <>
-       <header className="gradient-header text-primary-foreground p-4 shadow-md">
-          <div className="container mx-auto flex justify-between items-center">
-             <h1 className="text-3xl font-bold flex items-center gap-2">
-                <div className="relative h-12 w-auto">
-                   <Image
-                      src="/images/pmoves.svg"
-                      alt="PMOVES Logo"
-                      width={138}
-                      height={48}
-                      className="logo-glow logo-text"
-                      priority
-                      style={{
-                         height: '100%',
-                         width: 'auto',
-                         objectFit: 'contain'
-                      }}
-                   />
-                </div>
-                <span className="text-2xl">
-                   YouTube Transcriber & Content Fetcher
-                </span>
-             </h1>
-             <ThemeToggle />
-          </div>
-       </header>
-       
        <main className="container mx-auto mt-8 p-4 max-w-3xl">
           {/* Progress Steps */}
           <Card className="glass-card mb-8">
@@ -740,298 +742,277 @@ useEffect(() => {
              </CardContent>
           </Card>
  
-          {/* Tabs */}
-          <Tabs defaultValue="status" className="w-full mt-8" value={activeTab} onValueChange={setActiveTab}>
-             <TabsList className="grid w-full grid-cols-3">
-                <TabsTrigger value="status">Status Updates</TabsTrigger>
-                <TabsTrigger value="transcription">Live Transcription</TabsTrigger>
-                <TabsTrigger value="webpages">Fetched Web Pages</TabsTrigger>
-             </TabsList>
- 
-             {/* Status Updates Tab */}
-             <TabsContent value="status">
-                <Card>
-                   <CardHeader>
-                      <CardTitle>Status Updates</CardTitle>
-                   </CardHeader>
-                   <CardContent>
-                      <ScrollArea 
-                         className="h-[400px] w-full rounded-md border p-4"
-                         ref={statusBoxRef}
-                      >
-                         <StatusUpdates 
-                            updates={state.statusUpdates}
-                            model={state.transcriptionModel}
-                         />
-                         <ScrollBar />
-                      </ScrollArea>
-                   </CardContent>
-                </Card>
-             </TabsContent>
- 
-             {/* Live Transcription Tab */}
-             <TabsContent value="transcription">
-                <Card>
-                   <CardHeader>
-                      <CardTitle>Live Transcription</CardTitle>
-                   </CardHeader>
-                   <CardContent>
-                      <ScrollArea 
-                         className="h-[400px] w-full rounded-md border p-4"
-                         ref={transcriptionBoxRef}
-                      >
-                         <div className="space-y-2">
-                            {state.transcriptionSegments.map((segment, index) => (
-                               <div key={index} className="text-sm">
-                                  {segment}
-                               </div>
-                            ))}
-                         </div>
-                         <ScrollBar />
-                      </ScrollArea>
-                   </CardContent>
-                </Card>
-             </TabsContent>
- 
-             {/* Web Pages Tab */}
-             <TabsContent value="webpages">
-                <Card>
-                   <CardHeader>
-                      <CardTitle>Web Page Content</CardTitle>
-                   </CardHeader>
-                   <CardContent>
-                      <div className="space-y-4">
-                         {/* URL Input */}
-                         <div className="space-y-2">
-                            <Label>URL to Fetch</Label>
-                            <Input
-                               placeholder="Enter URL to fetch"
-                               value={state.fetchUrl}
-                               onChange={(e) => dispatch({ type: ACTIONS.SET_FETCH_URL, payload: e.target.value })}
-                            />
-                         </div>
- 
-                         {/* Advanced Options Accordion */}
-                         <Accordion type="single" collapsible>
-                            <AccordionItem value="advanced-options">
-                               <AccordionTrigger>Advanced Options</AccordionTrigger>
-                               <AccordionContent>
-                                  {/* Target Selector */}
-                                  <div className="space-y-2 mb-4">
-                                     <Label>Target Selector</Label>
-                                     <Input
-                                        placeholder="CSS Selector (e.g., article, .main-content)"
-                                        value={state.targetSelector}
-                                        onChange={(e) => dispatch({ 
-                                           type: ACTIONS.SET_TARGET_SELECTOR, 
-                                           payload: e.target.value 
-                                        })}
-                                     />
-                                     <p className="text-sm text-muted-foreground">
-                                        Specify elements to extract (e.g., article, .main-content)
-                                     </p>
-                                  </div>
- 
-                                  {/* Excluded Selector */}
-                                  <div className="space-y-2 mb-4">
-                                     <Label>Exclude Elements</Label>
-                                     <Input
-                                        placeholder="Elements to exclude (e.g., nav, footer, .ads)"
-                                        value={state.excludedSelector}
-                                        onChange={(e) => dispatch({ 
-                                           type: ACTIONS.SET_EXCLUDED_SELECTOR, 
-                                           payload: e.target.value 
-                                        })}
-                                     />
-                                     <p className="text-sm text-muted-foreground">
-                                        Specify elements to remove (e.g., nav, footer, .ads)
-                                     </p>
-                                  </div>
- 
-                                  {/* Timeout Setting */}
-                                  <div className="space-y-2 mb-4">
-                                     <Label>Timeout (seconds)</Label>
-                                     <Input
-                                        type="number"
-                                        min="0"
-                                        max="300"
-                                        value={state.timeout}
-                                        onChange={(e) => dispatch({ 
-                                           type: ACTIONS.SET_TIMEOUT, 
-                                           payload: e.target.value 
-                                        })}
-                                     />
-                                  </div>
- 
-                                  {/* Response Format */}
-                                  <div className="space-y-2">
-                                     <Label>Response Format</Label>
-                                     <div className="flex items-center space-x-4">
-                                        <div className="flex items-center space-x-2">
-                                           <Switch
-                                              id="json-mode"
-                                              checked={state.jsonResponse}
-                                              onCheckedChange={(checked) => dispatch({ 
-                                                 type: ACTIONS.SET_JSON_RESPONSE, 
-                                                 payload: checked 
-                                              })}
-                                           />
-                                           <Label htmlFor="json-mode">JSON Response</Label>
-                                        </div>
-                                        <div className="flex items-center space-x-2">
-                                           <Switch
-                                              id="clean-mode"
-                                              checked={state.cleanFormat}
-                                              onCheckedChange={(checked) => dispatch({ 
-                                                 type: ACTIONS.SET_CLEAN_FORMAT, 
-                                                 payload: checked 
-                                              })}
-                                           />
-                                           <Label htmlFor="clean-mode">Clean Format</Label>
-                                        </div>
-                                     </div>
-                                  </div>
-                               </AccordionContent>
-                            </AccordionItem>
-                         </Accordion>
- 
-                         {/* Fetch Button */}
-                         <Button
-                            onClick={handleFetchContent}
-                            disabled={state.loading}
-                            className="w-full gradient-button"
-                         >
-                            {state.loading ? 'Fetching...' : 'Fetch Content'}
-                         </Button>
- 
-                         {/* Results Display */}
-                         <ScrollArea className="h-[400px] w-full rounded-md border p-4">
-                         {state.fetchResult ? (
-                      <div className="space-y-4">
-                        {/* Tabs for switching between Markdown and PDF */}
-                        <Tabs defaultValue="markdown" className="w-full">
-                          <TabsList className="grid w-full grid-cols-2">
-                            <TabsTrigger value="markdown">Markdown View</TabsTrigger>
-                            <TabsTrigger value="pdf">PDF View</TabsTrigger>
-                          </TabsList>
+          {/* Output Section with Vertical Layout */}
+          <div className="mt-8 space-y-4">
+            {/* Status Updates Box */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Status Updates</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <ScrollArea className="h-[250px] w-full rounded-md border p-4">
+                  <div ref={statusBoxRef} className="space-y-2">
+                    {state.statusUpdates.map((update, index) => (
+                      <div key={index} className="text-sm">
+                        {update}
+                      </div>
+                    ))}
+                  </div>
+                  <ScrollBar />
+                </ScrollArea>
+              </CardContent>
+            </Card>
 
-                          <TabsContent value="markdown">
-                            {/* Markdown Content Display */}
-                            <div className="prose prose-sm dark:prose-invert max-w-none">
-                              <ReactMarkdown 
-                                components={{
-                                  h1: ({node, ...props}) => (
-                                    <h1 className="text-2xl font-bold mb-4" {...props} />
-                                  ),
-                                  h2: ({node, ...props}) => (
-                                    <h2 className="text-xl font-semibold mb-3" {...props} />
-                                  ),
-                                  a: ({node, ...props}) => (
-                                    <a 
-                                      className="text-primary hover:underline" 
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      {...props}
-                                    />
-                                  ),
-                                  p: ({node, ...props}) => (
-                                    <p className="mb-4 leading-relaxed" {...props} />
-                                  ),
-                                  ul: ({node, ...props}) => (
-                                    <ul className="list-disc list-inside mb-4" {...props} />
-                                  ),
-                                  li: ({node, ...props}) => (
-                                    <li className="mb-2" {...props} />
-                                  ),
-                                }}
-                              >
-                                {typeof state.fetchResult.markdown_content === 'object' 
-                                  ? JSON.stringify(state.fetchResult.markdown_content, null, 2)
-                                  : state.fetchResult.markdown_content || 'No content fetched yet.'
-                                }
-                              </ReactMarkdown>
-                            </div>
-                          </TabsContent>
-
-                          <TabsContent value="pdf" className="h-full">
-                            {/* PDF Viewer */}
-                            {state.fetchResult?.pdf_path ? (
-                              <div className="w-full min-h-[600px] relative bg-white rounded-md shadow">
-                                <iframe
-                                  src={`${BACKEND_URL}/view-pdf?path=${encodeURIComponent(state.fetchResult.pdf_path)}`}
-                                  className="w-full h-full absolute inset-0 rounded-md"
-                                  title="PDF Viewer"
-                                  onError={(e) => {
-                                    console.error("PDF loading error:", e);
-                                    dispatch({ 
-                                      type: ACTIONS.SET_ERROR, 
-                                      payload: "Error loading PDF. Please try downloading instead." 
-                                    });
-                                  }}
-                                />
-                                <div className="absolute top-4 right-4 space-x-2 z-10">
-                                  <Button
-                                    onClick={() => window.open(`${BACKEND_URL}/download-pdf?path=${encodeURIComponent(state.fetchResult.pdf_path)}`, '_blank')}
-                                    variant="secondary"
-                                    size="sm"
-                                    className="bg-white/90 hover:bg-white"
-                                  >
-                                    Download PDF
-                                  </Button>
-                                  <Button
-                                    onClick={() => window.open(`${BACKEND_URL}/view-pdf?path=${encodeURIComponent(state.fetchResult.pdf_path)}`, '_blank')}
-                                    variant="secondary"
-                                    size="sm"
-                                    className="bg-white/90 hover:bg-white"
-                                  >
-                                    Open in New Tab
-                                  </Button>
-                                </div>
-                              </div>
-                            ) : (
-                              <div className="text-center py-8 text-muted-foreground">
-                                <p>PDF is being generated...</p>
-                              </div>
-                            )}
-                          </TabsContent>
-                        </Tabs>
-
-                        {/* File Info Footer */}
-                        <div className="mt-4 p-3 bg-muted rounded-md text-sm space-y-2">
-                          {state.fetchResult.markdown_path && (
-                            <p className="text-muted-foreground">
-                              📄 Markdown: {state.fetchResult.markdown_path}
-                            </p>
-                          )}
-                          {state.fetchResult.pdf_path && (
-                            <p className="text-muted-foreground">
-                              📑 PDF: {state.fetchResult.pdf_path}
-                            </p>
-                          )}
+            {/* Live Transcription Box - Resizable */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Live Transcription</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <div className="resize-y overflow-auto min-h-[250px] h-[400px] max-h-[800px]">
+                  <ScrollArea className="h-full w-full rounded-md border p-4">
+                    <div ref={transcriptionBoxRef} className="space-y-2">
+                      {state.transcriptionSegments.map((segment, index) => (
+                        <div key={index} className="text-sm">
+                          {segment}
                         </div>
-                      </div>
-                    ) : (
-                      <div className="text-center py-8 text-muted-foreground">
-                        <p>Enter a URL above and click "Fetch Content" to get started</p>
-                      </div>
-                    )}
+                      ))}
+                    </div>
                     <ScrollBar />
                   </ScrollArea>
                 </div>
               </CardContent>
             </Card>
-          </TabsContent>
-        </Tabs>
 
-        {/* Error Display */}
-        {state.error && (
-          <div className="mt-4 p-4 bg-destructive/10 text-destructive rounded-md">
-            <p className="font-semibold">Error:</p>
-            <p>{state.error}</p>
+            {/* Web Pages Tab Content - Keep as is */}
+            <Card className={activeTab === 'webpages' ? '' : 'hidden'}>
+              {/* URL Input */}
+              <div className="space-y-2">
+                <Label>URL to Fetch</Label>
+                <Input
+                  placeholder="Enter URL to fetch"
+                  value={state.fetchUrl}
+                  onChange={(e) => dispatch({ type: ACTIONS.SET_FETCH_URL, payload: e.target.value })}
+                />
+              </div>
+
+              {/* Advanced Options Accordion */}
+              <Accordion type="single" collapsible>
+                <AccordionItem value="advanced-options">
+                  <AccordionTrigger>Advanced Options</AccordionTrigger>
+                  <AccordionContent>
+                    {/* Target Selector */}
+                    <div className="space-y-2 mb-4">
+                      <Label>Target Selector</Label>
+                      <Input
+                        placeholder="CSS Selector (e.g., article, .main-content)"
+                        value={state.targetSelector}
+                        onChange={(e) => dispatch({ 
+                          type: ACTIONS.SET_TARGET_SELECTOR, 
+                          payload: e.target.value 
+                        })}
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        Specify elements to extract (e.g., article, .main-content)
+                      </p>
+                    </div>
+
+                    {/* Excluded Selector */}
+                    <div className="space-y-2 mb-4">
+                      <Label>Exclude Elements</Label>
+                      <Input
+                        placeholder="Elements to exclude (e.g., nav, footer, .ads)"
+                        value={state.excludedSelector}
+                        onChange={(e) => dispatch({ 
+                          type: ACTIONS.SET_EXCLUDED_SELECTOR, 
+                          payload: e.target.value 
+                        })}
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        Specify elements to remove (e.g., nav, footer, .ads)
+                      </p>
+                    </div>
+
+                    {/* Timeout Setting */}
+                    <div className="space-y-2 mb-4">
+                      <Label>Timeout (seconds)</Label>
+                      <Input
+                        type="number"
+                        min="0"
+                        max="300"
+                        value={state.timeout}
+                        onChange={(e) => dispatch({ 
+                          type: ACTIONS.SET_TIMEOUT, 
+                          payload: e.target.value 
+                        })}
+                      />
+                    </div>
+
+                    {/* Response Format */}
+                    <div className="space-y-2">
+                      <Label>Response Format</Label>
+                      <div className="flex items-center space-x-4">
+                        <div className="flex items-center space-x-2">
+                          <Switch
+                            id="json-mode"
+                            checked={state.jsonResponse}
+                            onCheckedChange={(checked) => dispatch({ 
+                              type: ACTIONS.SET_JSON_RESPONSE, 
+                              payload: checked 
+                            })}
+                          />
+                          <Label htmlFor="json-mode">JSON Response</Label>
+                        </div>
+                        <div className="flex items-center space-x-2">
+                          <Switch
+                            id="clean-mode"
+                            checked={state.cleanFormat}
+                            onCheckedChange={(checked) => dispatch({ 
+                              type: ACTIONS.SET_CLEAN_FORMAT, 
+                              payload: checked 
+                            })}
+                          />
+                          <Label htmlFor="clean-mode">Clean Format</Label>
+                        </div>
+                      </div>
+                    </div>
+                  </AccordionContent>
+                </AccordionItem>
+              </Accordion>
+
+              {/* Fetch Button */}
+              <Button
+                onClick={handleFetchContent}
+                disabled={state.loading}
+                className="w-full gradient-button"
+              >
+                {state.loading ? 'Fetching...' : 'Fetch Content'}
+              </Button>
+
+              {/* Results Display */}
+              <ScrollArea className="h-[400px] w-full rounded-md border p-4">
+                {state.fetchResult ? (
+                  <div className="space-y-4">
+                    {/* Tabs for switching between Markdown and PDF */}
+                    <Tabs defaultValue="markdown" className="w-full">
+                      <TabsList className="grid w-full grid-cols-2">
+                        <TabsTrigger value="markdown">Markdown View</TabsTrigger>
+                        <TabsTrigger value="pdf">PDF View</TabsTrigger>
+                      </TabsList>
+
+                      <TabsContent value="markdown">
+                        {/* Markdown Content Display */}
+                        <div className="prose prose-sm dark:prose-invert max-w-none">
+                          <ReactMarkdown 
+                            components={{
+                              h1: ({node, ...props}) => (
+                                <h1 className="text-2xl font-bold mb-4" {...props} />
+                              ),
+                              h2: ({node, ...props}) => (
+                                <h2 className="text-xl font-semibold mb-3" {...props} />
+                              ),
+                              a: ({node, ...props}) => (
+                                <a 
+                                  className="text-primary hover:underline" 
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  {...props}
+                                />
+                              ),
+                              p: ({node, ...props}) => (
+                                <p className="mb-4 leading-relaxed" {...props} />
+                              ),
+                              ul: ({node, ...props}) => (
+                                <ul className="list-disc list-inside mb-4" {...props} />
+                              ),
+                              li: ({node, ...props}) => (
+                                <li className="mb-2" {...props} />
+                              ),
+                            }}
+                          >
+                            {typeof state.fetchResult.markdown_content === 'object' 
+                              ? JSON.stringify(state.fetchResult.markdown_content, null, 2)
+                              : state.fetchResult.markdown_content || 'No content fetched yet.'
+                            }
+                          </ReactMarkdown>
+                        </div>
+                      </TabsContent>
+
+                      <TabsContent value="pdf" className="h-full">
+                        {/* PDF Viewer */}
+                        {state.fetchResult?.pdf_path ? (
+                          <div className="w-full min-h-[600px] relative bg-white rounded-md shadow">
+                            <iframe
+                              src={`${BACKEND_URL}/view-pdf?path=${encodeURIComponent(state.fetchResult.pdf_path)}`}
+                              className="w-full h-full absolute inset-0 rounded-md"
+                              title="PDF Viewer"
+                              onError={(e) => {
+                                console.error("PDF loading error:", e);
+                                dispatch({ 
+                                  type: ACTIONS.SET_ERROR, 
+                                  payload: "Error loading PDF. Please try downloading instead." 
+                                });
+                              }}
+                            />
+                            <div className="absolute top-4 right-4 space-x-2 z-10">
+                              <Button
+                                onClick={() => window.open(`${BACKEND_URL}/download-pdf?path=${encodeURIComponent(state.fetchResult.pdf_path)}`, '_blank')}
+                                variant="secondary"
+                                size="sm"
+                                className="bg-white/90 hover:bg-white"
+                              >
+                                Download PDF
+                              </Button>
+                              <Button
+                                onClick={() => window.open(`${BACKEND_URL}/view-pdf?path=${encodeURIComponent(state.fetchResult.pdf_path)}`, '_blank')}
+                                variant="secondary"
+                                size="sm"
+                                className="bg-white/90 hover:bg-white"
+                              >
+                                Open in New Tab
+                              </Button>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-center py-8 text-muted-foreground">
+                            <p>PDF is being generated...</p>
+                          </div>
+                        )}
+                      </TabsContent>
+                    </Tabs>
+
+                    {/* File Info Footer */}
+                    <div className="mt-4 p-3 bg-muted rounded-md text-sm space-y-2">
+                      {state.fetchResult.markdown_path && (
+                        <p className="text-muted-foreground">
+                          📄 Markdown: {state.fetchResult.markdown_path}
+                        </p>
+                      )}
+                      {state.fetchResult.pdf_path && (
+                        <p className="text-muted-foreground">
+                          📑 PDF: {state.fetchResult.pdf_path}
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    <p>Enter a URL above and click "Fetch Content" to get started</p>
+                  </div>
+                )}
+                <ScrollBar />
+              </ScrollArea>
+            </Card>
           </div>
-        )}
-      </main>
-    </>
-  );
+
+          {/* Error Display */}
+          {state.error && (
+            <div className="mt-4 p-4 bg-destructive/10 text-destructive rounded-md">
+              <p className="font-semibold">Error:</p>
+              <p>{state.error}</p>
+            </div>
+          )}
+        </main>
+      </>
+    );
 }
-                            

@@ -33,6 +33,7 @@ import torch
 import urllib.parse
 import aiofiles
 from fastapi.responses import FileResponse
+from .download_manager import DownloadManager
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,19 @@ class FolderUpdate(BaseModel):
     old_path: str
     new_path: str
 
+class DownloadRequest(BaseModel):
+    url: str
+    
+    @validator('url')
+    def validate_url(cls, v):
+        if not v:
+            raise ValueError('URL cannot be empty')
+        return v
+
 app = FastAPI()
+
+# Initialize DownloadManager
+download_manager = DownloadManager()
 
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
@@ -279,6 +292,22 @@ async def get_combined_updates():
         }
     )
 
+@app.get("/api/download-status")
+async def download_status():
+    async def event_generator():
+        try:
+            while True:
+                status = await download_manager.status_updates.get()
+                yield f"{json.dumps(status)}\n\n"
+        except Exception as e:
+            logger.error(f"Error in download status SSE: {str(e)}")
+            yield f"{{\"type\": \"error\", \"content\": \"{str(e)}\"}}\n\n"
+    
+    return EventSourceResponse(
+        event_generator(),
+        media_type="text/event-stream"
+    )
+
 @app.on_event("shutdown")
 async def shutdown_event():
     # Close any open connections or perform cleanup
@@ -408,4 +437,6 @@ async def download_pdf(path: str):
         logger.error(f"Error downloading PDF: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
-
+@app.post("/api/download")
+async def download_video(request: DownloadRequest):
+    return await download_manager.download_video(request.url)

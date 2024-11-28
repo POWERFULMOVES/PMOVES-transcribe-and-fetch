@@ -255,7 +255,7 @@ async def process_video(youtube_video_url, obsidian_dir, status_updates, transcr
                 # Create table markdown content
                 title = f"# Transcription for Video: [{video_id}](https://www.youtube.com/watch?v={video_id})\n\n"
                 table_header = "| watch_url | video_id | id | start | end | text |\n"
-                table_separator = "|---|---|---|---|---|---|\n"
+                table_separator = "|---|---|---|---|---|\n"
                 
                 # Add note about estimated timestamps
                 note_row = f"| | | -1 | | | Note: Timestamps are estimated for Groq API transcription |\n"
@@ -507,7 +507,7 @@ async def transcribe_audio(audio_path: str, status_updates: asyncio.Queue, trans
         # Create final markdown document
         title = f"# Transcription for Video: [{video_id}](https://www.youtube.com/watch?v={video_id})\n\n"
         table_header = "| watch_url | video_id | id | start | end | text |\n"
-        table_separator = "|---|---|---|---|---|---|\n"
+        table_separator = "|---|---|---|---|---|\n"
         full_text = title + table_header + table_separator + full_text
 
         # Send completion messages
@@ -669,12 +669,13 @@ async def process_audio_in_chunks(audio_file_path: str, chunk_duration_ms: int =
                              open(chunk_path, 'rb'),
                              filename=f'chunk_{i+1}.wav',
                              content_type='audio/wav')
-                form.add_field('model', 'distil-whisper-large-v3-en')
+                form.add_field('model', 'distil-whisper-large-v3-en')  # Corrected model name
                 form.add_field('response_format', 'json')
                 form.add_field('language', 'en')
 
                 headers = {
-                    'Authorization': f'Bearer {GROQ_API_KEY}'
+                    'Authorization': f'Bearer {GROQ_API_KEY}',
+                    'Accept': 'application/json'
                 }
 
                 try:
@@ -705,6 +706,172 @@ async def process_audio_in_chunks(audio_file_path: str, chunk_duration_ms: int =
             raise Exception("No chunks were successfully transcribed")
             
         full_transcription = ' '.join(transcriptions)
+        logger.info("Successfully combined all transcriptions")
+        return full_transcription
+
+    finally:
+        # Cleanup temporary files
+        for chunk_path in chunks:
+            try:
+                os.remove(chunk_path)
+            except Exception as e:
+                logger.warning(f"Failed to remove temporary file {chunk_path}: {e}")
+
+async def process_audio_with_groq(audio_file_path: str, status_updates: asyncio.Queue, transcription_updates: asyncio.Queue, chunk_duration_ms: int = 60000) -> str:
+    """
+    Process audio file using Groq API in chunks with progress updates
+    """
+    logger.info(f"Processing audio file with Groq: {audio_file_path}")
+    
+    if not GROQ_API_KEY:
+        raise ValueError("GROQ_API_KEY not configured in environment")
+    
+    if GROQ_API_KEY == "your_groq_api_key_here":
+        raise ValueError("Please update GROQ_API_KEY in your .env file with a valid API key")
+
+    # Verify API key format
+    if not GROQ_API_KEY.startswith("gsk_"):
+        raise ValueError("Invalid GROQ_API_KEY format - should start with 'gsk_'")
+
+    audio = AudioSegment.from_file(audio_file_path)
+    
+    # Convert to mono and set to 16kHz as per Groq requirements
+    audio = audio.set_channels(1).set_frame_rate(16000)
+    
+    total_duration = len(audio)
+    chunks = []
+    transcriptions = []
+
+    # Send initial status
+    await status_updates.put(json.dumps({
+        "type": "status",
+        "content": "Starting Groq transcription processing..."
+    }))
+
+    try:
+        # Split audio into chunks
+        chunk_count = (total_duration + chunk_duration_ms - 1) // chunk_duration_ms
+        for i in range(chunk_count):
+            start_time = i * chunk_duration_ms
+            end_time = min((i + 1) * chunk_duration_ms, total_duration)
+            chunk = audio[start_time:end_time]
+            
+            # Send chunk processing status
+            await status_updates.put(json.dumps({
+                "type": "status",
+                "content": f"Processing chunk {i+1} of {chunk_count}"
+            }))
+
+            # Create temporary file for chunk
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+                chunk_path = temp_file.name
+                chunks.append(chunk_path)
+                
+                # Export according to Groq requirements:
+                # - 16-bit PCM WAV
+                # - 16kHz sample rate
+                # - Mono channel
+                chunk.export(
+                    chunk_path,
+                    format='wav',
+                    parameters=[
+                        "-ac", "1",          # mono
+                        "-ar", "16000",      # 16kHz sample rate
+                        "-acodec", "pcm_s16le"  # 16-bit PCM
+                    ]
+                )
+                
+                chunk_size = os.path.getsize(chunk_path) / (1024 * 1024)  # Size in MB
+                logger.info(f"Created chunk {i+1}: {chunk_path} (Size: {chunk_size:.2f}MB)")
+
+                try:
+                    # Process chunk with Groq API
+                    headers = {
+                        'Authorization': f'Bearer {GROQ_API_KEY}',
+                        'Accept': 'application/json'
+                    }
+
+                    logger.info(f"Sending request to Groq API for chunk {i+1}")
+                    logger.info("Using Groq API key from environment")
+                    
+                    async with aiohttp.ClientSession() as session:
+                        logger.info(f"Sending request to Groq API for chunk {i+1}")
+                        
+                        # Prepare the multipart form data
+                        form = aiohttp.FormData()
+                        form.add_field(
+                            'file',
+                            open(chunk_path, 'rb'),
+                            filename=f'chunk_{i+1}.wav',
+                            content_type='audio/wav'
+                        )
+                        # Using the correct Groq model
+                        form.add_field('model', 'distil-whisper-large-v3-en')
+                        form.add_field('response_format', 'verbose_json')
+                        form.add_field('language', 'en')
+                        form.add_field('temperature', '0')
+                        form.add_field('prompt', 'This is a transcription of spoken content.')
+                        
+                        async with session.post(
+                            'https://api.groq.com/openai/v1/audio/transcriptions',
+                            data=form,
+                            headers=headers
+                        ) as response:
+                            response_text = await response.text()
+                            logger.info(f"Groq API Response Status: {response.status}")
+                            logger.info(f"Groq API Response: {response_text}")
+                            
+                            if response.status != 200:
+                                logger.error(f"Groq API error on chunk {i+1}: {response_text}")
+                                continue
+                            
+                            try:
+                                result = json.loads(response_text)
+                                # Handle verbose_json response format
+                                transcription = result.get('text', '')
+                                if not transcription and isinstance(result, dict):
+                                    segments = result.get('segments', [])
+                                    transcription = ' '.join(seg.get('text', '') for seg in segments)
+                                
+                                if transcription:
+                                    transcriptions.append(transcription)
+                                    # Send transcription segment update
+                                    await transcription_updates.put(json.dumps({
+                                        "type": "transcription_segment",
+                                        "content": transcription
+                                    }))
+                                    logger.info(f"Successfully transcribed chunk {i+1}")
+
+                            except Exception as e:
+                                logger.error(f"Error processing chunk {i+1}: {str(e)}")
+                                continue
+
+                except Exception as e:
+                    logger.error(f"Error processing chunk {i+1}: {str(e)}")
+                    continue
+
+                # Add a small delay between chunks to avoid rate limits
+                await asyncio.sleep(1)
+
+        # Check if we got any transcriptions
+        if not transcriptions:
+            raise Exception("No chunks were successfully transcribed")
+            
+        # Combine transcriptions
+        full_transcription = ' '.join(transcriptions)
+        
+        # Send completion status
+        await status_updates.put(json.dumps({
+            "type": "status",
+            "content": f"Groq transcription completed successfully. Total chunks processed: {len(transcriptions)}"
+        }))
+
+        # Send final transcription
+        await transcription_updates.put(json.dumps({
+            "type": "transcription_complete",
+            "content": full_transcription
+        }))
+
         logger.info("Successfully combined all transcriptions")
         return full_transcription
 
@@ -867,134 +1034,3 @@ async def download_chapter(youtube_url: str, chapter_index: int, output_dir: str
     except Exception as e:
         logger.error(f"Error downloading chapter: {str(e)}")
         raise
-
-# Add this function to handle Groq API transcription
-async def process_audio_with_groq(audio_file_path: str, status_updates: asyncio.Queue, transcription_updates: asyncio.Queue, chunk_duration_ms: int = 300000) -> str:
-    """
-    Process audio file using Groq API in chunks with progress updates
-    """
-    logger.info(f"Processing audio file with Groq: {audio_file_path}")
-    
-    if not GROQ_API_KEY:
-        raise ValueError("GROQ_API_KEY not configured")
-
-    audio = AudioSegment.from_file(audio_file_path)
-    total_duration = len(audio)
-    chunks = []
-    transcriptions = []
-
-    # Send initial status
-    await status_updates.put(json.dumps({
-        "type": "status",
-        "content": "Starting Groq transcription processing..."
-    }))
-
-    try:
-        # Split audio into chunks
-        chunk_count = (total_duration + chunk_duration_ms - 1) // chunk_duration_ms
-        for i in range(chunk_count):
-            start_time = i * chunk_duration_ms
-            end_time = min((i + 1) * chunk_duration_ms, total_duration)
-            chunk = audio[start_time:end_time]
-            
-            # Send chunk processing status
-            await status_updates.put(json.dumps({
-                "type": "status",
-                "content": f"Processing chunk {i+1} of {chunk_count}"
-            }))
-
-            # Create temporary file for chunk
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-                chunk_path = temp_file.name
-                chunks.append(chunk_path)
-                
-                # Export with compression
-                chunk.export(
-                    chunk_path,
-                    format='wav',
-                    parameters=[
-                        "-ac", "1",          # mono
-                        "-ar", "16000",      # 16kHz sample rate
-                        "-b:a", "64k"        # 64kbps bitrate
-                    ]
-                )
-                
-                chunk_size = os.path.getsize(chunk_path) / (1024 * 1024)  # Size in MB
-                logger.info(f"Created chunk {i+1}: {chunk_path} (Size: {chunk_size:.2f}MB)")
-
-                try:
-                    # Process chunk with Groq API
-                    form = aiohttp.FormData()
-                    form.add_field(
-                        'file',
-                        open(chunk_path, 'rb'),
-                        filename=f'chunk_{i+1}.wav',
-                        content_type='audio/wav'
-                    )
-                    form.add_field('model', 'distil-whisper-large-v3-en')
-                    form.add_field('response_format', 'json')
-                    form.add_field('language', 'en')
-
-                    headers = {
-                        'Authorization': f'Bearer {GROQ_API_KEY}'
-                    }
-
-                    async with aiohttp.ClientSession() as session:
-                        async with session.post(
-                            'https://api.groq.com/openai/v1/audio/transcriptions',
-                            data=form,
-                            headers=headers
-                        ) as response:
-                            if response.status != 200:
-                                error_text = await response.text()
-                                logger.error(f"Groq API error on chunk {i+1}: {error_text}")
-                                continue
-                            
-                            result = await response.json()
-                            transcription = result.get('text', '')
-                            
-                            if transcription:
-                                transcriptions.append(transcription)
-                                # Send transcription segment update
-                                await transcription_updates.put(json.dumps({
-                                    "type": "transcription_segment",
-                                    "content": transcription
-                                }))
-                                logger.info(f"Successfully transcribed chunk {i+1}")
-
-                except Exception as e:
-                    logger.error(f"Error processing chunk {i+1}: {str(e)}")
-                    continue
-
-                # Add a small delay between chunks to avoid rate limits
-                await asyncio.sleep(1)
-
-        # Check if we got any transcriptions
-        if not transcriptions:
-            raise Exception("No chunks were successfully transcribed")
-            
-        # Combine transcriptions
-        full_transcription = ' '.join(transcriptions)
-        
-        # Send completion status
-        await status_updates.put(json.dumps({
-            "type": "status",
-            "content": f"Groq transcription completed successfully. Total chunks processed: {len(transcriptions)}"
-        }))
-
-        # Send final transcription
-        await transcription_updates.put(json.dumps({
-            "type": "transcription_complete",
-            "content": full_transcription
-        }))
-
-        logger.info("Successfully combined all transcriptions")
-        return full_transcription
-
-    finally:
-        # Cleanup temporary files
-        for chunk_path in chunks:
-            try:
-                os.remove(chunk_path)
-            except Exception as e:
-                logger.warning(f"Failed to remove temporary file {chunk_path}: {e}")
