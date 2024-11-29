@@ -51,6 +51,12 @@ export function NavHeader() {
             >
               Download
             </Link>
+            <Link
+              href="/vector-search"
+              className="transition-colors hover:text-foreground/80 text-foreground/60"
+            >
+              Vector Search
+            </Link>
           </nav>
           <ThemeToggle />
         </div>

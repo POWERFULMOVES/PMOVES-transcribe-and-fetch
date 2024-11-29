@@ -29,6 +29,7 @@ from .utils import (
 )
 import json
 from .video_processor import extract_video_info
+from .vector_search import VectorSearchRequest, VectorSearchResponse, VectorSearcher
 import torch
 import urllib.parse
 import aiofiles
@@ -104,11 +105,10 @@ async def log_requests(request: Request, call_next):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Be specific about the frontend origin
-    allow_credentials=False,  # Change this to False since we're not using credentials
+    allow_origins=["*"],  # In production, replace with specific origins
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],
 )
 
 # Initialize the queues
@@ -440,3 +440,60 @@ async def download_pdf(path: str):
 @app.post("/api/download")
 async def download_video(request: DownloadRequest):
     return await download_manager.download_video(request.url)
+
+@app.post("/vector-search")
+@app.get("/vector-search")
+async def vector_search(request: VectorSearchRequest = None, query: str = None, threshold: float = 0.7):
+    try:
+        if request is None:
+            request = VectorSearchRequest(query=query, threshold=threshold)
+        
+        # Create searcher instance
+        searcher = VectorSearcher()
+        results = []
+        
+        # Use the streaming function but collect all results
+        async for result in searcher.search_with_streaming(request.query, request.threshold):
+            if result["type"] == "result":
+                results.append(result["data"])
+        
+        return VectorSearchResponse(results=results, ai_response=None, metadata={})
+    except Exception as e:
+        logger.error(f"Error in vector search: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/vector-search-stream")
+@app.get("/vector-search-stream")
+async def vector_search_stream(request: VectorSearchRequest = None, query: str = None, threshold: float = 0.7):
+    """
+    Stream vector search results as Server-Sent Events (SSE)
+    """
+    try:
+        if request is None:
+            request = VectorSearchRequest(query=query, threshold=threshold)
+            
+        searcher = VectorSearcher()
+        
+        async def event_generator():
+            try:
+                async for result in searcher.search_with_streaming(request.query, request.threshold):
+                    if isinstance(result, dict):
+                        yield {
+                            "event": "message",
+                            "data": json.dumps(result)
+                        }
+            except Exception as e:
+                error_msg = f"Error in event generator: {str(e)}"
+                logger.error(error_msg)
+                yield {
+                    "event": "error",
+                    "data": json.dumps({
+                        "type": "error",
+                        "message": error_msg
+                    })
+                }
+
+        return EventSourceResponse(event_generator())
+    except Exception as e:
+        logger.error(f"Error in vector search stream: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))

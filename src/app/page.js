@@ -32,6 +32,15 @@ import {
   ScrollBar,
 } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
+import { Slider } from "@/components/ui/slider";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 import { transcriptionReducer, initialState as transcriptionInitialState, ACTIONS } from './reducers/transcriptionReducer';
 import { storage } from './utils/storage';
 import {
@@ -614,8 +623,28 @@ useEffect(() => {
        }
     }
  }, [state.statusUpdates]);
- 
- return (
+
+ const [query, setQuery] = useState('');
+ const [searchResults, setSearchResults] = useState([]);
+ const [searchLoading, setSearchLoading] = useState(false);
+ const [threshold, setThreshold] = useState(0.7);
+
+ const handleVectorSearch = async () => {
+    try {
+      setSearchLoading(true);
+      const response = await axios.post(`${BACKEND_URL}/vector-search`, {
+        query,
+        threshold
+      });
+      setSearchResults(response.data.results);
+    } catch (error) {
+      console.error('Error performing vector search:', error);
+    } finally {
+      setSearchLoading(false);
+    }
+  };
+
+  return (
     <>
        <main className="container mx-auto mt-8 p-4 max-w-3xl">
           {/* Progress Steps */}
@@ -1004,6 +1033,90 @@ useEffect(() => {
               </ScrollArea>
             </Card>
           </div>
+
+          {/* Vector Search Tab */}
+          <Card className={activeTab === 'vector-search' ? '' : 'hidden'}>
+            <CardHeader>
+              <CardTitle>Vector Search</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-6">
+              <div className="flex flex-col space-y-4">
+                <div className="flex gap-4">
+                  <div className="flex-1">
+                    <Input
+                      placeholder="Enter your search query..."
+                      value={query}
+                      onChange={(e) => setQuery(e.target.value)}
+                    />
+                  </div>
+                  <Button 
+                    onClick={handleVectorSearch} 
+                    disabled={searchLoading}
+                    className="min-w-[100px]"
+                  >
+                    {searchLoading ? 'Searching...' : 'Search'}
+                  </Button>
+                </div>
+                
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Similarity Threshold: {threshold}</Label>
+                    <Slider
+                      value={[threshold]}
+                      onValueChange={(value) => setThreshold(value[0])}
+                      min={0}
+                      max={1}
+                      step={0.1}
+                      className="w-full"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {searchResults.length > 0 && (
+                <ScrollArea className="h-[500px] w-full rounded-md border">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Video ID</TableHead>
+                        <TableHead>Time Range</TableHead>
+                        <TableHead>Text</TableHead>
+                        <TableHead>Similarity</TableHead>
+                        <TableHead>Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {searchResults.map((result, index) => (
+                        <TableRow key={index}>
+                          <TableCell className="font-medium">{result.video_id}</TableCell>
+                          <TableCell>{result.start_time} - {result.end_time}</TableCell>
+                          <TableCell className="max-w-md truncate">{result.text}</TableCell>
+                          <TableCell>{(result.similarity * 100).toFixed(2)}%</TableCell>
+                          <TableCell>
+                            {result.watch_url && (
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                asChild
+                              >
+                                <a
+                                  href={result.watch_url}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  Watch
+                                </a>
+                              </Button>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </ScrollArea>
+              )}
+            </CardContent>
+          </Card>
 
           {/* Error Display */}
           {state.error && (
