@@ -1,13 +1,15 @@
 import sys
 from pathlib import Path
-from typing import AsyncGenerator, Dict, Optional, List
+from typing import AsyncGenerator, Dict, Optional, List, Any
 import json
 from datetime import datetime
 import logging
 from rich.table import Table
 from rich.console import Console
 import os
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, OpenAI
+from fastapi import HTTPException
+from groq import Groq
 
 # Add PMOVES Supabase directory to path
 PMOVES_DIR = Path(__file__).parent.parent.parent / "PMOVES Supabase"
@@ -27,34 +29,106 @@ class VectorSearchResponse(BaseModel):
     ai_response: Optional[str]
     metadata: Dict
 
-class VectorSearcher(BaseVectorSearcher):
+class VectorSearcher:
     def __init__(self):
-        # Initialize base class first
-        super().__init__()
-        # Initialize our console
-        self.console = Console()
-
-    async def get_query_embedding(self, query: str) -> List[float]:
-        """Get embedding for the query text using OpenAI API"""
+        """Initialize the vector searcher with necessary clients and configurations."""
         try:
-            # Clean and prepare query
-            clean_query = query.replace('\n', ' ').strip()
-            
-            # Get embeddings using the OpenAI API
-            response = await self.openai_client.embeddings.create(
-                model="text-embedding-3-small",
-                input=clean_query  # API expects a single string
-            )
-            
-            # Debug logging
-            self.console.print(f"[blue]Generated embedding for query: {clean_query}[/]")
-            
-            return response.data[0].embedding
-            
+            # Initialize OpenAI client for embeddings
+            self.openai_client = OpenAI()
+            # Initialize Groq client for alternative processing
+            self.groq_client = Groq()
+            logger.info("VectorSearcher initialized successfully")
         except Exception as e:
-            logging.error(f"Error getting query embedding: {str(e)}")
-            self.console.print(f"[red]Error getting query embedding: {str(e)}[/]")
-            raise
+            logger.error(f"Error initializing VectorSearcher: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to initialize search: {str(e)}")
+
+    async def search_stream(self, query: str, params: Dict[str, Any]) -> Any:
+        """
+        Perform a streaming vector search with the given query and parameters.
+        
+        Args:
+            query: The search query string
+            params: Dictionary containing search parameters including:
+                   - preset: The search preset to use
+                   - run_analysis: Whether to run AI analysis
+                   - fine_grained_*, contextual_*, overview_* parameters
+        
+        Yields:
+            SSE formatted messages containing search results and status updates
+        """
+        try:
+            # Send initial status
+            yield self.format_sse_message({'message': 'Starting vector search...'}, 'status')
+
+            # Generate embedding for the query
+            embedding_response = await self.get_embedding(query)
+            yield self.format_sse_message({'message': 'Generated query embedding'}, 'status')
+
+            # Perform search across different tiers
+            for tier in ['fine_grained', 'contextual', 'overview']:
+                tier_params = {k.replace(f"{tier}_", ""): v for k, v in params.items() 
+                             if k.startswith(f"{tier}_")}
+                
+                yield self.format_sse_message(
+                    {'message': f'Searching {tier} tier with threshold {tier_params.get("similarity_threshold", 0.7)}'}, 
+                    'status'
+                )
+
+                # Perform the actual search for this tier
+                results = await self.search_tier(query, embedding_response, tier, tier_params)
+                
+                if results:
+                    yield self.format_sse_message({'results': results}, 'results')
+                    yield self.format_sse_message(
+                        {'message': f'Found {len(results)} results in {tier} tier'}, 
+                        'status'
+                    )
+
+            # Run analysis if requested
+            if params.get('run_analysis'):
+                yield self.format_sse_message({'message': 'Starting AI analysis...'}, 'status')
+                
+                # Add analysis logic here
+                # For now, just send a placeholder
+                yield self.format_sse_message(
+                    {'analysis': 'Analysis feature coming soon'}, 
+                    'ai_response_openai'
+                )
+
+            # Send completion message
+            yield self.format_sse_message({'message': 'Search complete'}, 'complete')
+
+        except Exception as e:
+            logger.error(f"Error in vector search: {str(e)}")
+            yield self.format_sse_message(
+                {'message': f'Error performing search: {str(e)}'}, 
+                'error'
+            )
+
+    async def get_embedding(self, text: str) -> List[float]:
+        """Generate embedding for the given text using OpenAI's API."""
+        try:
+            response = await self.openai_client.embeddings.create(
+                input=text,
+                model="text-embedding-3-small"
+            )
+            return response.data[0].embedding
+        except Exception as e:
+            logger.error(f"Error generating embedding: {str(e)}")
+            raise HTTPException(status_code=500, detail=f"Failed to generate embedding: {str(e)}")
+
+    async def search_tier(self, query: str, embedding: List[float], tier: str, params: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """
+        Perform search for a specific tier with given parameters.
+        This is a placeholder implementation - you'll need to implement the actual search logic.
+        """
+        # Placeholder - implement your actual search logic here
+        return []
+
+    @staticmethod
+    def format_sse_message(data: Any, event_type: str) -> str:
+        """Format a message for SSE transmission."""
+        return f"data: {json.dumps({'type': event_type, 'data': data})}\n\n"
 
     def _time_to_seconds(self, time_str: str) -> int:
         """Convert HH:MM:SS time format to seconds"""
@@ -183,7 +257,7 @@ class VectorSearcher(BaseVectorSearcher):
         """Override dot product search to handle embedding conversion"""
         try:
             # Get embedding for query
-            query_embedding = await self.get_query_embedding(query)
+            query_embedding = await self.get_embedding(query)
             
             # Call parent's dot product search with the embedding
             results = await super().dot_product_search(query_embedding, self.limit)
@@ -328,7 +402,7 @@ Answer:"""
         """Perform hybrid search using Supabase RPC"""
         try:
             # Get query embedding
-            query_embedding = await self.get_query_embedding(query)
+            query_embedding = await self.get_embedding(query)
             
             # Call the advanced_hybrid_search RPC function
             response = self.supabase.rpc(
@@ -357,7 +431,7 @@ Answer:"""
         """Stream search results with the same format as pmoves_vector_search_rag.py"""
         try:
             # Get query embedding using base class's method
-            query_embedding = await self.get_query_embedding(query)
+            query_embedding = await self.get_embedding(query)
             
             # Display query information
             self.console.print(f"\nQuery tokens: {len(self.tokenizer.encode(query))}")

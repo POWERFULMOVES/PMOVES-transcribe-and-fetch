@@ -1,133 +1,48 @@
-import os
-from pathlib import Path
-import yt_dlp
-from fastapi import HTTPException
-from typing import Dict, Any, Optional
 import asyncio
+from typing import Dict, Optional
+import logging
+
+logger = logging.getLogger(__name__)
 
 class DownloadManager:
-    def __init__(self, download_path: str = "downloads"):
-        self.download_path = Path(download_path)
-        self.download_path.mkdir(exist_ok=True)
-        self.status_updates = asyncio.Queue()
+    def __init__(self):
+        self.downloads: Dict[str, Dict] = {}
+        self._lock = asyncio.Lock()
 
-    def get_ydl_opts(self, options: Dict[str, Any]) -> dict:
-        ydl_opts = {
-            'outtmpl': str(self.download_path / '%(title)s.%(ext)s'),
-            'progress_hooks': [self._progress_hook],
-            'writethumbnail': options.get('embedThumbnail', False),
-            'embedthumbnail': options.get('embedThumbnail', False),
-            'writeinfojson': options.get('embedMetadata', True),
-            'addmetadata': options.get('embedMetadata', True),
-        }
-
-        # Video format options
-        if options.get('format'):
-            if options['format'] in ['1080p', '720p', '480p']:
-                ydl_opts['format'] = f'bestvideo[height<={options["format"][:-1]}]+bestaudio/best[height<={options["format"][:-1]}]'
-            else:
-                ydl_opts['format'] = options['format']
-
-        # Audio extraction options
-        if options.get('extractAudio'):
-            ydl_opts.update({
-                'extractaudio': True,
-                'audio-format': options.get('audioFormat', 'mp3'),
-                'audio-quality': options.get('audioQuality', '192'),
-                'keepvideo': options.get('keepVideo', True),
-            })
-
-        # Subtitle options
-        if options.get('subtitles'):
-            ydl_opts.update({
-                'writesubtitles': True,
-                'subtitleslangs': [options.get('subtitleLanguage', 'en')],
-                'writeautomaticsub': True,
-            })
-
-        # Playlist options
-        if options.get('downloadPlaylist'):
-            ydl_opts.update({
-                'noplaylist': False,
-                'playliststart': int(options.get('playlistStart', 1)),
-            })
-            if options.get('playlistEnd'):
-                ydl_opts['playlistend'] = int(options['playlistEnd'])
-        else:
-            ydl_opts['noplaylist'] = True
-
-        return ydl_opts
-
-    def _progress_hook(self, d):
-        if d['status'] == 'downloading':
-            total = d.get('total_bytes')
-            downloaded = d.get('downloaded_bytes', 0)
-            
-            if total:
-                progress = (downloaded / total) * 100
-                speed = d.get('speed', 0)
-                eta = d.get('eta', 0)
-                
-                status = {
-                    'type': 'progress',
-                    'progress': round(progress, 2),
-                    'speed': f"{speed/1024/1024:.1f} MB/s" if speed else "N/A",
-                    'eta': f"{eta} seconds" if eta else "N/A",
-                    'filename': d.get('filename', ''),
-                    'total_size': f"{total/1024/1024:.1f} MB"
-                }
-            else:
-                status = {
-                    'type': 'progress',
-                    'progress': 0,
-                    'speed': "N/A",
-                    'eta': "N/A",
-                    'filename': d.get('filename', ''),
-                    'total_size': "Unknown"
-                }
-                
-            asyncio.create_task(self.status_updates.put(status))
-            
-        elif d['status'] == 'finished':
-            status = {
-                'type': 'status',
-                'message': 'Download completed, now post-processing...'
+    async def start_download(self, url: str) -> str:
+        """Start a new download and return its ID"""
+        async with self._lock:
+            download_id = url  # Using URL as ID for simplicity
+            self.downloads[download_id] = {
+                "url": url,
+                "status": "pending",
+                "progress": 0,
+                "error": None
             }
-            asyncio.create_task(self.status_updates.put(status))
+            return download_id
 
-    async def download_video(self, url: str, options: Dict[str, Any] = None):
-        if not options:
-            options = {}
-
-        try:
-            await self.status_updates.put({
-                'type': 'status',
-                'message': 'Starting download...'
-            })
-
-            ydl_opts = self.get_ydl_opts(options)
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info = ydl.extract_info(url, download=True)
-                video_title = info.get('title', 'video')
-                
-                await self.status_updates.put({
-                    'type': 'complete',
-                    'title': video_title,
-                    'message': f"Successfully downloaded: {video_title}"
+    async def update_status(self, download_id: str, status: str, progress: Optional[float] = None, error: Optional[str] = None):
+        """Update the status of a download"""
+        async with self._lock:
+            if download_id in self.downloads:
+                self.downloads[download_id].update({
+                    "status": status,
+                    **({"progress": progress} if progress is not None else {}),
+                    **({"error": error} if error is not None else {})
                 })
-                
-                return {
-                    "status": "success",
-                    "title": video_title,
-                    "message": f"Successfully downloaded: {video_title}"
-                }
-        except Exception as e:
-            error_msg = f"Download failed: {str(e)}"
-            await self.status_updates.put({
-                'type': 'error',
-                'message': error_msg
-            })
-            raise HTTPException(
-                status_code=400,
-                detail=error_msg
-            )
+                logger.info(f"Download {download_id} updated: status={status}, progress={progress}, error={error}")
+
+    async def get_status(self, download_id: str) -> Optional[Dict]:
+        """Get the status of a download"""
+        async with self._lock:
+            return self.downloads.get(download_id)
+
+    async def get_all_statuses(self) -> Dict[str, Dict]:
+        """Get status of all downloads"""
+        async with self._lock:
+            return self.downloads.copy()
+
+    async def remove_download(self, download_id: str):
+        """Remove a download from tracking"""
+        async with self._lock:
+            self.downloads.pop(download_id, None)

@@ -46,13 +46,63 @@ async def fetch_content_from_url(
 
     timeout: Optional[int] = None, 
 
-    target_selector: Optional[str] = None
+    target_selector: Optional[str] = None,
+
+    excluded_selector: Optional[str] = None,
+
+    clean_format: bool = True,
+
+    # Advanced Jina.ai options
+
+    browser_engine: str = "playwright",
+
+    token_budget: int = 4000,
+
+    remove_images: bool = False,
+
+    extract_links: bool = True,
+
+    image_captioning: bool = False,
+
+    cache_ttl: int = 3600,
+
+    markdown_flavor: str = "github",
+
+    browser_viewport: str = "1920x1080",
+
+    browser_locale: str = "en-US",
+
+    extract_metadata: bool = True
 
 ) -> Union[str, dict]:
 
     """
 
     Fetch content from a URL using Jina Reader API in LLM-friendly format.
+
+    
+
+    Advanced options:
+
+    - browser_engine: 'playwright' for better quality or 'selenium' for speed
+
+    - token_budget: Maximum number of tokens to extract (1,000-100,000)
+
+    - remove_images: Whether to exclude images from the content
+
+    - extract_links: Whether to extract links from the content
+
+    - image_captioning: Whether to add captions to images
+
+    - cache_ttl: Time-to-live for cache in seconds
+
+    - markdown_flavor: 'github', 'standard', or 'obsidian'
+
+    - browser_viewport: Browser viewport size (e.g. '1920x1080')
+
+    - browser_locale: Browser locale (e.g. 'en-US')
+
+    - extract_metadata: Whether to extract page metadata
 
     """
 
@@ -68,15 +118,15 @@ async def fetch_content_from_url(
 
         'Content-Type': 'application/json' if json_response else 'text/plain',
 
-        'Content-Format': 'clean',
+        'Content-Format': 'clean' if clean_format else 'raw',
 
-        'Extract-Links': 'true',
-
-        'Excluded-Selector': 'header,footer,nav,aside,script,style'
+        'Extract-Links': 'true' if extract_links else 'false',
 
     }
 
     
+
+    # Add optional headers based on parameters
 
     if timeout is not None:
 
@@ -87,6 +137,34 @@ async def fetch_content_from_url(
     if target_selector is not None:
 
         headers['Target-Selector'] = target_selector
+
+        
+
+    if excluded_selector is not None:
+
+        headers['Excluded-Selector'] = excluded_selector
+
+    
+
+    # Add advanced Jina.ai options
+
+    headers['Browser-Engine'] = browser_engine
+
+    headers['Token-Budget'] = str(token_budget)
+
+    headers['Remove-Images'] = 'true' if remove_images else 'false'
+
+    headers['Image-Captioning'] = 'true' if image_captioning else 'false'
+
+    headers['Cache-TTL'] = str(cache_ttl)
+
+    headers['Markdown-Flavor'] = markdown_flavor
+
+    headers['Browser-Viewport'] = browser_viewport
+
+    headers['Browser-Locale'] = browser_locale
+
+    headers['Extract-Metadata'] = 'true' if extract_metadata else 'false'
 
 
 
@@ -104,13 +182,21 @@ async def fetch_content_from_url(
 
                             json_data = await response.json(content_type=None)
 
-                            # Extract content and links from JSON response
+                            # Extract content, links, and metadata from JSON response
 
                             if isinstance(json_data, dict):
 
                                 content = json_data.get('data', {}).get('content', '')
 
                                 links = json_data.get('data', {}).get('links', [])
+
+                                metadata = json_data.get('data', {}).get('metadata', {})
+
+                                title = json_data.get('data', {}).get('title', '')
+
+                                url = json_data.get('data', {}).get('url', url)
+
+                                
 
                                 if not content:
 
@@ -126,11 +212,13 @@ async def fetch_content_from_url(
 
                                     'content': content,
 
-                                    'title': json_data.get('data', {}).get('title', ''),
+                                    'title': title,
 
-                                    'url': json_data.get('data', {}).get('url', url),
+                                    'url': url,
 
-                                    'links': links
+                                    'links': links,
+
+                                    'metadata': metadata
 
                                 }
 
