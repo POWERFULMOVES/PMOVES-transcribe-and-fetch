@@ -52,6 +52,12 @@ export function NavHeader() {
               Download
             </Link>
             <Link
+              href="/upserter"
+              className="transition-colors hover:text-foreground/80 text-foreground/60"
+            >
+              Content Upserter
+            </Link>
+            <Link
               href="/vector-search"
               className="transition-colors hover:text-foreground/80 text-foreground/60"
             >

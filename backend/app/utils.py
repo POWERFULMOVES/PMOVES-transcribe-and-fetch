@@ -201,208 +201,152 @@ async def save_text_to_markdown(content: Union[str, dict], output_path: str) -> 
 
 
 async def convert_markdown_to_pdf(markdown_path: str, pdf_path: str) -> None:
-
     """
-
     Convert markdown to PDF with proper wkhtmltopdf configuration
-
     """
-
     try:
-
         # Configure pdfkit with wkhtmltopdf path
-
         from .config import WKHTMLTOPDF_PATH
-
-        config = pdfkit.configuration(wkhtmltopdf=WKHTMLTOPDF_PATH)
-
         
-
+        # Check if wkhtmltopdf is installed
+        if not os.path.isfile(WKHTMLTOPDF_PATH):
+            logger.error(f"Missing wkhtmltopdf at {WKHTMLTOPDF_PATH}")
+            logger.error("Please install wkhtmltopdf from https://wkhtmltopdf.org/downloads.html")
+            return  # Skip PDF generation but don't raise an exception
+            
+        config = pdfkit.configuration(wkhtmltopdf=WKHTMLTOPDF_PATH)
+        
         # Read markdown content
-
         async with aiofiles.open(markdown_path, 'r', encoding='utf-8') as file:
-
             markdown_content = await file.read()
 
-
-
         # Convert markdown to HTML using markdown2
-
         html_content = markdown2.markdown(
-
             markdown_content,
-
             extras=['tables', 'fenced-code-blocks']
-
         )
-
-
 
         # Configure PDF options
-
         options = {
-
             'encoding': 'UTF-8',
-
             'enable-local-file-access': None,
-
             'margin-top': '20mm',
-
             'margin-right': '20mm',
-
             'margin-bottom': '20mm',
-
-            'margin-left': '20mm',
-
-            'quiet': '',
-
-            'disable-smart-shrinking': '',
-
-            'no-background': '',
-
-            'dpi': '300'
-
+            'margin-left': '20mm'
         }
 
-
-
-        # Add HTML styling
-
-        html_doc = f"""
-
+        # Create HTML wrapper with proper styling
+        html_with_style = f"""
         <!DOCTYPE html>
-
         <html>
-
         <head>
-
             <meta charset="UTF-8">
-
+            <title>Converted Document</title>
             <style>
-
-                body {{
-
-                    font-family: Arial, sans-serif;
-
-                    line-height: 1.6;
-
-                    margin: 20px;
-
+                body {{ 
+                    font-family: Arial, sans-serif; 
+                    font-size: 12pt; 
+                    line-height: 1.5;
+                    margin: 0;
+                    padding: 0;
                 }}
-
+                pre {{ 
+                    background-color: #f5f5f5; 
+                    border: 1px solid #ddd; 
+                    border-radius: 3px; 
+                    padding: 10px; 
+                    overflow: auto;
+                    font-family: monospace;
+                    font-size: 10pt;
+                }}
+                code {{ 
+                    font-family: monospace; 
+                    background-color: #f5f5f5;
+                    padding: 2px 4px;
+                    border-radius: 3px;
+                }}
                 table {{
-
                     border-collapse: collapse;
-
                     width: 100%;
-
                     margin: 15px 0;
-
-                    font-size: 14px;
-
                 }}
-
                 th, td {{
-
                     border: 1px solid #ddd;
-
                     padding: 8px;
-
                     text-align: left;
-
-                    word-wrap: break-word;
-
                 }}
-
                 th {{
-
-                    background-color: #f4f4f4;
-
+                    background-color: #f2f2f2;
                 }}
-
+                img {{
+                    max-width: 100%;
+                    height: auto;
+                }}
                 a {{
-
                     color: #0066cc;
-
                     text-decoration: none;
-
                 }}
-
-                pre {{
-
-                    background-color: #f8f8f8;
-
-                    padding: 12px;
-
-                    border-radius: 4px;
-
-                    overflow-x: auto;
-
+                a:hover {{
+                    text-decoration: underline;
                 }}
-
-                code {{
-
-                    font-family: 'Courier New', Courier, monospace;
-
+                h1, h2, h3, h4, h5, h6 {{
+                    margin-top: 1.5em;
+                    margin-bottom: 0.5em;
                 }}
-
-                h1, h2, h3 {{
-
-                    color: #333;
-
-                    margin-top: 20px;
-
-                }}
-
             </style>
-
         </head>
-
         <body>
-
             {html_content}
-
         </body>
-
         </html>
-
         """
 
-
-
-        # Use pdfkit to convert HTML to PDF with configuration
-
-        logger.info(f"Converting markdown to PDF: {markdown_path} -> {pdf_path}")
-
-        await asyncio.to_thread(
-
-            pdfkit.from_string,
-
-            html_doc,
-
-            pdf_path,
-
-            options=options,
-
-            configuration=config
-
-        )
-
-        logger.info(f"Successfully created PDF: {pdf_path}")
+        # Run conversion in a thread pool since pdfkit is synchronous
+        try:
+            await asyncio.to_thread(
+                pdfkit.from_string,
+                html_with_style,
+                pdf_path,
+                options=options,
+                configuration=config
+            )
+            logger.info(f"PDF file created successfully: {pdf_path}")
+            return True
+        except Exception as conversion_error:
+            logger.error(f"Error during PDF conversion: {str(conversion_error)}")
+            # Create a basic PDF with the error message
+            try:
+                error_html = f"""
+                <!DOCTYPE html>
+                <html>
+                <head><title>Error Converting PDF</title></head>
+                <body>
+                    <h1>Error Converting to PDF</h1>
+                    <p>There was an error converting the markdown to PDF. You can still view the markdown content.</p>
+                    <p>Error: {str(conversion_error)}</p>
+                </body>
+                </html>
+                """
+                await asyncio.to_thread(
+                    pdfkit.from_string,
+                    error_html,
+                    pdf_path,
+                    options={'quiet': ''},
+                    configuration=config
+                )
+                logger.info(f"Created error PDF: {pdf_path}")
+            except Exception:
+                logger.error("Failed to create even an error PDF")
+            return False
 
     except ImportError as e:
-
         logger.error(f"Missing required package: {str(e)}")
-
         logger.error("Please install required packages: pip install markdown2 pdfkit")
-
-        raise
-
+        return False
     except Exception as e:
-
-        logger.error(f"Error converting markdown to PDF: {str(e)}")
-
-        raise
+        logger.error(f"Critical error converting markdown to PDF: {str(e)}")
+        return False
 
 
 

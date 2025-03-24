@@ -8,6 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
+import { 
+  Select, 
+  SelectContent, 
+  SelectItem, 
+  SelectTrigger, 
+  SelectValue 
+} from "@/components/ui/select";
 import {
   Accordion,
   AccordionContent,
@@ -25,10 +32,21 @@ export default function FetchContent() {
   const [fetchState, setFetchState] = useState({
     url: "",
     targetSelector: "",
-    excludedSelector: "",
+    excludedSelector: "header,footer,nav,aside,script,style",
     timeout: 300,
     jsonResponse: false,
     cleanFormat: true,
+    // Advanced Jina.ai options
+    browserEngine: "playwright", // or selenium
+    tokenBudget: 4000,
+    removeImages: false,
+    extractLinks: true,
+    imageCaptioning: false,
+    cacheTtl: 3600,
+    markdownFlavor: "github",
+    browserViewport: "1920x1080",
+    browserLocale: "en-US",
+    extractMetadata: true,
     result: null
   });
 
@@ -49,7 +67,18 @@ export default function FetchContent() {
           timeout: fetchState.timeout,
           target_selector: fetchState.targetSelector,
           excluded_selector: fetchState.excludedSelector,
-          clean_format: fetchState.cleanFormat
+          clean_format: fetchState.cleanFormat,
+          // Advanced Jina.ai options
+          browser_engine: fetchState.browserEngine,
+          token_budget: fetchState.tokenBudget,
+          remove_images: fetchState.removeImages,
+          extract_links: fetchState.extractLinks,
+          image_captioning: fetchState.imageCaptioning,
+          cache_ttl: fetchState.cacheTtl,
+          markdown_flavor: fetchState.markdownFlavor,
+          browser_viewport: fetchState.browserViewport,
+          browser_locale: fetchState.browserLocale,
+          extract_metadata: fetchState.extractMetadata
         }
       });
 
@@ -68,7 +97,7 @@ export default function FetchContent() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle>Web Content Fetcher</CardTitle>
+              <CardTitle>Advanced Web Content Fetcher</CardTitle>
             </div>
           </CardHeader>
           <CardContent className="space-y-6">
@@ -87,30 +116,115 @@ export default function FetchContent() {
               <AccordionItem value="advanced-options">
                 <AccordionTrigger>Advanced Options</AccordionTrigger>
                 <AccordionContent className="space-y-4">
-                  {/* Target Selector */}
-                  <div className="space-y-2">
-                    <Label>Target Selector</Label>
-                    <Input
-                      placeholder="CSS Selector (e.g., article, .main-content)"
-                      value={fetchState.targetSelector}
-                      onChange={(e) => setFetchState(prev => ({ ...prev, targetSelector: e.target.value }))}
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      Specify elements to extract (e.g., article, .main-content)
-                    </p>
+                  {/* Basic Options */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Target Selector */}
+                    <div className="space-y-2">
+                      <Label>Target Selector</Label>
+                      <Input
+                        placeholder="CSS Selector (e.g., article, .main-content)"
+                        value={fetchState.targetSelector}
+                        onChange={(e) => setFetchState(prev => ({ ...prev, targetSelector: e.target.value }))}
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        Specify elements to extract (e.g., article, .main-content)
+                      </p>
+                    </div>
+
+                    {/* Excluded Selector */}
+                    <div className="space-y-2">
+                      <Label>Exclude Elements</Label>
+                      <Input
+                        placeholder="Elements to exclude (e.g., nav, footer, .ads)"
+                        value={fetchState.excludedSelector}
+                        onChange={(e) => setFetchState(prev => ({ ...prev, excludedSelector: e.target.value }))}
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        Specify elements to remove (e.g., nav, footer, .ads)
+                      </p>
+                    </div>
                   </div>
 
-                  {/* Excluded Selector */}
-                  <div className="space-y-2">
-                    <Label>Exclude Elements</Label>
-                    <Input
-                      placeholder="Elements to exclude (e.g., nav, footer, .ads)"
-                      value={fetchState.excludedSelector}
-                      onChange={(e) => setFetchState(prev => ({ ...prev, excludedSelector: e.target.value }))}
-                    />
-                    <p className="text-sm text-muted-foreground">
-                      Specify elements to remove (e.g., nav, footer, .ads)
-                    </p>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Browser Engine Selection */}
+                    <div className="space-y-2">
+                      <Label>Browser Engine</Label>
+                      <Select 
+                        value={fetchState.browserEngine} 
+                        onValueChange={(value) => setFetchState(prev => ({ ...prev, browserEngine: value }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select browser engine" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="playwright">Playwright (Better Quality)</SelectItem>
+                          <SelectItem value="selenium">Selenium (Faster)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-sm text-muted-foreground">
+                        Playwright offers better quality, Selenium is faster
+                      </p>
+                    </div>
+
+                    {/* Token Budget */}
+                    <div className="space-y-2">
+                      <Label>Token Budget</Label>
+                      <Input
+                        type="number"
+                        min="1000"
+                        max="100000"
+                        value={fetchState.tokenBudget}
+                        onChange={(e) => setFetchState(prev => ({ ...prev, tokenBudget: e.target.value }))}
+                      />
+                      <p className="text-sm text-muted-foreground">
+                        Maximum number of tokens to extract (1,000-100,000)
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {/* Viewport Setting */}
+                    <div className="space-y-2">
+                      <Label>Browser Viewport</Label>
+                      <Select 
+                        value={fetchState.browserViewport} 
+                        onValueChange={(value) => setFetchState(prev => ({ ...prev, browserViewport: value }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select viewport size" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="1920x1080">Desktop (1920x1080)</SelectItem>
+                          <SelectItem value="1366x768">Laptop (1366x768)</SelectItem>
+                          <SelectItem value="768x1024">Tablet (768x1024)</SelectItem>
+                          <SelectItem value="375x812">Mobile (375x812)</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-sm text-muted-foreground">
+                        Browser viewport size for rendering the page
+                      </p>
+                    </div>
+
+                    {/* Markdown Flavor */}
+                    <div className="space-y-2">
+                      <Label>Markdown Flavor</Label>
+                      <Select 
+                        value={fetchState.markdownFlavor} 
+                        onValueChange={(value) => setFetchState(prev => ({ ...prev, markdownFlavor: value }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Select markdown flavor" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="github">GitHub Flavored</SelectItem>
+                          <SelectItem value="standard">Standard Markdown</SelectItem>
+                          <SelectItem value="obsidian">Obsidian Compatible</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <p className="text-sm text-muted-foreground">
+                        Format of the markdown output
+                      </p>
+                    </div>
                   </div>
 
                   {/* Timeout Setting */}
@@ -125,7 +239,46 @@ export default function FetchContent() {
                     />
                   </div>
 
-                  {/* Format Options */}
+                  {/* Format Toggles */}
+                  <div className="space-y-4">
+                    <Label>Content Options</Label>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div className="flex items-center space-x-2">
+                        <Switch
+                          id="extract-links"
+                          checked={fetchState.extractLinks}
+                          onCheckedChange={(checked) => setFetchState(prev => ({ ...prev, extractLinks: checked }))}
+                        />
+                        <Label htmlFor="extract-links">Extract Links</Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Switch
+                          id="extract-metadata"
+                          checked={fetchState.extractMetadata}
+                          onCheckedChange={(checked) => setFetchState(prev => ({ ...prev, extractMetadata: checked }))}
+                        />
+                        <Label htmlFor="extract-metadata">Extract Metadata</Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Switch
+                          id="remove-images"
+                          checked={fetchState.removeImages}
+                          onCheckedChange={(checked) => setFetchState(prev => ({ ...prev, removeImages: checked }))}
+                        />
+                        <Label htmlFor="remove-images">Remove Images</Label>
+                      </div>
+                      <div className="flex items-center space-x-2">
+                        <Switch
+                          id="image-captioning"
+                          checked={fetchState.imageCaptioning}
+                          onCheckedChange={(checked) => setFetchState(prev => ({ ...prev, imageCaptioning: checked }))}
+                        />
+                        <Label htmlFor="image-captioning">Image Captioning</Label>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Response Format */}
                   <div className="space-y-2">
                     <Label>Response Format</Label>
                     <div className="flex items-center space-x-4">
@@ -232,24 +385,85 @@ export default function FetchContent() {
                           </div>
                         </div>
                       ) : (
-                        <div className="text-center py-8 text-muted-foreground">
-                          <p>PDF is being generated...</p>
+                        <div className="text-center py-8 text-muted-foreground space-y-4">
+                          <p className="text-amber-600">PDF generation failed or is unavailable</p>
+                          <p>You can still view and download the content in the Markdown tab.</p>
+                          <div className="py-4">
+                            <p className="text-sm">To enable PDF generation, install wkhtmltopdf:</p>
+                            <a 
+                              href="https://wkhtmltopdf.org/downloads.html" 
+                              target="_blank" 
+                              rel="noopener noreferrer"
+                              className="text-primary hover:underline text-sm"
+                            >
+                              Download wkhtmltopdf
+                            </a>
+                          </div>
                         </div>
                       )}
                     </TabsContent>
                   </Tabs>
 
-                  {/* File Info Footer */}
-                  <div className="mt-4 p-3 bg-muted rounded-md text-sm space-y-2">
-                    {fetchState.result.markdown_path && (
-                      <p className="text-muted-foreground">
-                        📄 Markdown: {fetchState.result.markdown_path}
-                      </p>
+                  {/* File and Metadata Info */}
+                  <div className="mt-4 space-y-4">
+                    {/* File Paths */}
+                    <div className="p-3 bg-muted rounded-md text-sm space-y-2">
+                      {fetchState.result.markdown_path && (
+                        <p className="text-muted-foreground">
+                          📄 Markdown: {fetchState.result.markdown_path}
+                        </p>
+                      )}
+                      {fetchState.result.pdf_path && (
+                        <p className="text-muted-foreground">
+                          📑 PDF: {fetchState.result.pdf_path}
+                        </p>
+                      )}
+                    </div>
+                    
+                    {/* Metadata Display */}
+                    {fetchState.result.metadata && (
+                      <Accordion type="single" collapsible className="w-full">
+                        <AccordionItem value="metadata">
+                          <AccordionTrigger>Page Metadata</AccordionTrigger>
+                          <AccordionContent>
+                            <div className="text-sm bg-muted/50 p-3 rounded-md space-y-2">
+                              {Object.entries(fetchState.result.metadata).map(([key, value]) => (
+                                <div key={key} className="grid grid-cols-3 gap-2">
+                                  <span className="font-medium">{key}:</span>
+                                  <span className="col-span-2">{typeof value === 'string' ? value : JSON.stringify(value)}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </AccordionContent>
+                        </AccordionItem>
+                      </Accordion>
                     )}
-                    {fetchState.result.pdf_path && (
-                      <p className="text-muted-foreground">
-                        📑 PDF: {fetchState.result.pdf_path}
-                      </p>
+                    
+                    {/* Extracted Links */}
+                    {fetchState.result.links && fetchState.result.links.length > 0 && (
+                      <Accordion type="single" collapsible className="w-full">
+                        <AccordionItem value="links">
+                          <AccordionTrigger>Extracted Links ({fetchState.result.links.length})</AccordionTrigger>
+                          <AccordionContent>
+                            <ScrollArea className="h-[200px]">
+                              <div className="space-y-2">
+                                {fetchState.result.links.map((link, index) => (
+                                  <div key={index} className="text-sm border-b pb-2">
+                                    <a 
+                                      href={link.url} 
+                                      target="_blank" 
+                                      rel="noopener noreferrer"
+                                      className="text-primary hover:underline"
+                                    >
+                                      {link.text || link.url}
+                                    </a>
+                                  </div>
+                                ))}
+                              </div>
+                            </ScrollArea>
+                          </AccordionContent>
+                        </AccordionItem>
+                      </Accordion>
                     )}
                   </div>
                 </CardContent>

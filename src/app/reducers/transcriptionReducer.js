@@ -99,9 +99,61 @@ export function transcriptionReducer(state, action) {
     case ACTIONS.SET_TARGET_SELECTOR:
       return { ...state, targetSelector: action.payload };
     case ACTIONS.ADD_TRANSCRIPTION_SEGMENT:
+      // Skip empty segments
+      if (!action.payload || action.payload.trim() === '') {
+        return state;
+      }
+      
+      // Get the cleaned segment text
+      const formattedSegment = action.payload.trim();
+      
+      // First check for exact duplicates to prevent redundancy
+      if (state.transcriptionSegments.some(segment => segment === formattedSegment)) {
+        return state;
+      }
+      
+      // Handle continuous speech with partial updates
+      if (state.transcriptionSegments.length > 0) {
+        const lastSegment = state.transcriptionSegments[state.transcriptionSegments.length - 1];
+        
+        // If the new segment completely contains the previous one (incremental update)
+        if (formattedSegment.includes(lastSegment)) {
+          return {
+            ...state,
+            transcriptionSegments: [
+              ...state.transcriptionSegments.slice(0, -1),
+              formattedSegment
+            ]
+          };
+        }
+        
+        // If this is clearly a new sentence starting (previous ends with ending punctuation)
+        const lastChar = lastSegment.trim().slice(-1);
+        if (['.', '!', '?', '...'].includes(lastChar)) {
+          return {
+            ...state,
+            transcriptionSegments: [...state.transcriptionSegments, formattedSegment]
+          };
+        }
+        
+        // Check for overlaps - the last few words of the previous segment match the first few of the new one
+        const lastWords = lastSegment.split(' ').slice(-3).join(' '); // Get last 3 words
+        if (formattedSegment.startsWith(lastWords) && lastWords.length > 10) { // Only if meaningful overlap
+          const combinedSegment = lastSegment + formattedSegment.substring(lastWords.length);
+          return {
+            ...state,
+            transcriptionSegments: [
+              ...state.transcriptionSegments.slice(0, -1),
+              combinedSegment
+            ]
+          };
+        }
+      }
+      
+      // Add as a new segment for other cases
       return {
         ...state,
-        transcriptionSegments: [...state.transcriptionSegments, action.payload]
+        transcriptionSegments: [...state.transcriptionSegments, formattedSegment]
       };
     case ACTIONS.SET_COMPLETED_TRANSCRIPTION:
       return {
