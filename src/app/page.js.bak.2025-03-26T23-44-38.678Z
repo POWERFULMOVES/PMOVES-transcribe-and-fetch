@@ -277,103 +277,60 @@ export default function Home() {
         payload: 'Real-time updates connected' 
       });
     },
-    
-onMessage: (data) => {
-  console.log('SSE message received:', data);
-  
-  // Handle different message types
-  if (data.type === 'status') {
-    dispatch({ 
-      type: ACTIONS.ADD_STATUS_UPDATE, 
-      payload: data.content 
-    });
-  } else if (data.type === 'transcription_segment') {
-    try {
-      // Handle both string and object content formats
-      let segmentContent = data.content;
+    onMessage: (data) => {
+      console.log('SSE message received:', data);
       
-      // If content is a string that looks like a pipe-delimited table row, parse it
-      if (typeof segmentContent === 'string' && segmentContent.includes('|')) {
-        // Try to extract data from markdown table format: | [timestamp](url) | video_id | id | start | end | text |
-        const parts = segmentContent.split('|').filter(p => p.trim());
-        if (parts.length >= 6) {
-          // Extract timestamp from markdown link format [00:00](url)
-          const timestampMatch = parts[0].match(/\[(.*?)\]/);
-          const urlMatch = parts[0].match(/\((.*?)\)/);
-          
-          segmentContent = {
-            watch_url: urlMatch ? urlMatch[1] : null,
-            video_id: parts[1].trim(),
-            id: parseInt(parts[2].trim()) || state.transcriptionSegments.length,
-            start_time: timestampMatch ? timestampMatch[1] : '00:00',
-            end_time: parts[4].trim(),
-            text: parts[5].trim()
-          };
-        }
-      }
-      
-      // Create a properly formatted segment object
-      const segment = {
-        text: typeof segmentContent === 'object' ? segmentContent.text : segmentContent,
-        start_time: typeof segmentContent === 'object' ? 
-          parseFloat(segmentContent.start_time || segmentContent.start || 0) : 0,
-        end_time: typeof segmentContent === 'object' ? 
-          parseFloat(segmentContent.end_time || segmentContent.end || 0) : 0,
-        id: typeof segmentContent === 'object' ? 
-          (segmentContent.id || state.transcriptionSegments.length) : state.transcriptionSegments.length,
-        video_id: typeof segmentContent === 'object' ? 
-          (segmentContent.video_id || state.youtubeUrl?.split('v=')[1] || '') : 
-          (state.youtubeUrl?.split('v=')[1] || ''),
-        watch_url: typeof segmentContent === 'object' && segmentContent.watch_url ? 
-          segmentContent.watch_url : 
-          (state.youtubeUrl?.split('v=')[1] ? 
-            `https://www.youtube.com/watch?v=${state.youtubeUrl.split('v=')[1]}&t=${Math.floor(
-              typeof segmentContent === 'object' ? 
-                parseFloat(segmentContent.start_time || segmentContent.start || 0) : 0
-            )}` : 
-            null)
-      };
-      
-      console.log('Parsed segment:', segment);
-      
-      // Only add valid segments with proper timing
-      if (segment.text && !isNaN(segment.start_time)) {
+      // Handle different message types
+      if (data.type === 'status') {
         dispatch({ 
-          type: ACTIONS.ADD_TRANSCRIPTION_SEGMENT, 
-          payload: segment 
+          type: ACTIONS.ADD_STATUS_UPDATE, 
+          payload: data.content 
         });
-      } else {
-        console.warn('Invalid segment data:', segmentContent);
+      } else if (data.type === 'transcription_segment') {
+        // Parse the segment data according to Groq's format
+        const segment = {
+          text: data.content?.text || data.content,
+          start_time: parseFloat(data.content?.start_time || data.content?.timestamp || 0),
+          end_time: parseFloat(data.content?.end_time || 0),
+          id: data.content?.id || state.transcriptionSegments.length,
+          video_id: state.youtubeUrl?.split('v=')[1] || '',
+          watch_url: state.youtubeUrl?.split('v=')[1] ? 
+            `https://www.youtube.com/watch?v=${state.youtubeUrl.split('v=')[1]}&t=${Math.floor(data.content?.start_time || data.content?.timestamp || 0)}` : 
+            null
+        };
+        
+        // Only add valid segments with proper timing
+        if (segment.text && !isNaN(segment.start_time)) {
+          dispatch({ 
+            type: ACTIONS.ADD_TRANSCRIPTION_SEGMENT, 
+            payload: segment 
+          });
+        }
+      } else if (data.type === 'transcription_complete') {
+        // Disconnect the SSE connection
+        disconnectSSE();
+        
+        dispatch({ 
+          type: ACTIONS.SET_TRANSCRIBING, 
+          payload: false 
+        });
+        dispatch({ 
+          type: ACTIONS.ADD_STATUS_UPDATE, 
+          payload: 'Transcription completed' 
+        });
+        dispatch({ 
+          type: ACTIONS.SET_ACTIVE_STEP, 
+          payload: 3 
+        });
+      } else if (data.type === 'error') {
+        dispatch({ 
+          type: ACTIONS.SET_ERROR, 
+          payload: data.content 
+        });
+      } else if (data.type === 'heartbeat') {
+        console.log('Heartbeat received from server');
       }
-    } catch (error) {
-      console.error('Error parsing transcription segment:', error, data);
-    }
-  } else if (data.type === 'transcription_complete') {
-    // Disconnect the SSE connection
-    disconnectSSE();
-    
-    dispatch({ 
-      type: ACTIONS.SET_TRANSCRIBING, 
-      payload: false 
-    });
-    dispatch({ 
-      type: ACTIONS.ADD_STATUS_UPDATE, 
-      payload: 'Transcription completed' 
-    });
-    dispatch({ 
-      type: ACTIONS.SET_ACTIVE_STEP, 
-      payload: 3 
-    });
-  } else if (data.type === 'error') {
-    dispatch({ 
-      type: ACTIONS.SET_ERROR, 
-      payload: data.content 
-    });
-  } else if (data.type === 'heartbeat') {
-    console.log('Heartbeat received from server');
-  }
-}
-},
+    },
     onError: (error) => {
       console.error('SSE connection error:', error);
       dispatch({ 

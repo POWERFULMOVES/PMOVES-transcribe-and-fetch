@@ -394,21 +394,6 @@ def format_sse_message(message_type: str, content: Any, metadata: dict = None) -
         
     return f"data: {json.dumps(message)}\n\n"
 
-
-# Standardized SSE message formatter
-def format_sse_message(message_type: str, content: Any, metadata: dict = None) -> str:
-    '''Format a message for SSE transmission with consistent structure.'''
-    message = {
-        "type": message_type,
-        "content": content,
-        "timestamp": datetime.now().isoformat()
-    }
-    
-    if metadata:
-        message["metadata"] = metadata
-        
-    return f"data: {json.dumps(message)}\n\n"
-
 @app.get("/combined-updates")
 async def get_combined_updates(request: Request):
     """Endpoint for Server-Sent Events that combines status and transcription updates."""

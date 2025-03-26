@@ -306,18 +306,6 @@ async def transcribe_audio(audio_path: str, status_queue: asyncio.Queue, transcr
     ) as progress:
         transcription_task = progress.add_task("[cyan]Transcribing audio...", total=None)
         
-    # Create a rich progress display
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(),
-        TextColumn("[bold green]{task.completed}/{task.total}"),
-        TimeElapsedColumn(),
-        console=console,
-        transient=True
-    ) as progress:
-        transcription_task = progress.add_task("[cyan]Transcribing audio...", total=None)
-        
     """
     Transcribe audio file with real-time updates and proper formatting
     

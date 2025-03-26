@@ -41,7 +41,7 @@ function fixSvgViewBox(filePath) {
     let content = fs.readFileSync(filePath, 'utf8');
     
     // Check if the file contains the problematic viewBox attribute
-    if (content.includes('viewBox="0 0 100 4"')) {
+    if (content.includes('viewBox="0 0 100% 4"')) {
       console.log(`Found problematic viewBox in ${filePath}`);
       
       // Create backup
@@ -50,7 +50,7 @@ function fixSvgViewBox(filePath) {
       console.log(`Created backup: ${backupPath}`);
       
       // Fix the viewBox attribute
-      content = content.replace(/viewBox="0 0 100 4"/g, 'viewBox="0 0 100 4"');
+      content = content.replace(/viewBox="0 0 100% 4"/g, 'viewBox="0 0 100 4"');
       
       // Write the updated content
       fs.writeFileSync(filePath, content, 'utf8');

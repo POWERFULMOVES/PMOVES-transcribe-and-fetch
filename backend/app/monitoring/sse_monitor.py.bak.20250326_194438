@@ -167,10 +167,6 @@ class SSEMonitor:
         # Add summary statistics
         total_messages = sum(c['message_count'] for c in self.connections.values())
         self.console.print(f"[bold]Total connections:[/bold] {len(self.connections)} | [bold]Total messages:[/bold] {total_messages}")
-        
-        # Add summary statistics
-        total_messages = sum(c['message_count'] for c in self.connections.values())
-        self.console.print(f"[bold]Total connections:[/bold] {len(self.connections)} | [bold]Total messages:[/bold] {total_messages}")
 
     def get_connection_stats(self) -> Dict[str, Any]:
         """Get statistics about SSE connections"""
