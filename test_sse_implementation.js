@@ -6,9 +6,7 @@
  */
 
 // Import EventSource from the eventsource package
-const EventSourcePolyfill = require('eventsource');
-// Use the polyfill as EventSource
-const EventSource = EventSourcePolyfill;
+const EventSource = require('eventsource');
 const axios = require('axios');
 const readline = require('readline');
 
