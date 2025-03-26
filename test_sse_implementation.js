@@ -52,7 +52,9 @@ async function testSSEConnection() {
       eventSource.onmessage = (event) => {
         console.log('Received SSE message:', event.data);
         try {
-          const data = JSON.parse(event.data);
+          // Remove the "data: " prefix if it exists
+          const jsonStr = event.data.startsWith('data: ') ? event.data.substring(6) : event.data;
+          const data = JSON.parse(jsonStr);
           console.log('Parsed message:', data);
         } catch (error) {
           console.warn('Could not parse message as JSON:', error);
@@ -124,7 +126,9 @@ async function testTranscription() {
         // Message received
         eventSource.onmessage = (event) => {
           try {
-            const data = JSON.parse(event.data);
+            // Remove the "data: " prefix if it exists
+            const jsonStr = event.data.startsWith('data: ') ? event.data.substring(6) : event.data;
+            const data = JSON.parse(jsonStr);
             
             // Count message types
             if (data.type && messages[data.type] !== undefined) {
