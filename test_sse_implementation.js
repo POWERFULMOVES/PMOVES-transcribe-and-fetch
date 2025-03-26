@@ -5,7 +5,10 @@
  * and verifying that messages are received correctly.
  */
 
-const EventSource = require('eventsource');
+// Import EventSource from the eventsource package
+const EventSourcePolyfill = require('eventsource');
+// Use the polyfill as EventSource
+const EventSource = EventSourcePolyfill;
 const axios = require('axios');
 const readline = require('readline');
 
