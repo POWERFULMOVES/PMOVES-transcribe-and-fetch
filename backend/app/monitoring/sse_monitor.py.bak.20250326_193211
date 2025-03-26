@@ -11,7 +11,6 @@ from rich.logging import RichHandler
 import asyncio
 from collections import deque
 import threading
-import time
 
 console = Console()
 
@@ -98,61 +97,37 @@ class SSEMonitor:
         self._update_display()
 
     def _update_display(self):
-        '''Update the console display with current status (optimized for performance)'''
-        # Only show active connections and recent messages
-        if not self.connections:
-            return  # Skip display update if no connections
-            
+        """Update the console display with current status"""
         # Create connections table
         conn_table = Table(title="Active SSE Connections")
-        conn_table.add_column("Client ID", style="cyan")
-        conn_table.add_column("Endpoint", style="green")
-        conn_table.add_column("Connected At", style="yellow")
-        conn_table.add_column("Messages", style="magenta")
+        conn_table.add_column("Client ID")
+        conn_table.add_column("Endpoint")
+        conn_table.add_column("Connected At")
+        conn_table.add_column("Messages")
         
         for client_id, info in self.connections.items():
             conn_table.add_row(
-                client_id[:8] + "...",  # Truncate long client IDs
+                client_id,
                 info['endpoint'],
                 info['connected_at'].strftime("%H:%M:%S"),
                 str(info['message_count'])
             )
         
-        # Create recent messages table (only show last 3 messages to reduce clutter)
+        # Create recent messages table
         msg_table = Table(title="Recent SSE Messages")
-        msg_table.add_column("Time", style="cyan")
-        msg_table.add_column("Client", style="green")
-        msg_table.add_column("Type", style="yellow")
-        msg_table.add_column("Direction", style="magenta")
-        msg_table.add_column("Data Preview", style="blue")
+        msg_table.add_column("Time")
+        msg_table.add_column("Client")
+        msg_table.add_column("Type")
+        msg_table.add_column("Direction")
+        msg_table.add_column("Data Preview")
         
-        # Filter out heartbeat messages and only show last 3 non-heartbeat messages
-        filtered_messages = [
-            msg for msg in list(self.messages)
-            if msg['type'] != 'heartbeat'
-        ][-3:]
-        
-        for msg in filtered_messages:
+        for msg in list(self.messages)[-5:]:  # Show last 5 messages
             try:
-                # Format data preview based on message type
-                if isinstance(msg['data'], dict):
-                    data_preview = json.dumps(msg['data'])[:50] + "..." if len(json.dumps(msg['data'])) > 50 else json.dumps(msg['data'])
-                else:
-                    data_preview = str(msg['data'])[:50] + "..." if len(str(msg['data'])) > 50 else str(msg['data'])
-                
-                # Use different styles based on message type
-                type_style = "green"
-                if msg['type'] == 'error':
-                    type_style = "red bold"
-                elif msg['type'] == 'status':
-                    type_style = "cyan"
-                elif msg['type'] == 'transcription_segment':
-                    type_style = "yellow"
-                
+                data_preview = json.dumps(msg['data'])[:50] + "..." if len(str(msg['data'])) > 50 else str(msg['data'])
                 msg_table.add_row(
                     msg['timestamp'].strftime("%H:%M:%S"),
                     msg['client_id'][:8],
-                    f"[{type_style}]{msg['type']}[/{type_style}]",
+                    msg['type'],
                     msg['direction'],
                     data_preview
                 )
@@ -163,10 +138,6 @@ class SSEMonitor:
         self.console.clear()
         self.console.print(conn_table)
         self.console.print(msg_table)
-        
-        # Add summary statistics
-        total_messages = sum(c['message_count'] for c in self.connections.values())
-        self.console.print(f"[bold]Total connections:[/bold] {len(self.connections)} | [bold]Total messages:[/bold] {total_messages}")
 
     def get_connection_stats(self) -> Dict[str, Any]:
         """Get statistics about SSE connections"""

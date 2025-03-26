@@ -4,6 +4,7 @@ import React, { useEffect, useCallback, useRef, useReducer, useState } from 'rea
 import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 import Image from 'next/image';
+import useSSE from '@/hooks/useSSE';
 
 import {
   Tabs,
@@ -56,6 +57,103 @@ import {
   ALERT_TYPES 
 } from '@/lib/constants';
 
+// Transcription styling constants
+const TRANSCRIPTION_STYLES = {
+  groq: {
+    icon: '☁️',
+    color: 'blue',
+    border: 'blue-200',
+    content_color: 'blue-700',
+    title: 'Groq Cloud Transcription',
+    hover: 'hover:bg-blue-50 dark:hover:bg-blue-900/20'
+  },
+  'faster-whisper': {
+    icon: '💻',
+    color: 'green',
+    border: 'green-200',
+    content_color: 'green-700',
+    title: 'Local Whisper Transcription',
+    hover: 'hover:bg-green-50 dark:hover:bg-green-900/20'
+  },
+  default: {
+    icon: '🎙️',
+    color: 'gray',
+    border: 'gray-200',
+    content_color: 'gray-700',
+    title: 'Transcription',
+    hover: 'hover:bg-gray-50 dark:hover:bg-gray-800/50'
+  }
+};
+
+// TranscriptionSegment component for enhanced display
+const TranscriptionSegment = ({ segment, index, isLatest, isTranscribing, model }) => {
+  // Get style based on model type
+  const style = TRANSCRIPTION_STYLES[model] || TRANSCRIPTION_STYLES.default;
+  
+  // Format timestamp for display
+  const formatTimeStamp = (seconds) => {
+    if (isNaN(seconds) || seconds < 0) return '00:00.00';
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.floor(seconds % 60);
+    const milliseconds = Math.floor((seconds % 1) * 100);
+    return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(2, '0')}`;
+  };
+  
+  // Calculate duration if both start and end times are available
+  const duration = segment.end_time && segment.start_time 
+    ? (segment.end_time - segment.start_time).toFixed(2) + 's'
+    : '';
+  
+  return (
+    <div 
+      className={`group relative py-2 px-3 rounded-md border border-${style.border} transition-all duration-200 ${style.hover} ${isLatest ? 'bg-opacity-20 bg-' + style.color + '-100' : ''}`}
+    >
+      {/* Timestamp and duration */}
+      <div className="flex justify-between items-center mb-1 text-xs text-muted-foreground">
+        <div className="flex items-center">
+          <span className={`text-${style.color}-500 mr-1`}>{style.icon}</span>
+          <span className="font-mono">{formatTimeStamp(segment.start_time)}</span>
+          {duration && (
+            <span className="ml-2 opacity-70">({duration})</span>
+          )}
+        </div>
+        
+        {/* Watch link */}
+        {segment.watch_url && (
+          <a 
+            href={segment.watch_url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className={`opacity-0 group-hover:opacity-100 transition-opacity text-${style.color}-600 hover:underline flex items-center`}
+          >
+            <span className="mr-1">Watch</span>
+            <span>↗</span>
+          </a>
+        )}
+      </div>
+      
+      {/* Transcription text */}
+      <div className={`text-base leading-relaxed text-${style.content_color} dark:text-${style.color}-300`}>
+        {segment.text}
+        {isLatest && isTranscribing && (
+          <span className={`inline-block w-1.5 h-4 bg-${style.color}-500 ml-0.5 animate-pulse-fast align-middle`}></span>
+        )}
+      </div>
+      
+      {/* Segment metadata (if available) */}
+      {segment.metadata && (
+        <div className="mt-1 text-xs text-muted-foreground opacity-70">
+          {Object.entries(segment.metadata).map(([key, value]) => (
+            <span key={key} className="mr-2">
+              {key}: {typeof value === 'object' ? JSON.stringify(value) : value}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+};
+
 const steps = [
   'Enter YouTube URL',
   'Process Video',
@@ -99,9 +197,6 @@ export default function Home() {
   let resizeObserver;
   let rafId;
   const statusBoxRef = useRef(null);
-
-  // Define eventSource as a ref to keep state between renders
-  const eventSource = useRef(null);
 
   // Function to manually check backend health
   const checkBackendHealth = async () => {
@@ -162,139 +257,102 @@ export default function Home() {
     }
   };
 
-  // Function to set up Server-Sent Events connection
-  const setupSSE = () => {
-    // Close any existing connection
-    if (eventSource.current) {
-      console.log(`Closing existing SSE connection, readyState: ${eventSource.current.readyState}`);
-      eventSource.current.close();
-      eventSource.current = null;
-    }
-
-    // Create an abort controller with timeout
-    const timeoutId = setTimeout(() => {
-      console.log('SSE connection timed out');
+  // Use the standardized SSE hook for combined updates
+  const {
+    connected: sseConnected,
+    error: sseError,
+    lastMessage: sseLastMessage,
+    connect: connectSSE,
+    disconnect: disconnectSSE
+  } = useSSE('/combined-updates', {
+    autoConnect: false, // We'll connect manually when transcribing starts
+    withCredentials: true,
+    maxRetries: 3,
+    reconnectDelay: 1000,
+    timeout: 30000,
+    onConnect: () => {
+      console.log('SSE connection established');
       dispatch({ 
-        type: ACTIONS.SET_ERROR, 
-        payload: 'Connection to server timed out' 
+        type: ACTIONS.ADD_STATUS_UPDATE, 
+        payload: 'Real-time updates connected' 
       });
+    },
+    onMessage: (data) => {
+      console.log('SSE message received:', data);
       
-      // Stop transcribing if connection times out
-      dispatch({ 
-        type: ACTIONS.SET_TRANSCRIBING, 
-        payload: false 
-      });
-    }, 30000); // 30 second timeout
-
-    console.log(`Setting up new SSE connection to ${BACKEND_URL}/combined-updates at ${new Date().toISOString()}`);
-    
-    try {
-      // Create a new EventSource connection with options
-      eventSource.current = new EventSource(`${BACKEND_URL}/combined-updates`, { 
-        withCredentials: true 
-      });
-      
-      // Connection opened
-      eventSource.current.onopen = (event) => {
-        clearTimeout(timeoutId); // Clear timeout on successful connection
-        console.log(`SSE connection opened successfully, readyState: ${eventSource.current.readyState}`);
+      // Handle different message types
+      if (data.type === 'status') {
         dispatch({ 
           type: ACTIONS.ADD_STATUS_UPDATE, 
-          payload: 'Real-time updates connected' 
+          payload: data.content 
         });
-      };
-      
-      // Message received
-      eventSource.current.onmessage = (event) => {
-        if (!event.data || event.data === '') {
-          console.log('Empty SSE message received, ignoring');
-          return;
-        }
+      } else if (data.type === 'transcription_segment') {
+        // Parse the segment data according to Groq's format
+        const segment = {
+          text: data.content?.text || data.content,
+          start_time: parseFloat(data.content?.start_time || data.content?.timestamp || 0),
+          end_time: parseFloat(data.content?.end_time || 0),
+          id: data.content?.id || state.transcriptionSegments.length,
+          video_id: state.youtubeUrl?.split('v=')[1] || '',
+          watch_url: state.youtubeUrl?.split('v=')[1] ? 
+            `https://www.youtube.com/watch?v=${state.youtubeUrl.split('v=')[1]}&t=${Math.floor(data.content?.start_time || data.content?.timestamp || 0)}` : 
+            null
+        };
         
-        try {
-          const data = JSON.parse(event.data);
-          console.log('SSE message received:', data);
-          
-          // Handle different message types
-          if (data.type === 'status') {
-            dispatch({ 
-              type: ACTIONS.ADD_STATUS_UPDATE, 
-              payload: data.content 
-            });
-          } else if (data.type === 'transcription_segment') {
-            dispatch({ 
-              type: ACTIONS.ADD_TRANSCRIPTION_SEGMENT, 
-              payload: data.content 
-            });
-          } else if (data.type === 'transcription_complete') {
-            dispatch({ 
-              type: ACTIONS.SET_TRANSCRIBING, 
-              payload: false 
-            });
-            dispatch({ 
-              type: ACTIONS.ADD_STATUS_UPDATE, 
-              payload: 'Transcription completed' 
-            });
-          } else if (data.type === 'error') {
-            dispatch({ 
-              type: ACTIONS.SET_ERROR, 
-              payload: data.content 
-            });
-          } else if (data.type === 'heartbeat') {
-            console.log('Heartbeat received from server');
-          }
-        } catch (error) {
-          console.error('Error parsing SSE message:', error, event.data);
+        // Only add valid segments with proper timing
+        if (segment.text && !isNaN(segment.start_time)) {
+          dispatch({ 
+            type: ACTIONS.ADD_TRANSCRIPTION_SEGMENT, 
+            payload: segment 
+          });
         }
-      };
-      
-      // Error handling with exponential backoff
-      let retryCount = 0;
-      const maxRetries = 3;
-      
-      eventSource.current.onerror = (error) => {
-        console.error('SSE connection error:', error);
+      } else if (data.type === 'transcription_complete') {
+        // Disconnect the SSE connection
+        disconnectSSE();
         
-        if (retryCount < maxRetries) {
-          const delay = Math.pow(2, retryCount) * 1000; // Exponential backoff
-          retryCount++;
-          
-          console.log(`Attempting to reconnect SSE in ${delay}ms (attempt ${retryCount} of ${maxRetries})`);
-          dispatch({ 
-            type: ACTIONS.ADD_STATUS_UPDATE, 
-            payload: `Connection error, retrying in ${delay / 1000} seconds...` 
-          });
-          
-          setTimeout(setupSSE, delay);
-        } else {
-          console.error('Max SSE reconnection attempts reached');
-          dispatch({ 
-            type: ACTIONS.SET_ERROR, 
-            payload: 'Failed to establish connection with server after multiple attempts' 
-          });
-          
-          // Close the connection
-          if (eventSource.current) {
-            eventSource.current.close();
-            eventSource.current = null;
-          }
-          
-          // Stop transcribing
-          dispatch({ 
-            type: ACTIONS.SET_TRANSCRIBING, 
-            payload: false 
-          });
-        }
-      };
-    } catch (setupError) {
-      clearTimeout(timeoutId);
-      console.error('Error setting up SSE connection:', setupError);
+        dispatch({ 
+          type: ACTIONS.SET_TRANSCRIBING, 
+          payload: false 
+        });
+        dispatch({ 
+          type: ACTIONS.ADD_STATUS_UPDATE, 
+          payload: 'Transcription completed' 
+        });
+        dispatch({ 
+          type: ACTIONS.SET_ACTIVE_STEP, 
+          payload: 3 
+        });
+      } else if (data.type === 'error') {
+        dispatch({ 
+          type: ACTIONS.SET_ERROR, 
+          payload: data.content 
+        });
+      } else if (data.type === 'heartbeat') {
+        console.log('Heartbeat received from server');
+      }
+    },
+    onError: (error) => {
+      console.error('SSE connection error:', error);
       dispatch({ 
-        type: ACTIONS.SET_ERROR, 
-        payload: `Error setting up SSE connection: ${setupError.message}` 
+        type: ACTIONS.ADD_STATUS_UPDATE, 
+        payload: `Connection error: ${error.message || 'Unknown error'}` 
       });
+    },
+    onDisconnect: () => {
+      console.log('SSE connection closed');
+      // Only update transcribing state if it was due to an error, not completion
+      if (state.transcribing) {
+        dispatch({ 
+          type: ACTIONS.SET_TRANSCRIBING, 
+          payload: false 
+        });
+        dispatch({ 
+          type: ACTIONS.ADD_STATUS_UPDATE, 
+          payload: 'Connection to server lost' 
+        });
+      }
     }
-  };
+  });
 
   useEffect(() => {
     const handleResize = () => {
@@ -508,18 +566,14 @@ useEffect(() => {
   useEffect(() => {
     // Set up SSE if transcribing
     if (state.transcribing) {
-      setupSSE();
+      connectSSE();
     }
     
     // Cleanup on unmount
     return () => {
-      if (eventSource.current) {
-        console.log("Component unmounting, closing SSE connection");
-        eventSource.current.close();
-        eventSource.current = null;
-      }
+      disconnectSSE();
     };
-  }, [state.transcribing]); // Only re-run when transcribing state changes
+  }, [state.transcribing, connectSSE, disconnectSSE]); // Only re-run when transcribing state changes
 
   useEffect(() => {
     const testConnection = async () => {
@@ -536,18 +590,19 @@ useEffect(() => {
         });
         
         console.log("Backend connected successfully:", response.data);
+        setBackendStatus("connected");
         
-        dispatch({ 
-          type: ACTIONS.ADD_STATUS_UPDATE, 
-          payload: 'Backend connection test successful' 
-        });
+        // Only add status update if it's not already in the list
+        if (!state.statusUpdates.includes('Backend connection successful')) {
+          dispatch({ 
+            type: ACTIONS.ADD_STATUS_UPDATE, 
+            payload: 'Backend connection successful' 
+          });
+        }
         
         if (response.data && response.data.status === 'ok') {
           console.log("Backend is ready");
-          dispatch({ 
-            type: ACTIONS.ADD_STATUS_UPDATE, 
-            payload: `Backend ready: ${response.data.message}` 
-          });
+          setBackendStatus("connected");
         }
       } catch (error) {
         console.error("Error connecting to backend:", error);
@@ -564,31 +619,39 @@ useEffect(() => {
           
           if (healthResponse.data && healthResponse.data.status === 'healthy') {
             console.log("Health check successful:", healthResponse.data);
-            dispatch({ 
-              type: ACTIONS.ADD_STATUS_UPDATE, 
-              payload: `Backend health check successful: ${healthResponse.data.message}` 
-            });
+            setBackendStatus("connected");
+            
+            // Only add status update if it's not already in the list
+            if (!state.statusUpdates.includes('Backend health check successful')) {
+              dispatch({ 
+                type: ACTIONS.ADD_STATUS_UPDATE, 
+                payload: 'Backend health check successful' 
+              });
+            }
             return;
           }
         } catch (healthError) {
           console.error("Health endpoint failed:", healthError);
+          setBackendStatus("error");
           dispatch({ 
             type: ACTIONS.SET_ERROR, 
             payload: `Backend connection failed: ${error.message || 'Unknown error'}` 
           });
           
           // Display helpful instructions
-          dispatch({ 
-            type: ACTIONS.ADD_STATUS_UPDATE, 
-            payload: 'Check if server is running by opening a terminal and running "cd backend/app" then "uvicorn main:app --reload"' 
-          });
+          if (!state.statusUpdates.includes('Check if server is running by opening a terminal and running "cd backend/app" then "uvicorn main:app --reload"')) {
+            dispatch({ 
+              type: ACTIONS.ADD_STATUS_UPDATE, 
+              payload: 'Check if server is running by opening a terminal and running "cd backend/app" then "uvicorn main:app --reload"' 
+            });
+          }
         }
       }
     };
     
     // Test connection immediately when component mounts
     testConnection();
-  }, []);
+  }, [state.statusUpdates]);
 
   // Update the timer effect to properly handle transcription state
   useEffect(() => {
@@ -841,6 +904,23 @@ useEffect(() => {
     ];
   };
 
+  // Update the formatTime function to handle invalid timestamps
+  const formatTime = (seconds) => {
+    if (isNaN(seconds) || seconds < 0) return '0:00';
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.floor(seconds % 60);
+    return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
+  };
+
+  // Add this helper function near your other formatting functions
+  const formatTimeStamp = (seconds) => {
+    if (isNaN(seconds) || seconds < 0) return '00:00.00';
+    const minutes = Math.floor(seconds / 60);
+    const remainingSeconds = Math.floor(seconds % 60);
+    const milliseconds = Math.floor((seconds % 1) * 100);
+    return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(2, '0')}`;
+  };
+
   return (
     <>
       <main className="container mx-auto mt-8 p-4 max-w-3xl">
@@ -1014,32 +1094,7 @@ useEffect(() => {
             </CardContent>
           </Card>
 
-          {/* Add this after the status updates box */}
-          <div className="mt-4 flex justify-between items-center">
-            <div>
-              <span className="text-sm mr-2">Backend Status:</span>
-              <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                backendStatus === "connected" ? "bg-green-100 text-green-800" :
-                backendStatus === "error" ? "bg-red-100 text-red-800" :
-                backendStatus === "checking" ? "bg-yellow-100 text-yellow-800" :
-                "bg-gray-100 text-gray-800"
-              }`}>
-                {backendStatus === "connected" ? "Connected" :
-                 backendStatus === "error" ? "Connection Error" :
-                 backendStatus === "checking" ? "Checking..." :
-                 "Unknown"}
-              </span>
-            </div>
-            
-            <Button 
-              size="sm" 
-              variant="outline" 
-              onClick={checkBackendHealth} 
-              disabled={backendStatus === "checking"}
-            >
-              {backendStatus === "checking" ? "Checking..." : "Check Connection"}
-            </Button>
-          </div>
+          {/* Backend status is now shown in the status updates box */}
 
           {/* Live Transcription Box - Resizable */}
           <Card>
@@ -1065,27 +1120,24 @@ useEffect(() => {
             <CardContent>
               <div className="resize-y overflow-auto min-h-[250px] h-[400px] max-h-[800px]">
                 <ScrollArea className="h-full w-full rounded-md border p-4" id="transcription-scroll-area">
-                  <div ref={transcriptionBoxRef} className="space-y-1 relative">
+                  <div ref={transcriptionBoxRef} className="space-y-2">
                     {state.transcriptionSegments.length > 0 ? (
-                      state.transcriptionSegments.map((segment, index) => (
-                        <div 
-                          key={index} 
-                          className={`text-sm py-1 transition-all duration-150 ${
-                            index === state.transcriptionSegments.length - 1 && state.transcribing 
-                              ? 'border-l-2 border-primary pl-2 font-medium' 
-                              : 'pl-2'
-                          }`}
-                        >
-                          {segment}
-                          {index === state.transcriptionSegments.length - 1 && state.transcribing && (
-                            <span className="inline-block w-1.5 h-4 bg-primary ml-0.5 animate-pulse-fast"></span>
-                          )}
-                        </div>
-                      ))
+                      state.transcriptionSegments
+                        .sort((a, b) => a.start_time - b.start_time)
+                        .map((segment, index) => (
+                          <TranscriptionSegment 
+                            key={index}
+                            segment={segment}
+                            index={index}
+                            isLatest={index === state.transcriptionSegments.length - 1}
+                            isTranscribing={state.transcribing}
+                            model={state.transcriptionModel}
+                          />
+                        ))
                     ) : (
-                      <div className="text-muted-foreground text-center p-4">
+                      <div className="flex items-center justify-center h-full text-muted-foreground">
                         {state.transcribing ? (
-                          <div className="flex items-center justify-center">
+                          <div className="flex items-center">
                             <div className="animate-pulse">Waiting for transcription to begin</div>
                             <span className="ml-1 inline-flex">
                               <span className="animate-[bounce_1s_infinite_100ms] mr-0.5">.</span>

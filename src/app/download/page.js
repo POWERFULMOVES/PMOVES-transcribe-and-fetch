@@ -3,6 +3,7 @@
 import { useEffect, useRef, useReducer, useState } from 'react';
 import axios from 'axios';
 import Image from 'next/image';
+import useSSE from '@/hooks/useSSE';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -127,127 +128,120 @@ export default function Download() {
     }
   }, [state.statusUpdates]);
 
-  // Update the SSE connection setup
-  useEffect(() => {
-    let eventSource = null;
-
-    if (state.downloading) {
-      console.log("Setting up SSE connection to", `${BACKEND_URL}/api/download-status`);
-      
+  // Use the standardized SSE hook for download status updates
+  const {
+    connected: sseConnected,
+    error: sseError,
+    lastMessage: sseLastMessage,
+    connect: connectSSE,
+    disconnect: disconnectSSE
+  } = useSSE('/api/download-status', {
+    autoConnect: false, // We'll connect manually when download starts
+    withCredentials: true,
+    maxRetries: 3,
+    reconnectDelay: 1000,
+    timeout: 30000,
+    onConnect: () => {
+      console.log('SSE connection established for downloads');
       toast({
-        title: "Connecting to download status...",
-        description: "Waiting for updates from server"
+        title: "Connected to download status",
+        description: "Ready to receive updates"
+      });
+    },
+    onMessage: (data) => {
+      console.log('SSE download update received:', data);
+      
+      // Show a toast notification for progress updates (but not too frequently)
+      if (data.type === 'progress' && (data.progress % 10 === 0 || data.progress === 100)) {
+        toast({
+          title: "Download in progress",
+          description: `Progress: ${data.progress}%`
+        });
+      }
+      
+      if (data.type === 'progress') {
+        dispatch({ 
+          type: ACTIONS.UPDATE_PROGRESS, 
+          payload: {
+            progress: data.progress,
+            speed: data.speed,
+            eta: data.eta,
+            filename: data.filename,
+            total_size: data.total_size
+          }
+        });
+      }
+      
+      dispatch({
+        type: ACTIONS.ADD_STATUS_UPDATE,
+        payload: data.type === 'progress' 
+          ? { type: data.type, content: `Downloading: ${data.progress}%` }
+          : { type: data.type, content: data.message }
       });
       
-      eventSource = new EventSource(`${BACKEND_URL}/api/download-status`);
-      
-      eventSource.onopen = () => {
-        console.log("SSE connection opened");
+      if (data.type === 'complete') {
         toast({
-          title: "Connected to download status",
-          description: "Ready to receive updates"
+          title: "Download complete",
+          description: "Your file has been downloaded successfully"
         });
-      };
-      
-      eventSource.onmessage = (event) => {
-        try {
-          // Remove the "data: " prefix and parse the remaining JSON
-          const jsonStr = event.data.replace(/^data: /, '');
-          console.log("SSE update received:", jsonStr);
-          
-          const data = JSON.parse(jsonStr);
-          
-          // Show a toast notification for progress updates (but not too frequently)
-          if (data.type === 'progress' && (data.progress % 10 === 0 || data.progress === 100)) {
-            toast({
-              title: "Download in progress",
-              description: `Progress: ${data.progress}%`
-            });
-          }
-          
-          if (data.type === 'progress') {
-            dispatch({ 
-              type: ACTIONS.UPDATE_PROGRESS, 
-              payload: {
-                progress: data.progress,
-                speed: data.speed,
-                eta: data.eta,
-                filename: data.filename,
-                total_size: data.total_size
-              }
-            });
-          }
-          
-          dispatch({
-            type: ACTIONS.ADD_STATUS_UPDATE,
-            payload: data.type === 'progress' 
-              ? { type: data.type, content: `Downloading: ${data.progress}%` }
-              : { type: data.type, content: data.message }
-          });
-          
-          if (data.type === 'complete') {
-            toast({
-              title: "Download complete",
-              description: "Your file has been downloaded successfully"
-            });
-            dispatch({ type: ACTIONS.SET_DOWNLOADING, payload: false });
-            eventSource.close();
-          } else if (data.type === 'error') {
-            toast({
-              variant: "destructive",
-              title: "Download failed",
-              description: data.message || "An error occurred during download"
-            });
-            dispatch({ type: ACTIONS.SET_DOWNLOADING, payload: false });
-            eventSource.close();
-          }
-        } catch (error) {
-          console.error('Error parsing SSE data:', error, event.data);
-        }
-      };
-
-      eventSource.onerror = (error) => {
-        console.error('SSE connection error:', error);
-        
+        dispatch({ type: ACTIONS.SET_DOWNLOADING, payload: false });
+        disconnectSSE();
+      } else if (data.type === 'error') {
         toast({
           variant: "destructive",
-          title: "Connection lost",
-          description: "Lost connection to the download status feed"
+          title: "Download failed",
+          description: data.message || "An error occurred during download"
         });
-        
-        // Add this to the status updates as well
-        dispatch({
-          type: ACTIONS.ADD_STATUS_UPDATE,
-          payload: { 
-            type: 'error', 
-            content: 'Connection to download status was lost. The download may still be in progress.' 
-          }
+        dispatch({ type: ACTIONS.SET_DOWNLOADING, payload: false });
+        disconnectSSE();
+      }
+    },
+    onError: (error) => {
+      console.error('SSE connection error:', error);
+      
+      toast({
+        variant: "destructive",
+        title: "Connection lost",
+        description: "Lost connection to the download status feed"
+      });
+      
+      // Add this to the status updates as well
+      dispatch({
+        type: ACTIONS.ADD_STATUS_UPDATE,
+        payload: { 
+          type: 'error', 
+          content: 'Connection to download status was lost. The download may still be in progress.' 
+        }
+      });
+    },
+    onDisconnect: () => {
+      console.log('SSE connection closed');
+      // Only update downloading state if it was due to an error, not completion
+      if (state.downloading) {
+        dispatch({ 
+          type: ACTIONS.SET_DOWNLOADING, 
+          payload: false 
         });
-        
-        // Don't immediately set downloading to false, as the download might still be running
-        // Only close the connection
-        eventSource.close();
-      };
+        dispatch({ 
+          type: ACTIONS.ADD_STATUS_UPDATE, 
+          payload: { type: 'status', content: 'Connection to server lost' }
+        });
+      }
     }
+  });
 
-    // Add a ping handler to verify the connection is still alive
-    const pingInterval = setInterval(() => {
-      if (eventSource && eventSource.readyState === EventSource.OPEN) {
-        console.log("SSE connection is still open");
-      } else if (eventSource) {
-        console.log("SSE connection state:", eventSource.readyState);
-      }
-    }, 10000);
-
-    // Clear the interval when cleaning up
+  // Update the SSE connection setup
+  useEffect(() => {
+    // Set up SSE if downloading
+    if (state.downloading) {
+      connectSSE();
+    }
+    
+    // Cleanup on unmount
     return () => {
-      if (eventSource) {
-        console.log("Closing SSE connection");
-        eventSource.close();
-      }
-      clearInterval(pingInterval);
+      disconnectSSE();
     };
-  }, [state.downloading]);
+  }, [state.downloading, connectSSE, disconnectSSE]); // Only re-run when downloading state changes
 
   const handleSelectFolder = async () => {
     try {

@@ -294,8 +294,8 @@ app.add_middleware(
     expose_headers=["Content-Type", "X-Content-Type-Options"],
 )
 
-# Enable SSE monitoring middleware
-app.middleware("http")(sse_monitoring_middleware)
+# Temporarily disable SSE monitoring middleware
+# app.middleware("http")(sse_monitoring_middleware)
 
 # Include monitoring routes
 app.include_router(monitoring_router)
@@ -379,21 +379,6 @@ async def root():
     # Return response with basic info
     return {"status": "ok", "content": "Backend server is running", "timestamp": datetime.now().isoformat()}
 
-
-# Standardized SSE message formatter
-def format_sse_message(message_type: str, content: Any, metadata: dict = None) -> str:
-    '''Format a message for SSE transmission with consistent structure.'''
-    message = {
-        "type": message_type,
-        "content": content,
-        "timestamp": datetime.now().isoformat()
-    }
-    
-    if metadata:
-        message["metadata"] = metadata
-        
-    return f"data: {json.dumps(message)}\n\n"
-
 @app.get("/combined-updates")
 async def get_combined_updates(request: Request):
     """Endpoint for Server-Sent Events that combines status and transcription updates."""
@@ -414,11 +399,12 @@ async def get_combined_updates(request: Request):
         transcription_active = True
         
         # Send immediate confirmation that connection is established
-        # Send immediate confirmation that connection is established
-        yield format_sse_message(
-            "status",
-            f"SSE connection established from {client_host}"
-        )
+        connection_message = json.dumps({
+            "type": "status",
+            "content": f"SSE connection established from {client_host}",
+            "timestamp": datetime.now().isoformat()
+        })
+        yield f"data: {connection_message}\n\n"
         
         try:
             console.print("[bold blue]Starting SSE event generator[/bold blue]")
@@ -498,19 +484,25 @@ async def get_combined_updates(request: Request):
                 
                 # Send heartbeat if no updates for a while
                 if current_time - last_heartbeat > heartbeat_interval:
-                    console.print(f"[dim]Sending heartbeat[/dim]")
-                    yield format_sse_message('heartbeat', 'ping')
+                    heartbeat_msg = json.dumps({
+                        'type': 'heartbeat', 
+                        'timestamp': datetime.now().isoformat()
+                    })
+                    console.print(f"[dim]Sending heartbeat: {heartbeat_msg}[/dim]")
+                    yield f"data: {heartbeat_msg}\n\n"
                     last_heartbeat = current_time
                 
                 # Short delay to prevent CPU spinning
                 await asyncio.sleep(0.1)
             
             # Send final completion message before closing
+            completion_message = json.dumps({
+                "type": "connection_closed",
+                "content": "SSE connection closed - transcription complete",
+                "timestamp": datetime.now().isoformat()
+            })
             console.print("[bold blue]Sending connection closed message[/bold blue]")
-            yield format_sse_message(
-                "connection_closed",
-                "SSE connection closed - transcription complete"
-            )
+            yield f"data: {completion_message}\n\n"
                 
         except Exception as e:
             error_message = f"Error in combined updates SSE: {str(e)}"

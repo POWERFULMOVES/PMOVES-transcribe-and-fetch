@@ -1,3 +1,5 @@
+import { parseTranscriptionSegment, addTranscriptionSegment } from './transcription_handler';
+
 export const ACTIONS = {
   SET_YOUTUBE_URL: 'SET_YOUTUBE_URL',
   SET_OBSIDIAN_DIR: 'SET_OBSIDIAN_DIR',
@@ -22,7 +24,8 @@ export const ACTIONS = {
   SET_DRAWER_OPEN: 'SET_DRAWER_OPEN',
   SET_TIMEOUT: 'SET_TIMEOUT',
   SET_EXCLUDED_SELECTOR: 'SET_EXCLUDED_SELECTOR',
-  SET_CLEAN_FORMAT: 'SET_CLEAN_FORMAT'
+  SET_CLEAN_FORMAT: 'SET_CLEAN_FORMAT',
+  PROCESS_SSE_EVENT: 'PROCESS_SSE_EVENT'
 };
 
 export const initialState = {
@@ -52,6 +55,9 @@ export const initialState = {
   cleanFormat: true
 };
 
+/**
+ * Enhanced reducer that properly handles different transcription segment formats
+ */
 export function transcriptionReducer(state, action) {
   switch (action.type) {
     case ACTIONS.SET_YOUTUBE_URL:
@@ -69,10 +75,6 @@ export function transcriptionReducer(state, action) {
     case ACTIONS.SET_TRANSCRIBING:
       return { ...state, transcribing: action.payload };
     case ACTIONS.ADD_STATUS_UPDATE:
-      // Check if this exact status update already exists in the array
-      if (state.statusUpdates.includes(action.payload)) {
-        return state; // Don't add duplicate
-      }
       return {
         ...state,
         statusUpdates: [...state.statusUpdates, action.payload]
@@ -102,27 +104,108 @@ export function transcriptionReducer(state, action) {
       return { ...state, jsonResponse: action.payload };
     case ACTIONS.SET_TARGET_SELECTOR:
       return { ...state, targetSelector: action.payload };
+    
+    case ACTIONS.PROCESS_SSE_EVENT:
+      try {
+        // Parse the SSE event data
+        const parsedData = parseTranscriptionSegment(action.payload);
+        
+        // Handle different event types
+        if (parsedData.type === 'transcription_segment') {
+          // Extract segment content
+          const segmentContent = parsedData.content;
+          
+          // Skip if we don't have valid content
+          if (!segmentContent || !segmentContent.text) {
+            console.warn('Skipping invalid transcription segment:', segmentContent);
+            return state;
+          }
+          
+          // Format segment object according to expected structure
+          const newSegment = {
+            text: segmentContent.text,
+            start_time: parseFloat(segmentContent.start_time),
+            end_time: parseFloat(segmentContent.end_time),
+            id: segmentContent.id,
+            video_id: segmentContent.video_id,
+            watch_url: segmentContent.watch_url
+          };
+          
+          // Add to segments and sort by start time
+          return {
+            ...state,
+            transcriptionSegments: addTranscriptionSegment(state.transcriptionSegments, newSegment)
+          };
+        } else if (parsedData.type === 'status') {
+          // Handle status update
+          return {
+            ...state,
+            statusUpdates: [...state.statusUpdates, parsedData.content]
+          };
+        } else if (parsedData.type === 'error') {
+          // Handle error
+          return {
+            ...state,
+            error: parsedData.content
+          };
+        } else if (parsedData.type === 'transcription_complete') {
+          // Handle completion
+          return {
+            ...state,
+            transcribing: false,
+            completedTranscription: parsedData.content,
+            activeStep: 3  // Assuming this is the completion step
+          };
+        }
+        
+        // Default - no change if we don't recognize the type
+        return state;
+      } catch (error) {
+        console.error('Error processing SSE event:', error);
+        return {
+          ...state,
+          error: `Error processing transcription data: ${error.message}`
+        };
+      }
+    
     case ACTIONS.ADD_TRANSCRIPTION_SEGMENT:
       // Ensure we're not adding duplicate segments
-      const newSegment = action.payload;
-      const isDuplicate = state.transcriptionSegments.some(
-        segment => 
-          segment.start_time === newSegment.start_time && 
-          segment.end_time === newSegment.end_time && 
-          segment.text === newSegment.text
-      );
+      try {
+        const newSegment = action.payload;
+        
+        // Skip empty segments
+        if (!newSegment || !newSegment.text) {
+          console.warn('Skipping empty segment');
+          return state;
+        }
+        
+        // Check for duplicates
+        const isDuplicate = state.transcriptionSegments.some(
+          segment => 
+            segment.start_time === newSegment.start_time && 
+            segment.end_time === newSegment.end_time && 
+            segment.text === newSegment.text
+        );
 
-      if (isDuplicate) {
-        return state;
+        if (isDuplicate) {
+          return state;
+        }
+
+        // Add the new segment and sort by start time
+        return {
+          ...state,
+          transcriptionSegments: [...state.transcriptionSegments, newSegment].sort(
+            (a, b) => a.start_time - b.start_time
+          )
+        };
+      } catch (error) {
+        console.error('Error adding transcription segment:', error);
+        return {
+          ...state,
+          error: `Error adding transcription segment: ${error.message}`
+        };
       }
-
-      // Add the new segment and sort by start time
-      return {
-        ...state,
-        transcriptionSegments: [...state.transcriptionSegments, newSegment].sort(
-          (a, b) => a.start_time - b.start_time
-        )
-      };
+      
     case ACTIONS.SET_COMPLETED_TRANSCRIPTION:
       return {
         ...state,

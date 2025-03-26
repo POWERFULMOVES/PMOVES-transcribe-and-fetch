@@ -1,0 +1,11 @@
+---
+description: 
+globs: 
+alwaysApply: true
+---
+
+# Your rule content
+[cursor_rules.md](mdc:docs/cursor_rules.md)
+[project_structure.md](mdc:docs/project_structure.md)
+[project_overview.md](mdc:docs/project_overview.md)
+
