@@ -6,7 +6,7 @@
  */
 
 // Import EventSource from the eventsource package
-const EventSource = require('eventsource');
+const EventSource = require('eventsource').EventSource;
 const axios = require('axios');
 const readline = require('readline');
 
