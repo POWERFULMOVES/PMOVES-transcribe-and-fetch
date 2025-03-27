@@ -1168,7 +1168,8 @@ def search_all(query, max_results=30, skip_prompts=False, run_analysis=True):
     # Convert embedding and track tokens
     try:
         embedding_start = time.time()
-        embedding = client.embeddings.create(
+        # Use OpenAI client directly for embeddings instead of Supabase client
+        embedding = openai_client.embeddings.create(
             input=query,
             model="text-embedding-3-small",
             dimensions=1536
@@ -1192,12 +1193,15 @@ def search_all(query, max_results=30, skip_prompts=False, run_analysis=True):
         
         # Run dot product search on video transcriptions (fine-grained segments)
         fine_grained_start = time.time()
-        fine_grained_results = client.search_video_transcriptions(
-            embedding=embedding,
-            similarity_threshold=fine_grained_params["similarity_threshold"],
-            content_weight=fine_grained_params["content_weight"],
-            limit=int(max_results * fine_grained_params["result_percentage"])
-        )
+        fine_grained_results = client.rpc(
+            'search_video_transcriptions',
+            {
+                'query_embedding': embedding,
+                'similarity_threshold': fine_grained_params["similarity_threshold"],
+                'content_weight': fine_grained_params["content_weight"],
+                'match_count': int(max_results * fine_grained_params["result_percentage"])
+            }
+        ).execute().data
         fine_grained_time = time.time() - fine_grained_start
         
         # Create SearchResult objects
@@ -1209,12 +1213,15 @@ def search_all(query, max_results=30, skip_prompts=False, run_analysis=True):
         
         # Run dot product search on document embeddings (contextual segments)
         contextual_start = time.time()
-        contextual_results = client.search_document_embeddings(
-            embedding=embedding,
-            similarity_threshold=contextual_params["similarity_threshold"],
-            content_weight=contextual_params["content_weight"],
-            limit=int(max_results * contextual_params["result_percentage"])
-        )
+        contextual_results = client.rpc(
+            'search_document_embeddings',
+            {
+                'query_embedding': embedding,
+                'similarity_threshold': contextual_params["similarity_threshold"],
+                'content_weight': contextual_params["content_weight"],
+                'match_count': int(max_results * contextual_params["result_percentage"])
+            }
+        ).execute().data
         contextual_time = time.time() - contextual_start
         
         # Create SearchResult objects
@@ -1226,12 +1233,15 @@ def search_all(query, max_results=30, skip_prompts=False, run_analysis=True):
             
         # Run dot product search on full transcripts (overview)
         overview_start = time.time()
-        overview_results = client.search_video_transcriptions_full(
-            embedding=embedding,
-            similarity_threshold=overview_params["similarity_threshold"],
-            content_weight=overview_params["content_weight"],
-            limit=int(max_results * overview_params["result_percentage"])
-        )
+        overview_results = client.rpc(
+            'search_video_transcriptions_full',
+            {
+                'query_embedding': embedding,
+                'similarity_threshold': overview_params["similarity_threshold"],
+                'content_weight': overview_params["content_weight"],
+                'match_count': int(max_results * overview_params["result_percentage"])
+            }
+        ).execute().data
         overview_time = time.time() - overview_start
         
         # Create SearchResult objects
@@ -1260,7 +1270,13 @@ def search_all(query, max_results=30, skip_prompts=False, run_analysis=True):
     # Run keyword search
     try:
         keyword_start = time.time()
-        keyword_results_raw = client.keyword_search(query, limit=max_results)
+        keyword_results_raw = client.rpc(
+            'keyword_search',
+            {
+                'search_query': query,
+                'match_count': max_results
+            }
+        ).execute().data
         keyword_time = time.time() - keyword_start
         
         # Create SearchResult objects
