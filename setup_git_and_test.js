@@ -1,8 +1,7 @@
 /**
- * setup_git_and_test.js - Set up Git branch and test SSE fixes
+ * setup_git_and_test.js - Set up Git repository and run SSE tests
  * 
- * This script creates a Git branch for testing the SSE fixes, applies the fixes,
- * and runs tests to verify that the fixes work correctly.
+ * This script helps users set up the Git repository and run the SSE tests.
  */
 
 const { execSync } = require('child_process');
@@ -17,299 +16,219 @@ const rl = readline.createInterface({
 });
 
 // Function to execute a command and return the output
-function runCommand(command, options = {}) {
+function runCommand(command) {
+  console.log(`Running command: ${command}`);
   try {
-    const output = execSync(command, {
-      encoding: 'utf8',
-      stdio: options.silent ? 'pipe' : 'inherit',
-      ...options
-    });
+    const output = execSync(command, { encoding: 'utf8' });
     return { success: true, output };
   } catch (error) {
-    if (!options.ignoreError) {
-      console.error(`Error executing command: ${command}`);
-      console.error(error.message);
-    }
     return { success: false, error: error.message };
   }
 }
 
 // Function to check if Git is installed
-function checkGitInstalled() {
-  console.log('Checking for Git...');
-  const result = runCommand('git --version', { silent: true });
-  if (!result.success) {
-    console.error('Git is not installed or not in PATH.');
-    console.error('Please install Git from https://git-scm.com/');
-    process.exit(1);
+function checkGit() {
+  console.log('Checking if Git is installed...');
+  const result = runCommand('git --version');
+  if (result.success) {
+    console.log(`✅ Git is installed: ${result.output.trim()}`);
+    return true;
+  } else {
+    console.error('❌ Git is not installed or not in the PATH.');
+    console.error('Please install Git from https://git-scm.com/downloads');
+    return false;
   }
-  console.log(`✅ Git is installed: ${result.output.trim()}`);
-  return true;
 }
 
 // Function to check if the current directory is a Git repository
 function checkGitRepo() {
-  console.log('Checking if current directory is a Git repository...');
-  const result = runCommand('git rev-parse --is-inside-work-tree', { silent: true, ignoreError: true });
-  if (!result.success) {
-    console.error('Current directory is not a Git repository.');
-    
-    // Ask if the user wants to initialize a Git repository
-    rl.question('Do you want to initialize a Git repository? (y/n) ', (answer) => {
-      if (answer.toLowerCase() === 'y') {
-        console.log('Initializing Git repository...');
-        const initResult = runCommand('git init');
-        if (initResult.success) {
-          console.log('✅ Git repository initialized');
-          
-          // Create initial commit
-          console.log('Creating initial commit...');
-          runCommand('git add .');
-          runCommand('git commit -m "Initial commit before SSE fixes"');
-          console.log('✅ Initial commit created');
-          
-          // Continue with the script
-          createBranch();
-        } else {
-          console.error('Failed to initialize Git repository.');
-          process.exit(1);
-        }
-      } else {
-        console.log('Exiting script. Please initialize a Git repository manually.');
-        process.exit(1);
-      }
-    });
+  console.log('Checking if the current directory is a Git repository...');
+  const result = runCommand('git status');
+  if (result.success) {
+    console.log('✅ Current directory is a Git repository.');
+    return true;
   } else {
-    console.log('✅ Current directory is a Git repository');
-    
-    // Check if there are uncommitted changes
-    const statusResult = runCommand('git status --porcelain', { silent: true });
-    if (statusResult.output.trim() !== '') {
-      console.log('⚠️ There are uncommitted changes in the repository.');
-      
-      // Ask if the user wants to commit the changes
-      rl.question('Do you want to commit the current changes before proceeding? (y/n) ', (answer) => {
-        if (answer.toLowerCase() === 'y') {
-          console.log('Committing changes...');
-          runCommand('git add .');
-          runCommand('git commit -m "Commit changes before SSE fixes"');
-          console.log('✅ Changes committed');
-          
-          // Continue with the script
-          createBranch();
-        } else {
-          console.log('Continuing without committing changes...');
-          createBranch();
-        }
-      });
-    } else {
-      console.log('✅ Working directory is clean');
-      createBranch();
-    }
+    console.error('❌ Current directory is not a Git repository.');
+    return false;
   }
 }
 
-// Function to create a branch for testing the fixes
-function createBranch() {
-  const branchName = 'sse-fixes-' + new Date().toISOString().replace(/[:.]/g, '-');
-  
+// Function to initialize a Git repository
+function initGitRepo() {
+  console.log('Initializing Git repository...');
+  const result = runCommand('git init');
+  if (result.success) {
+    console.log('✅ Git repository initialized.');
+    return true;
+  } else {
+    console.error('❌ Failed to initialize Git repository:', result.error);
+    return false;
+  }
+}
+
+// Function to create a new branch
+function createBranch(branchName) {
   console.log(`Creating branch: ${branchName}...`);
   const result = runCommand(`git checkout -b ${branchName}`);
-  
   if (result.success) {
-    console.log(`✅ Created branch: ${branchName}`);
-    installDependencies();
+    console.log(`✅ Branch ${branchName} created.`);
+    return true;
   } else {
-    console.error(`Failed to create branch: ${branchName}`);
-    process.exit(1);
+    console.error(`❌ Failed to create branch ${branchName}:`, result.error);
+    return false;
   }
 }
 
-// Function to install dependencies
-function installDependencies() {
-  console.log('Installing dependencies...');
+// Function to add files to Git
+function addFiles() {
+  console.log('Adding files to Git...');
+  const filesToAdd = [
+    'simple_sse_test.js',
+    'test_sse_implementation.js',
+    'fix_sse_frontend.js',
+    'README_SSE_FIXES.md',
+    'install_and_apply_fixes.sh',
+    'install_and_apply_fixes.bat'
+  ];
   
-  // Install Node.js dependencies
-  console.log('Installing Node.js dependencies...');
-  runCommand('npm install --no-fund --no-audit --loglevel=error axios eventsource fs-extra chalk');
+  // Check which files exist
+  const existingFiles = filesToAdd.filter(file => fs.existsSync(file));
   
-  // Install Python dependencies
-  console.log('Installing Python dependencies...');
-  runCommand('pip install rich');
-  
-  console.log('✅ Dependencies installed');
-  
-  // Ask if the user wants to apply the fixes
-  rl.question('Do you want to apply the SSE fixes now? (y/n) ', (answer) => {
-    if (answer.toLowerCase() === 'y') {
-      applyFixes();
-    } else {
-      console.log('Skipping applying fixes.');
-      console.log('You can apply the fixes later by running:');
-      console.log('npm run fix-all');
-      rl.close();
-    }
-  });
-}
-
-// Function to apply the fixes
-function applyFixes() {
-  console.log('Applying SSE fixes...');
-  
-  // Apply backend fixes
-  console.log('1. Applying backend fixes...');
-  runCommand('python fix_sse_v6.py');
-  
-  // Apply frontend fixes
-  console.log('2. Applying frontend fixes...');
-  runCommand('node apply_sse_frontend_fixes.js');
-  
-  // Fix SVG viewBox issues
-  console.log('3. Fixing SVG viewBox issues...');
-  runCommand('node fix_svg_viewbox.js');
-  
-  console.log('✅ All fixes applied');
-  
-  // Commit the changes
-  console.log('Committing the changes...');
-  runCommand('git add .');
-  runCommand('git commit -m "Apply SSE fixes"');
-  
-  console.log('✅ Changes committed');
-  
-  // Ask if the user wants to test the fixes
-  rl.question('Do you want to test the SSE implementation now? (y/n) ', (answer) => {
-    if (answer.toLowerCase() === 'y') {
-      testFixes();
-    } else {
-      console.log('Skipping testing.');
-      console.log('You can test the fixes later by running:');
-      console.log('node test_sse_implementation.js');
-      finishScript();
-    }
-  });
-}
-
-// Function to test the fixes
-function testFixes() {
-  console.log('Testing SSE implementation...');
-  
-  // Run the test script
-  runCommand('node test_sse_implementation.js');
-  
-  // Ask if the tests passed
-  rl.question('Did the tests pass? (y/n) ', (answer) => {
-    if (answer.toLowerCase() === 'y') {
-      console.log('✅ Tests passed');
-      
-      // Ask if the user wants to merge the changes
-      rl.question('Do you want to merge the changes to the main branch? (y/n) ', (answer) => {
-        if (answer.toLowerCase() === 'y') {
-          mergeChanges();
-        } else {
-          console.log('Skipping merging changes.');
-          console.log('You can merge the changes later by running:');
-          console.log('git checkout main && git merge <branch-name>');
-          finishScript();
-        }
-      });
-    } else {
-      console.log('❌ Tests failed');
-      console.log('Please fix the issues and try again.');
-      finishScript();
-    }
-  });
-}
-
-// Function to merge the changes
-function mergeChanges() {
-  console.log('Getting current branch name...');
-  const branchResult = runCommand('git rev-parse --abbrev-ref HEAD', { silent: true });
-  const currentBranch = branchResult.output.trim();
-  
-  console.log('Getting default branch name...');
-  const remoteResult = runCommand('git remote show origin', { silent: true, ignoreError: true });
-  let defaultBranch = 'main'; // Default to 'main' if we can't determine the default branch
-  
-  if (remoteResult.success) {
-    const match = remoteResult.output.match(/HEAD branch: ([^\s]+)/);
-    if (match && match[1]) {
-      defaultBranch = match[1];
-    }
+  if (existingFiles.length === 0) {
+    console.error('❌ No files to add.');
+    return false;
   }
   
-  console.log(`Merging changes from ${currentBranch} to ${defaultBranch}...`);
-  
-  // Checkout the default branch
-  const checkoutResult = runCommand(`git checkout ${defaultBranch}`, { ignoreError: true });
-  
-  if (!checkoutResult.success) {
-    console.error(`Failed to checkout ${defaultBranch}.`);
-    console.log(`You can merge the changes later by running:`);
-    console.log(`git checkout ${defaultBranch} && git merge ${currentBranch}`);
-    finishScript();
-    return;
-  }
-  
-  // Merge the changes
-  const mergeResult = runCommand(`git merge ${currentBranch}`);
-  
-  if (mergeResult.success) {
-    console.log(`✅ Changes merged to ${defaultBranch}`);
-    
-    // Ask if the user wants to push the changes
-    rl.question('Do you want to push the changes to the remote repository? (y/n) ', (answer) => {
-      if (answer.toLowerCase() === 'y') {
-        console.log('Pushing changes...');
-        const pushResult = runCommand('git push', { ignoreError: true });
-        
-        if (pushResult.success) {
-          console.log('✅ Changes pushed to remote repository');
-        } else {
-          console.error('Failed to push changes to remote repository.');
-          console.log('You can push the changes later by running:');
-          console.log('git push');
-        }
-      } else {
-        console.log('Skipping pushing changes.');
-        console.log('You can push the changes later by running:');
-        console.log('git push');
-      }
-      
-      finishScript();
-    });
+  const result = runCommand(`git add ${existingFiles.join(' ')}`);
+  if (result.success) {
+    console.log(`✅ Added ${existingFiles.length} files to Git.`);
+    return true;
   } else {
-    console.error(`Failed to merge changes to ${defaultBranch}.`);
-    console.log('You can merge the changes later by running:');
-    console.log(`git checkout ${defaultBranch} && git merge ${currentBranch}`);
-    finishScript();
+    console.error('❌ Failed to add files to Git:', result.error);
+    return false;
   }
 }
 
-// Function to finish the script
-function finishScript() {
-  console.log('');
-  console.log('=================================');
-  console.log('SSE Fixes Setup Complete');
-  console.log('=================================');
-  console.log('');
-  console.log('For more information, please read README_SSE_FIXES.md');
-  console.log('');
-  rl.close();
+// Function to commit changes
+function commitChanges(message) {
+  console.log(`Committing changes with message: ${message}...`);
+  const result = runCommand(`git commit -m "${message}"`);
+  if (result.success) {
+    console.log('✅ Changes committed.');
+    return true;
+  } else {
+    console.error('❌ Failed to commit changes:', result.error);
+    return false;
+  }
+}
+
+// Function to run the SSE tests
+function runTests() {
+  console.log('Running SSE tests...');
+  
+  // Check if the backend server is running
+  console.log('Checking if the backend server is running...');
+  const healthCheckResult = runCommand('curl -s http://localhost:8000/health');
+  if (!healthCheckResult.success) {
+    console.error('❌ Backend server is not running.');
+    console.error('Please start the backend server with:');
+    console.error('  venv\\Scripts\\activate && cd backend && uvicorn app.main:app --reload --port 8000');
+    return false;
+  }
+  
+  // Run the simple SSE test
+  console.log('Running simple SSE test...');
+  const simpleTestResult = runCommand('node simple_sse_test.js');
+  if (!simpleTestResult.success) {
+    console.error('❌ Simple SSE test failed:', simpleTestResult.error);
+    return false;
+  }
+  
+  // Run the SSE implementation test
+  console.log('Running SSE implementation test...');
+  const implementationTestResult = runCommand('node test_sse_implementation.js');
+  if (!implementationTestResult.success) {
+    console.error('❌ SSE implementation test failed:', implementationTestResult.error);
+    return false;
+  }
+  
+  console.log('✅ All SSE tests passed.');
+  return true;
 }
 
 // Main function
-function main() {
-  console.log('=================================');
-  console.log('PMOVES SSE Fixes Git Setup');
-  console.log('=================================');
-  console.log('');
+async function main() {
+  console.log('=== Git Setup and SSE Test Script ===');
   
   // Check if Git is installed
-  checkGitInstalled();
+  if (!checkGit()) {
+    rl.close();
+    return;
+  }
   
   // Check if the current directory is a Git repository
-  checkGitRepo();
+  const isGitRepo = checkGitRepo();
+  
+  if (!isGitRepo) {
+    rl.question('Do you want to initialize a Git repository? (y/n) ', (answer) => {
+      if (answer.toLowerCase() === 'y') {
+        if (initGitRepo()) {
+          rl.question('Enter a name for the branch (default: sse-fixes): ', (branchName) => {
+            const branch = branchName.trim() || 'sse-fixes';
+            if (createBranch(branch)) {
+              if (addFiles()) {
+                commitChanges('Add SSE fixes');
+                rl.question('Do you want to run the SSE tests? (y/n) ', (answer) => {
+                  if (answer.toLowerCase() === 'y') {
+                    runTests();
+                  }
+                  rl.close();
+                });
+              } else {
+                rl.close();
+              }
+            } else {
+              rl.close();
+            }
+          });
+        } else {
+          rl.close();
+        }
+      } else {
+        rl.close();
+      }
+    });
+  } else {
+    rl.question('Do you want to create a new branch for SSE fixes? (y/n) ', (answer) => {
+      if (answer.toLowerCase() === 'y') {
+        rl.question('Enter a name for the branch (default: sse-fixes): ', (branchName) => {
+          const branch = branchName.trim() || 'sse-fixes';
+          if (createBranch(branch)) {
+            if (addFiles()) {
+              commitChanges('Add SSE fixes');
+              rl.question('Do you want to run the SSE tests? (y/n) ', (answer) => {
+                if (answer.toLowerCase() === 'y') {
+                  runTests();
+                }
+                rl.close();
+              });
+            } else {
+              rl.close();
+            }
+          } else {
+            rl.close();
+          }
+        });
+      } else {
+        rl.question('Do you want to run the SSE tests? (y/n) ', (answer) => {
+          if (answer.toLowerCase() === 'y') {
+            runTests();
+          }
+          rl.close();
+        });
+      }
+    });
+  }
 }
 
 // Run the script
