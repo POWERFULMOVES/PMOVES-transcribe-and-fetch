@@ -31,7 +31,7 @@ def test_cors_fix(file_path):
         
         # Fix 1: Test replacing wildcard origin in CORS middleware with specific origins
         allow_origins_pattern = r'allow_origins=\["?\*"?\]'
-        allow_origins_replacement = 'allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"]'
+        allow_origins_replacement = 'allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"]'  # Make sure comma is preserved
         
         # Count matches before replacement
         matches = re.findall(allow_origins_pattern, content)
@@ -72,7 +72,7 @@ def test_cors_fix(file_path):
                     
                     if 'origin = request.headers.get("origin"' not in next_lines:
                         print(f"\n✅ Adding origin definition after EventSourceResponse at position {next_newline}")
-                        insert_text = '\n    # Get origin from request for CORS\n    origin = request.headers.get("origin", "http://localhost:3000")'
+                        insert_text = '\n    # Get origin from request for CORS\n    origin = request.headers.get("origin", "http://localhost:3000")'  # Make sure comma is preserved
                         modified_content = modified_content[:next_newline] + insert_text + modified_content[next_newline:]
                         changes_made += 1
             
