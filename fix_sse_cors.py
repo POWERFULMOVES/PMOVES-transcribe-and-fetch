@@ -34,7 +34,7 @@ def fix_cors_in_main_py(file_path):
         # Fix 1: Replace wildcard origin in CORS middleware with specific origins
         # This is a more targeted approach that just replaces the allow_origins parameter
         allow_origins_pattern = r'allow_origins=\["?\*"?\]'
-        allow_origins_replacement = 'allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"]'  # Make sure comma is preserved
+        allow_origins_replacement = 'allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"]'
         
         # Count matches before replacement
         matches = re.findall(allow_origins_pattern, content)

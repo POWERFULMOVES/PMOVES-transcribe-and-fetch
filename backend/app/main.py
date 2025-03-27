@@ -287,7 +287,7 @@ app = FastAPI(
 # Configure CORS - Development mode with permissive settings
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allow all origins in development
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],  # Allow all origins in development
     allow_credentials=True,
     allow_methods=["*"],  # Allow all methods
     allow_headers=["*"],  # Allow all headers
@@ -539,9 +539,11 @@ async def get_combined_updates(request: Request):
     
     # Create the response with proper CORS headers
     response = EventSourceResponse(event_generator())
+    # Get origin from request for CORS
+    origin = request.headers.get("origin", "http://localhost:3000")
     
     # Always use the fixed origin for this endpoint
-    response.headers["Access-Control-Allow-Origin"] = fixed_origin
+    response.headers["Access-Control-Allow-Origin"] = origin  # Use actual request origin
     response.headers["Access-Control-Allow-Credentials"] = "true"
     response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS, POST"
     response.headers["Access-Control-Allow-Headers"] = "*"
