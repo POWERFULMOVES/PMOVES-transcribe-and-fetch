@@ -121,6 +121,12 @@
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
 }
 
+/* Dark mode search result card hover effect */
+.dark .search-result-card:hover {
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
+  background-color: hsl(222.2 26% 14%);
+}
+
 /* Source-specific border colors */
 .border-document-embeddings {
   border-color: hsl(var(--document-embeddings-color));
@@ -153,6 +159,70 @@
 
 .search-flow-step.active {
   transform: scale(1.05);
+}
+
+/* Dark mode search flow styling */
+.dark .search-flow-step {
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
+}
+
+.dark .search-flow-step.active {
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
+}
+
+/* Dark mode metadata cards */
+.dark .bg-blue-50 {
+  background-color: hsl(221 70% 15%);
+  color: hsl(210 40% 90%);
+}
+
+.dark .bg-green-50 {
+  background-color: hsl(142 70% 15%);
+  color: hsl(142 40% 90%);
+}
+
+.dark .bg-purple-50 {
+  background-color: hsl(270 70% 15%);
+  color: hsl(270 40% 90%);
+}
+
+.dark .bg-yellow-50 {
+  background-color: hsl(48 70% 15%);
+  color: hsl(48 40% 90%);
+}
+
+.dark .bg-cyan-50 {
+  background-color: hsl(180 70% 15%);
+  color: hsl(180 40% 90%);
+}
+
+.dark .bg-red-50 {
+  background-color: hsl(0 70% 15%);
+  color: hsl(0 40% 90%);
+}
+
+.dark .text-blue-700 {
+  color: hsl(221 90% 70%);
+}
+
+.dark .text-green-700 {
+  color: hsl(142 90% 70%);
+}
+
+.dark .text-purple-700 {
+  color: hsl(270 90% 70%);
+}
+
+.dark .text-yellow-700 {
+  color: hsl(48 90% 70%);
+}
+
+.dark .text-cyan-700 {
+  color: hsl(180 90% 70%);
+}
+
+.dark .text-red-700 {
+  color: hsl(0 90% 70%);
 }
 
 /* Analysis display styling */
@@ -190,6 +260,17 @@
   padding: 0.2em 0.4em;
   border-radius: 3px;
   font-size: 0.9em;
+}
+
+/* Dark mode overrides for analysis content */
+.dark .analysis-content {
+  background-color: hsl(222.2 26% 12%);
+  border-color: hsl(222.2 26% 20%);
+}
+
+.dark .analysis-content code {
+  background-color: rgba(255, 255, 255, 0.1);
+  color: hsl(210 40% 90%);
 }
 
 /* Clickable URLs styling */

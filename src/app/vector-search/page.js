@@ -96,11 +96,20 @@ export default function VectorSearch() {
          }
      };
 
-    // --- New handleSearch using axios.post ---
-    const handleSearch = useCallback(async () => {
+    // --- Search state tracking ---
+    const [currentStage, setCurrentStage] = useState('start');
+    const [eventSource, setEventSource] = useState(null);
+
+    // --- handleSearch using SSE for real-time updates ---
+    const handleSearch = useCallback(() => {
         if (!query.trim()) {
             setError("Please enter a search query.");
             return;
+        }
+
+        // Clean up any existing EventSource
+        if (eventSource) {
+            eventSource.close();
         }
 
         setLoading(true);
@@ -110,67 +119,125 @@ export default function VectorSearch() {
         setGroqAnalysis('');
         setMetadata(null);
         setError(null);
+        setCurrentStage('start'); // Reset to initial stage
 
-        // Construct the JSON request body for POST
-        const requestBody = {
-            query: query,
-            // Determine total max_results (maybe sum of tier max_results or a separate input?)
-            // Using sum of tier max_results as an example:
-            max_results: Object.values(searchParams).reduce((sum, tier) => sum + tier.max_results, 0),
-            run_analysis: runAnalysis,
-        };
-
-        // Construct the URL with query parameters for overrides
-        const searchUrl = new URL(`${baseUrl}/api/search`);
-        // Append override parameters ONLY if preset is 'custom' or if you always want to send them
-        // Or alternatively, send them in the POST body if backend accepts it (requires backend change)
-        // Using Query Params as implemented in backend step 2:
-        searchUrl.searchParams.append('preset', presetValue); // Send preset name
+        // Construct the URL with query parameters
+        const searchUrl = new URL(`${baseUrl}/api/search-sse`);
+        searchUrl.searchParams.append('query', query);
+        searchUrl.searchParams.append('max_results', Object.values(searchParams).reduce((sum, tier) => sum + tier.max_results, 0));
+        searchUrl.searchParams.append('run_analysis', runAnalysis);
+        searchUrl.searchParams.append('preset', presetValue);
+        
+        // Add search parameters as query params
         Object.entries(searchParams).forEach(([tier, params]) => {
             Object.entries(params).forEach(([key, value]) => {
-                 // Check if the current param differs from the selected preset's default
-                 // or just send all params if preset is 'custom'
-                 const presetOrDefaultForParam = searchPresets[presetValue]?.[tier]?.[key] ?? searchPresets.default[tier][key];
-                 if (presetValue === 'custom' || value !== presetOrDefaultForParam) {
-                      searchUrl.searchParams.append(`${tier}_${key}`, value);
-                 }
+                const presetOrDefaultForParam = searchPresets[presetValue]?.[tier]?.[key] ?? searchPresets.default[tier][key];
+                if (presetValue === 'custom' || value !== presetOrDefaultForParam) {
+                    searchUrl.searchParams.append(`${tier}_${key}`, value);
+                }
             });
         });
 
+        console.log("Connecting to SSE endpoint:", searchUrl.toString());
 
-        console.log("Sending POST to:", searchUrl.toString());
-        console.log("Request Body:", requestBody);
-
-        try {
-            const response = await axios.post(searchUrl.toString(), requestBody);
-
-            console.log("Search Response:", response.data);
-
-            // Update state with results
-            setResults(response.data.results || []);
-            setOpenAIAnalysis(response.data.openai_analysis || '');
-            setGroqAnalysis(response.data.groq_analysis || '');
-            
-            // Ensure metadata has the required flags
-            const responseMetadata = response.data.metadata || {};
-            const enhancedMetadata = {
-                ...responseMetadata,
-                search_complete: true,  // Ensure this flag exists
-                analysis_complete: runAnalysis && 
-                    (response.data.openai_analysis || response.data.groq_analysis)  // Ensure this flag exists
-            };
-            
-            setMetadata(enhancedMetadata);
-
-        } catch (err) {
-            console.error('Search error:', err);
-            const errorMsg = err.response?.data?.detail || err.message || 'Search failed';
-            setError(errorMsg);
-            setResults([]); // Clear results on error
-        } finally {
-            setLoading(false);
-        }
-    }, [query, presetValue, searchParams, runAnalysis, baseUrl]); // Dependencies
+        // Create SSE connection using the utility function
+        const newEventSource = createSafeEventSource(
+            searchUrl.toString(),
+            (data) => {
+                // Handle different event types
+                if (!data) return;
+                
+                console.log("SSE Event received:", data);
+                
+                const eventType = data.type || 'unknown';
+                
+                switch (eventType) {
+                    case 'status':
+                        // Update search flow stage based on status
+                        if (data.metadata?.stage) {
+                            setCurrentStage(data.metadata.stage);
+                        }
+                        
+                        // Update metadata if provided
+                        if (data.metadata) {
+                            setMetadata(prevMetadata => ({
+                                ...prevMetadata,
+                                ...data.metadata
+                            }));
+                        }
+                        break;
+                        
+                    case 'results':
+                        // Final results received
+                        setResults(data.content || []);
+                        setCurrentStage('complete');
+                        setLoading(false);
+                        break;
+                        
+                    case 'analysis':
+                        // Analysis results
+                        if (data.provider === 'openai') {
+                            setOpenAIAnalysis(data.content || '');
+                        } else if (data.provider === 'groq') {
+                            setGroqAnalysis(data.content || '');
+                        }
+                        
+                        // Update metadata to indicate analysis is complete
+                        setMetadata(prevMetadata => ({
+                            ...prevMetadata,
+                            analysis_complete: true
+                        }));
+                        break;
+                        
+                    case 'error':
+                        setError(data.content || 'An error occurred during search');
+                        setLoading(false);
+                        break;
+                        
+                    case 'complete':
+                        // Search process complete
+                        setCurrentStage('complete');
+                        setLoading(false);
+                        
+                        // Ensure metadata has the required flags
+                        setMetadata(prevMetadata => ({
+                            ...prevMetadata,
+                            search_complete: true
+                        }));
+                        break;
+                        
+                    default:
+                        console.log(`Unhandled SSE event type: ${eventType}`);
+                }
+            },
+            (error) => {
+                console.error('SSE Error:', error);
+                setError('Connection error. Please try again.');
+                setLoading(false);
+            }
+        );
+        
+        // Store the EventSource for cleanup
+        setEventSource(newEventSource);
+        
+        // Return cleanup function
+        return () => {
+            if (newEventSource) {
+                console.log("Closing SSE connection");
+                newEventSource.close();
+            }
+        };
+    }, [query, presetValue, searchParams, runAnalysis, baseUrl, eventSource]);
+    
+    // Clean up EventSource on unmount
+    useEffect(() => {
+        return () => {
+            if (eventSource) {
+                console.log("Component unmounting, closing SSE connection");
+                eventSource.close();
+            }
+        };
+    }, [eventSource]);
 
     // --- State Persistence (Keep as is if desired) ---
     // Helper function for safe JSON parsing

@@ -15,6 +15,25 @@ export function SearchFlowIndicator({ currentStage = 'start', metadata = {} }) {
   // Animation state
   const [animateIn, setAnimateIn] = useState(false);
   
+  // Track previous stage for animation
+  const [prevStage, setPrevStage] = useState(currentStage);
+  const [stageChanged, setStageChanged] = useState(false);
+  
+  // Detect stage changes for animations
+  useEffect(() => {
+    if (currentStage !== prevStage) {
+      setPrevStage(currentStage);
+      setStageChanged(true);
+      
+      // Reset stage changed flag after animation
+      const timer = setTimeout(() => {
+        setStageChanged(false);
+      }, 500);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [currentStage, prevStage]);
+  
   useEffect(() => {
     // Trigger animation after component mounts
     const timer = setTimeout(() => {

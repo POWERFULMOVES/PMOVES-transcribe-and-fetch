@@ -706,6 +706,17 @@ def format_sse_message(message_type: str, content: Any, metadata: Optional[dict]
     if metadata:
         message["metadata"] = metadata
     try:
+        # Ensure content is serializable
+        if isinstance(content, dict) or isinstance(content, list):
+            # Already a dict or list, no need to convert
+            pass
+        elif hasattr(content, 'to_dict') and callable(content.to_dict):
+            # Convert objects with to_dict method
+            message["content"] = content.to_dict()
+        elif hasattr(content, '__dict__'):
+            # Convert objects with __dict__ attribute
+            message["content"] = content.__dict__
+            
         json_str = json.dumps(message)
         return f"data: {json_str}\n\n"
     except TypeError as e:
@@ -1498,7 +1509,9 @@ async def comprehensive_search_endpoint(
             "total_results_found": len(results),
             "search_duration_seconds": round(search_duration, 2),
             "analysis_run": request.run_analysis,
-            "effective_params": global_search_params.get_all_params()
+            "effective_params": global_search_params.get_all_params(),
+            "search_complete": True,  # Add this flag
+            "analysis_complete": request.run_analysis and (openai_analysis is not None or groq_analysis is not None)  # Add this flag
         }
         # Add token counts if available
         try:
@@ -1524,6 +1537,190 @@ async def comprehensive_search_endpoint(
         search_duration = time.time() - start_time
         logger.error(f"Error during search execution ({search_duration:.2f}s): {e}", exc_info=True)
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Search execution failed: {e}")
+
+
+@app.get("/api/search-sse", tags=["Search"])
+async def search_sse_endpoint(
+    request: Request,
+    query: str = Query(..., min_length=1),
+    max_results: int = Query(30, ge=10, le=100),
+    run_analysis: bool = Query(True),
+    preset: Optional[str] = Query(None),
+    # Query parameters for overrides (same as in comprehensive_search_endpoint)
+    fg_similarity_threshold: Optional[float] = Query(None, alias="fine_grained_similarity_threshold"),
+    fg_content_weight: Optional[float] = Query(None, alias="fine_grained_content_weight"),
+    fg_result_percentage: Optional[float] = Query(None, alias="fine_grained_result_percentage"),
+    fg_max_results: Optional[int] = Query(None, alias="fine_grained_max_results"),
+    ctx_similarity_threshold: Optional[float] = Query(None, alias="contextual_similarity_threshold"),
+    ctx_content_weight: Optional[float] = Query(None, alias="contextual_content_weight"),
+    ctx_result_percentage: Optional[float] = Query(None, alias="contextual_result_percentage"),
+    ctx_max_results: Optional[int] = Query(None, alias="contextual_max_results"),
+    ov_similarity_threshold: Optional[float] = Query(None, alias="overview_similarity_threshold"),
+    ov_content_weight: Optional[float] = Query(None, alias="overview_content_weight"),
+    ov_result_percentage: Optional[float] = Query(None, alias="overview_result_percentage"),
+    ov_max_results: Optional[int] = Query(None, alias="overview_max_results"),
+):
+    """
+    Server-Sent Events endpoint for real-time search updates.
+    Provides incremental updates as the search progresses.
+    """
+    # Check if core search module loaded correctly
+    if not PROJECT_MODULES_LOADED or search_all is None or global_search_params is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Search feature is unavailable due to import errors.")
+
+    client_host = request.client.host if request.client else "unknown"
+    logger.info(f"SSE search request from {client_host}: Query='{query[:50]}...', MaxRes={max_results}, Analysis={run_analysis}, Preset='{preset}'")
+
+    async def event_generator():
+        try:
+            # Send initial status
+            yield format_sse_message("status", "Starting search operation", {"stage": "start"})
+            await asyncio.sleep(0.5)  # Small delay for UI to show initial state
+            
+            # Update search parameters
+            yield format_sse_message("status", "Configuring search parameters", {"stage": "search"})
+            
+            try:
+                update_successful = global_search_params.update_from_frontend(
+                    preset=preset,
+                    fine_grained_similarity_threshold=fg_similarity_threshold,
+                    fine_grained_content_weight=fg_content_weight,
+                    fine_grained_result_percentage=fg_result_percentage,
+                    fine_grained_max_results=fg_max_results,
+                    contextual_similarity_threshold=ctx_similarity_threshold,
+                    contextual_content_weight=ctx_content_weight,
+                    contextual_result_percentage=ctx_result_percentage,
+                    contextual_max_results=ctx_max_results,
+                    overview_similarity_threshold=ov_similarity_threshold,
+                    overview_content_weight=ov_content_weight,
+                    overview_result_percentage=ov_result_percentage,
+                    overview_max_results=ov_max_results,
+                )
+                if not update_successful:
+                    logger.warning("Search parameters updated from frontend might be invalid")
+                    yield format_sse_message("status", "Warning: Some search parameters may be invalid", {"stage": "search"})
+                
+                logger.debug(f"Effective search params used: {global_search_params.get_all_params()}")
+                
+            except Exception as param_err:
+                logger.error(f"Error updating search parameters: {param_err}", exc_info=True)
+                yield format_sse_message("error", f"Invalid search parameters: {param_err}")
+                return
+            
+            # Execute search
+            start_time = time.time()
+            
+            # Update status to filtering
+            yield format_sse_message("status", "Executing search query", {"stage": "filter"})
+            
+            try:
+                # Run blocking search_all in a thread
+                results, openai_analysis, groq_analysis = await asyncio.to_thread(
+                    search_all,
+                    query=query,
+                    max_results=max_results,
+                    skip_prompts=True,
+                    run_analysis=run_analysis
+                )
+                
+                search_duration = time.time() - start_time
+                logger.info(f"Search completed in {search_duration:.2f}s. Found {len(results)} results.")
+                
+                # Update status to combining results
+                yield format_sse_message("status", "Combining search results", {"stage": "combine"})
+                await asyncio.sleep(0.5)  # Small delay for UI to show state
+                
+                # Format results
+                formatted_results = []
+                if results:
+                    try:
+                        # Try to call to_dict() on each result
+                        formatted_results = [res.to_dict() for res in results]
+                    except (AttributeError, TypeError) as e:
+                        logger.warning(f"Error converting SearchResult objects to dictionaries: {e}")
+                        # Fallback: manually convert SearchResult objects to dictionaries
+                        formatted_results = []
+                        for res in results:
+                            try:
+                                # Create a dictionary with all the necessary fields
+                                result_dict = {
+                                    'id': f"{res.content_id}_{res.segment_id or '0'}_{res.start_time or '0'}",
+                                    'content_id': res.content_id,
+                                    'content': res.content,
+                                    'similarity': res.similarity,
+                                    'source': res.source,
+                                    'title': res.title or '',
+                                    'start_time': res.start_time,
+                                    'end_time': res.end_time,
+                                    'url': res.url or '',
+                                    'watch_url': res.watch_url or '',
+                                    'video_id': res.video_id,
+                                    'segment_id': res.segment_id,
+                                    'summary': res.summary or '',
+                                    'metadata': res.metadata or {},
+                                    'search_method': res.search_method or 'unknown',
+                                    'content_type': res.content_type or 'unknown'
+                                }
+                                formatted_results.append(result_dict)
+                            except Exception as item_err:
+                                logger.error(f"Error formatting individual result: {item_err}")
+                
+                # Prepare metadata
+                metadata = {
+                    "query": query,
+                    "total_results_found": len(results),
+                    "search_duration_seconds": round(search_duration, 2),
+                    "analysis_run": run_analysis,
+                    "effective_params": global_search_params.get_all_params(),
+                    "search_complete": True,
+                    "stage": "complete"
+                }
+                
+                # Add token counts if available
+                try:
+                    try:
+                        from .psearchworking import token_counter as psearch_token_counter
+                        metadata["token_usage"] = psearch_token_counter.get_stats()
+                    except (ImportError, AttributeError):
+                        # Fall back to local token_counter
+                        metadata["token_usage"] = token_counter.get_stats()
+                except (NameError, AttributeError) as tk_err:
+                    logger.warning(f"Could not get token stats: {tk_err}")
+                
+                # If analysis was requested, update status
+                if run_analysis:
+                    yield format_sse_message("status", "Analyzing search results", {"stage": "analyze"})
+                    
+                    # Send OpenAI analysis if available
+                    if openai_analysis:
+                        yield format_sse_message("analysis", openai_analysis, {"provider": "openai"})
+                    
+                    # Send Groq analysis if available
+                    if groq_analysis:
+                        yield format_sse_message("analysis", groq_analysis, {"provider": "groq"})
+                    
+                    # Update metadata to indicate analysis is complete
+                    metadata["analysis_complete"] = bool(openai_analysis or groq_analysis)
+                
+                # Send final results
+                yield format_sse_message("results", formatted_results, metadata)
+                
+                # Send completion message
+                yield format_sse_message("complete", "Search process completed", {"stage": "complete"})
+                
+            except Exception as e:
+                search_duration = time.time() - start_time
+                error_msg = f"Search execution failed: {e}"
+                logger.error(f"Error during search execution ({search_duration:.2f}s): {e}", exc_info=True)
+                yield format_sse_message("error", error_msg)
+                
+        except asyncio.CancelledError:
+            logger.info(f"SSE connection closed by client {client_host}")
+        except Exception as e:
+            logger.error(f"Unexpected error in search SSE generator: {e}", exc_info=True)
+            yield format_sse_message("error", f"Unexpected error: {e}")
+    
+    return EventSourceResponse(event_generator())
 # --- Root and Health Check ---
 @app.get("/", tags=["Utility"])
 async def root():
