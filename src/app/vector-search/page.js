@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import axios from 'axios';
+import { createSafeEventSource, parseSseData } from '@/utils/sse-helpers';
 import {
   Card,
   CardContent,
@@ -56,7 +57,9 @@ export default function VectorSearch() {
     // Use 'results' state for the list of search result objects
     const [results, setResults] = useState([]);
     const [openaiAnalysis, setOpenAIAnalysis] = useState('');
+    const [openAIAnalysisReceived, setOpenAIAnalysisReceived] = useState(false);
     const [groqAnalysis, setGroqAnalysis] = useState('');
+    const [groqAnalysisReceived, setGroqAnalysisReceived] = useState(false);
     const [metadata, setMetadata] = useState(null); // To store metadata like tokens, duration
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState(null);
@@ -101,6 +104,17 @@ export default function VectorSearch() {
     const [eventSource, setEventSource] = useState(null);
 
     // --- handleSearch using SSE for real-time updates ---
+    // Debug function to log the current state
+    const logCurrentState = () => {
+      console.log('Current state:', {
+        currentStage,
+        loading,
+        hasSearched,
+        resultsLength: results.length,
+        metadata
+      });
+    };
+    
     const handleSearch = useCallback(() => {
         if (!query.trim()) {
             setError("Please enter a search query.");
@@ -112,6 +126,14 @@ export default function VectorSearch() {
             eventSource.close();
         }
 
+        // Only reset analysis flags if analysis is enabled
+        if (runAnalysis) {
+            // Reset analysis received flags
+            setOpenAIAnalysisReceived(false);
+            setGroqAnalysisReceived(false);
+        }
+        
+        // Reset all states at the beginning of a new search
         setLoading(true);
         setHasSearched(true); // Indicate search has been attempted
         setResults([]); // Clear previous results
@@ -141,6 +163,13 @@ export default function VectorSearch() {
         console.log("Connecting to SSE endpoint:", searchUrl.toString());
 
         // Create SSE connection using the utility function
+        // Close any existing EventSource before creating a new one
+        if (eventSource) {
+            console.log("Closing existing SSE connection before creating a new one");
+            eventSource.close();
+            setEventSource(null);
+        }
+        
         const newEventSource = createSafeEventSource(
             searchUrl.toString(),
             (data) => {
@@ -155,31 +184,103 @@ export default function VectorSearch() {
                     case 'status':
                         // Update search flow stage based on status
                         if (data.metadata?.stage) {
-                            setCurrentStage(data.metadata.stage);
+                            console.log('Updating stage to:', data.metadata.stage);
+                            
+                            // Use a functional state update to ensure we're working with the latest state
+                            setCurrentStage(prevStage => {
+                                console.log('Previous stage:', prevStage, 'New stage:', data.metadata.stage);
+                                return data.metadata.stage;
+                            });
+                            
+                            // Log the update for debugging
+                            setTimeout(() => {
+                                console.log('Stage updated to:', data.metadata.stage);
+                            }, 0);
                         }
                         
-                        // Update metadata if provided
+                        // Update metadata if provided - use functional update to avoid race conditions
                         if (data.metadata) {
-                            setMetadata(prevMetadata => ({
-                                ...prevMetadata,
-                                ...data.metadata
-                            }));
+                            setMetadata(prevMetadata => {
+                                const updatedMetadata = {
+                                    ...prevMetadata,
+                                    ...data.metadata
+                                };
+                                console.log('Updated metadata:', updatedMetadata);
+                                return updatedMetadata;
+                            });
                         }
                         break;
                         
                     case 'results':
                         // Final results received
-                        setResults(data.content || []);
+                        console.log('Received final results:', data.content?.length || 0, 'items');
+                        
+                        // Use functional update to ensure we're working with the latest state
+                        setResults(prevResults => {
+                            const newResults = data.content || [];
+                            console.log('Updating results from', prevResults.length, 'to', newResults.length, 'items');
+                            return newResults;
+                        });
+                        
+                        // Ensure stage is updated to complete
                         setCurrentStage('complete');
-                        setLoading(false);
+                        
+                        // Update metadata to indicate search is complete
+                        setMetadata(prevMetadata => ({
+                            ...prevMetadata,
+                            search_complete: true,
+                            ...(data.metadata || {})
+                        }));
+                        
+                        // Only set loading to false if we have analysis or analysis is not requested
+                        if (!runAnalysis || data.metadata?.analysis_complete) {
+                            setLoading(false);
+                            console.log('Setting loading to false after results');
+                        }
                         break;
                         
                     case 'analysis':
                         // Analysis results
-                        if (data.provider === 'openai') {
-                            setOpenAIAnalysis(data.content || '');
-                        } else if (data.provider === 'groq') {
-                            setGroqAnalysis(data.content || '');
+                        console.log('Received analysis from provider:', data.metadata?.provider);
+                        
+                        if (data.metadata?.provider === 'openai') {
+                            if (runAnalysis) {
+                                // Use functional update to ensure we're working with the latest state
+                                setOpenAIAnalysisReceived(prevReceived => {
+                                    if (!prevReceived) {
+                                        // Only update if not already received
+                                        setOpenAIAnalysis(data.content || '');
+                                        console.log('OpenAI analysis set, marked as received');
+                                        return true;
+                                    } else {
+                                        console.log('Ignoring duplicate OpenAI analysis');
+                                        return prevReceived;
+                                    }
+                                });
+                            } else {
+                                // If analysis is not enabled, just set the content
+                                setOpenAIAnalysis(data.content || '');
+                                console.log('OpenAI analysis set (analysis tracking disabled)');
+                            }
+                        } else if (data.metadata?.provider === 'groq') {
+                            if (runAnalysis) {
+                                // Use functional update to ensure we're working with the latest state
+                                setGroqAnalysisReceived(prevReceived => {
+                                    if (!prevReceived) {
+                                        // Only update if not already received
+                                        setGroqAnalysis(data.content || '');
+                                        console.log('Groq analysis set, marked as received');
+                                        return true;
+                                    } else {
+                                        console.log('Ignoring duplicate Groq analysis');
+                                        return prevReceived;
+                                    }
+                                });
+                            } else {
+                                // If analysis is not enabled, just set the content
+                                setGroqAnalysis(data.content || '');
+                                console.log('Groq analysis set (analysis tracking disabled)');
+                            }
                         }
                         
                         // Update metadata to indicate analysis is complete
@@ -187,33 +288,58 @@ export default function VectorSearch() {
                             ...prevMetadata,
                             analysis_complete: true
                         }));
+                        
+                        // Check if both analyses are received or not requested
+                        if (!runAnalysis || (openAIAnalysisReceived && groqAnalysisReceived)) {
+                            // Ensure stage is updated to complete
+                            setCurrentStage('complete');
+                            setLoading(false);
+                            console.log('Setting loading to false and stage to complete after analysis');
+                        }
                         break;
                         
                     case 'error':
+                        console.error('SSE error event:', data.content);
                         setError(data.content || 'An error occurred during search');
                         setLoading(false);
+                        console.log('Setting loading to false due to error');
                         break;
                         
                     case 'complete':
                         // Search process complete
+                        console.log('Search process complete');
                         setCurrentStage('complete');
                         setLoading(false);
+                        console.log('Setting loading to false due to completion');
                         
                         // Ensure metadata has the required flags
                         setMetadata(prevMetadata => ({
                             ...prevMetadata,
                             search_complete: true
                         }));
+                        
+                        // Close the EventSource to prevent connection errors
+                        if (newEventSource) {
+                            console.log('Closing SSE connection after search completion');
+                            newEventSource.close();
+                            setEventSource(null);
+                        }
+                        break;
+                        
+                    case 'heartbeat':
+                        // Just a heartbeat to keep the connection alive
+                        console.log('Heartbeat received');
                         break;
                         
                     default:
                         console.log(`Unhandled SSE event type: ${eventType}`);
                 }
-            },
+                },
             (error) => {
                 console.error('SSE Error:', error);
                 setError('Connection error. Please try again.');
                 setLoading(false);
+                console.log('Setting loading to false due to connection error');
             }
         );
         
@@ -225,9 +351,10 @@ export default function VectorSearch() {
             if (newEventSource) {
                 console.log("Closing SSE connection");
                 newEventSource.close();
+                setEventSource(null);
             }
         };
-    }, [query, presetValue, searchParams, runAnalysis, baseUrl, eventSource]);
+    }, [query, presetValue, searchParams, runAnalysis, baseUrl, eventSource, openAIAnalysisReceived, groqAnalysisReceived]);
     
     // Clean up EventSource on unmount
     useEffect(() => {
@@ -486,12 +613,13 @@ export default function VectorSearch() {
             </Card>
 
             {/* Results Area */}
-            {hasSearched && !loading && !error && (
+            {hasSearched && (
                 <div className="mt-6 space-y-6">
-                    {/* Search Flow Visualization */}
+                    {/* Search Flow Visualization - Always show during search process */}
                     <SearchFlowIndicator 
-                        currentStage={metadata?.search_complete ? 'complete' : 'search'} 
+                        currentStage={currentStage} 
                         metadata={metadata}
+                        loading={loading}
                     />
                     
                     {/* Search Results Summary */}
@@ -537,7 +665,7 @@ export default function VectorSearch() {
                         <h2 className="text-xl font-semibold mb-4">Detailed Results</h2>
                         <div className="space-y-4">
                             {results.length > 0 ? results.map((result, index) => (
-                                <SearchResultCard key={result.id || index} result={result} />
+                                <SearchResultCard key={`main-results-${result.id || index}-${Math.random().toString(36).substr(2, 5)}`} result={result} index={index} />
                             )) : (
                                 <div className="text-center p-8 border rounded-md bg-gray-50">
                                     <p className="text-gray-500">No search results to display.</p>

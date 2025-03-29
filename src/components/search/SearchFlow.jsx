@@ -5,12 +5,19 @@ import { PROGRESS_STAGES, STATUS_INDICATORS, ANALYSIS_STEPS } from '@/lib/search
 /**
  * Component for displaying the search flow process with enhanced animations
  */
-export function SearchFlowIndicator({ currentStage = 'start', metadata = {} }) {
+export function SearchFlowIndicator({ currentStage = 'start', metadata = {}, loading = false }) {
+  // Debug log the current stage and loading state
+  console.log('SearchFlowIndicator received:', { currentStage, loading, metadata });
+  
   // Define all stages in order
   const stages = ['start', 'search', 'filter', 'combine', 'analyze', 'complete'];
   
   // Find the current stage index
-  const currentIndex = stages.indexOf(currentStage);
+  // If the stage is not found, default to the 'start' stage
+  // Ensure we use 'complete' stage when loading is false and we're in the last stage
+  const effectiveStage = (!loading && currentStage === 'analyze') ? 'complete' : currentStage;
+  const currentIndex = stages.indexOf(effectiveStage) !== -1 ? stages.indexOf(effectiveStage) : 0;
+  console.log('Stage index:', currentIndex, 'for stage:', effectiveStage);
   
   // Animation state
   const [animateIn, setAnimateIn] = useState(false);
@@ -21,6 +28,7 @@ export function SearchFlowIndicator({ currentStage = 'start', metadata = {} }) {
   
   // Detect stage changes for animations
   useEffect(() => {
+    console.log('Stage changed from', prevStage, 'to', currentStage);
     if (currentStage !== prevStage) {
       setPrevStage(currentStage);
       setStageChanged(true);
@@ -43,12 +51,22 @@ export function SearchFlowIndicator({ currentStage = 'start', metadata = {} }) {
     return () => clearTimeout(timer);
   }, []);
   
+  // Force component to be visible even if animateIn is false
+  const visibilityClass = 'opacity-100';
+  
   return (
-    <Card className={`mb-6 overflow-hidden transition-all duration-500 ${animateIn ? 'opacity-100' : 'opacity-0'}`}>
+    <Card className={`mb-6 overflow-hidden transition-all duration-500 ${visibilityClass}`}>
       <CardHeader className="pb-2 bg-gradient-to-r from-blue-50 to-cyan-50">
-        <CardTitle className="text-base flex items-center">
-          <span className="mr-2">{PROGRESS_STAGES.start.icon}</span>
-          Search Process Flow
+        <CardTitle className="text-base flex items-center justify-between">
+          <div className="flex items-center">
+            <span className="mr-2">{PROGRESS_STAGES.start.icon}</span>
+            Search Process Flow
+          </div>
+          {loading && (
+            <div className="text-xs bg-yellow-100 px-2 py-1 rounded-full text-yellow-700 animate-pulse">
+              Processing...
+            </div>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent>
@@ -67,7 +85,13 @@ export function SearchFlowIndicator({ currentStage = 'start', metadata = {} }) {
           {/* Stages */}
           <div className="flex justify-between relative">
             {stages.map((stage, index) => {
-              const stageInfo = PROGRESS_STAGES[stage];
+              const stageInfo = PROGRESS_STAGES[stage] || {
+                icon: '📌',
+                message: stage.charAt(0).toUpperCase() + stage.slice(1),
+                textColor: 'text-gray-600',
+                bgColor: 'bg-gray-100'
+              };
+              
               const isActive = index <= currentIndex;
               const isCurrent = index === currentIndex;
               const isPast = index < currentIndex;
@@ -82,7 +106,7 @@ export function SearchFlowIndicator({ currentStage = 'start', metadata = {} }) {
                   style={{ 
                     transition: 'transform 0.5s ease, opacity 0.5s ease',
                     transitionDelay: `${animationDelay}s`,
-                    opacity: animateIn ? 1 : 0,
+                    opacity: 1, // Always visible
                     transform: animateIn ? 'translateY(0)' : 'translateY(10px)'
                   }}
                 >
@@ -95,7 +119,7 @@ export function SearchFlowIndicator({ currentStage = 'start', metadata = {} }) {
                     ${isCurrent ? 'ring-2 ring-offset-2 ring-blue-400 active animate-pulse' : ''}
                     ${isPast ? 'shadow-sm' : ''}
                   `}>
-                    {isCurrent && stage !== 'complete' ? (
+                    {isCurrent && loading ? (
                       <span className="animate-spin">{STATUS_INDICATORS.progress}</span>
                     ) : (
                       <span className={isPast ? 'transform scale-110' : ''}>{stageInfo.icon}</span>
@@ -117,10 +141,29 @@ export function SearchFlowIndicator({ currentStage = 'start', metadata = {} }) {
           </div>
         </div>
         
+        {/* Current stage indicator */}
+        <div className="mt-4 pt-2 border-t border-gray-200 text-sm text-center">
+          <div className={`inline-block px-3 py-1 rounded-full ${
+            loading ? 'bg-yellow-100 text-yellow-700' : 'bg-green-100 text-green-700'
+          }`}>
+            {loading ? (
+              <span className="flex items-center">
+                <span className="animate-spin mr-1">{STATUS_INDICATORS.progress}</span>
+                Processing: {currentStage.charAt(0).toUpperCase() + currentStage.slice(1)} stage
+              </span>
+            ) : (
+              <span className="flex items-center">
+                <span className="mr-1">✓</span>
+                {currentStage === 'complete' ? 'Search complete' : 'Stage complete'}
+              </span>
+            )}
+          </div>
+        </div>
+        
         {/* Metadata display with animation */}
         {metadata && Object.keys(metadata).length > 0 && (
           <div 
-            className="mt-6 pt-4 border-t border-gray-200 grid grid-cols-2 gap-2 text-xs"
+            className="mt-4 pt-2 border-t border-gray-200 grid grid-cols-2 gap-2 text-xs"
             style={{ 
               transition: 'opacity 0.5s ease, transform 0.5s ease',
               transitionDelay: '1s',
@@ -304,13 +347,16 @@ export function AnalysisProcess({ currentStep = 'start', openaiAnalysis, groqAna
   // Define all steps in order
   const steps = ['start', 'filtering', 'prioritizing', 'preparing', 'generating', 'complete'];
   
-  // Find the current step index
-  const currentIndex = steps.indexOf(currentStep);
-  
-  // Check if analysis is available
+  // Check if analysis is available - if so, ensure we show complete
   const hasOpenAI = openaiAnalysis && openaiAnalysis.trim() !== '';
   const hasGroq = groqAnalysis && groqAnalysis.trim() !== '';
   const hasAnalysis = hasOpenAI || hasGroq;
+  
+  // Use effective step to ensure we show complete when analysis is available
+  const effectiveStep = hasAnalysis ? 'complete' : currentStep;
+  
+  // Find the current step index
+  const currentIndex = steps.indexOf(effectiveStep) !== -1 ? steps.indexOf(effectiveStep) : 0;
   
   // Animation state
   const [animateIn, setAnimateIn] = useState(false);
@@ -346,7 +392,7 @@ export function AnalysisProcess({ currentStep = 'start', openaiAnalysis, groqAna
           {/* Steps */}
           <div className="space-y-2 relative z-10">
             {steps.map((step, index) => {
-              const stepInfo = ANALYSIS_STEPS[step];
+              const stepInfo = ANALYSIS_STEPS[step] || {};
               const isActive = index <= currentIndex;
               const isCurrent = index === currentIndex;
               const isPast = index < currentIndex;
