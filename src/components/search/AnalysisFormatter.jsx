@@ -68,13 +68,28 @@ function CssClassFormatter({ content }) {
     processedHtml = processedHtml.replace(/"font-bold">([^<]+)/g, 
       '<strong class="font-bold">$1</strong>');
     
-    // Handle YouTube links - simplified approach without regex issues
-    const youtubePattern = /🎬?https:\/\/www\.youtube\.com\/watch\?v=([^&\s"']+)/g;
+    // Handle direct YouTube links - preserve full URL including timestamp parameters
+    const youtubePattern = /🎬?(https:\/\/www\.youtube\.com\/watch\?v=[^&\s"']+(?:&t=\d+)?(?:&[^&\s"']+)*)/g;
     let match;
     while ((match = youtubePattern.exec(processedHtml)) !== null) {
       const fullMatch = match[0];
-      const videoId = match[1];
-      const replacement = `<a href="https://www.youtube.com/watch?v=${videoId}" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline hover:no-underline flex items-center"><span class="mr-1">🎬</span>Watch Video</a>`;
+      const fullUrl = match[1]; // This captures the entire URL with all parameters
+      const replacement = `<a href="${fullUrl}" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline hover:no-underline flex items-center"><span class="mr-1">🎬</span>Watch Video</a>`;
+      processedHtml = processedHtml.replace(fullMatch, replacement);
+    }
+    
+    // Handle markdown-style YouTube links - convert to HTML links
+    const markdownYoutubePattern = /\[([^\]]+)\]\((https:\/\/www\.youtube\.com\/watch\?v=[^&\s"']+(?:&t=\d+)?(?:&[^&\s"']+)*)\)/g;
+    let mdMatch;
+    while ((mdMatch = markdownYoutubePattern.exec(processedHtml)) !== null) {
+      const fullMatch = mdMatch[0];
+      const linkText = mdMatch[1];
+      const fullUrl = mdMatch[2]; // This captures the entire URL with all parameters
+      
+      // Create a styled HTML link that matches the design of other links
+      const displayText = linkText.includes('🎬') ? linkText : `🎬 ${linkText}`;
+      const replacement = `<a href="${fullUrl}" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline hover:no-underline flex items-center"><span class="mr-1">🎬</span>${linkText.replace(/🎬\s*/, '')}</a>`;
+      
       processedHtml = processedHtml.replace(fullMatch, replacement);
     }
     
@@ -207,16 +222,37 @@ function MarkdownFormatter({ content }) {
           }
         }
         
-        // Handle YouTube links that aren't in markdown format
-        const youtubePattern = /https:\/\/www\.youtube\.com\/watch\?v=([^&\s"']+)/g;
-        processed = processed.replace(youtubePattern, (match, videoId) => {
-          return `[🎬 Watch Video](${match})`;
-        });
+        // Convert "🎬 Watch Here" text to proper markdown links with the correct URL
+        // This pattern looks for content ID and timestamp information near "Watch Here" text
+        const watchHerePattern = /- \*\*Content ID:\*\* ([a-zA-Z0-9_-]+)[\s\S]*?- \*\*Timestamp:\*\* ([0-9:.]+) to ([0-9:.]+)[\s\S]*?- \*\*URL:\*\* 🎬 Watch Here/g;
         
-        // Handle quoted text that isn't in markdown format
-        processed = processed.replace(/"([^"]+)"/g, (match, text) => {
-          return `**"${text}"**`;
-        });
+        let match;
+        while ((match = watchHerePattern.exec(processed)) !== null) {
+          const contentId = match[1];
+          const startTime = match[2];
+          
+          // Convert timestamp (00:04:13) to seconds for YouTube URL
+          const convertTimeToSeconds = (timeStr) => {
+            const parts = timeStr.split(':').map(Number);
+            if (parts.length === 3) {
+              return parts[0] * 3600 + parts[1] * 60 + parts[2];
+            } else if (parts.length === 2) {
+              return parts[0] * 60 + parts[1];
+            }
+            return 0;
+          };
+          
+          const startSeconds = convertTimeToSeconds(startTime);
+          
+          // Create YouTube URL with timestamp
+          const youtubeUrl = `https://www.youtube.com/watch?v=${contentId}&t=${startSeconds}`;
+          
+          // Replace "🎬 Watch Here" with a proper markdown link
+          const searchText = "- **URL:** 🎬 Watch Here";
+          const replacement = `- **URL:** [🎬 Watch Here](${youtubeUrl})`;
+          
+          processed = processed.replace(searchText, replacement);
+        }
         
         return processed;
     }, [content]);

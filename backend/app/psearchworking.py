@@ -810,7 +810,7 @@ class ModelSelector:
     @staticmethod
     def generate_analysis(text: str, provider: str = 'openai') -> str:
         """Generate analysis using the specified provider."""
-        # Shorter system prompt to reduce token usage
+        # Enhanced system prompt with formatting instructions
         system_prompt = '''You are an AI system that analyzes search results from a database containing:
 1. video_transcriptions: Individual video segments with timestamps
 2. document_embeddings: Aggregated content chunks with summaries
@@ -823,7 +823,33 @@ Analyze search results by:
 - Evaluating relevance to the query
 - Extracting key information
 - Identifying connections between results
-- Providing a concise summary that helps the user understand the search results'''
+- Providing a concise summary that helps the user understand the search results
+
+FORMAT YOUR RESPONSE USING MARKDOWN:
+- Use ### for main headings and #### for subheadings
+- Use **bold** for important information
+- Use numbered lists (1. 2. 3.) for sequential information
+- Use bullet points (- ) for non-sequential items
+- For YouTube video links, use the format: 🎬 Watch Here (do not include the URL in the link text)
+
+Example format:
+### Search Results Analysis
+**Total Results Analyzed:** 2 **Source:** Video Transcriptions **Average Relevance Score:** 0.311
+
+#### Detailed Results:
+1. **Result 1** - **Source:** Video Transcriptions - **Score:** 0.344
+   - **Content ID:** iG1Vxj2L_ZE
+   - **Timestamp:** 00:00:11 to 00:00:24
+   - **URL:** 🎬 Watch Here
+   - **Content Summary:** Brief description of content
+
+### Analysis
+- **Relevance Evaluation:** Evaluation of relevance
+- **Key Information:** Key information extracted
+- **Connections:** Connections between results
+
+### Conclusion
+Summary of findings and recommendations'''
         
         try:
             # Estimate total tokens and truncate if needed
@@ -1194,12 +1220,12 @@ def search_all(query, max_results=30, skip_prompts=False, run_analysis=True):
         # Run dot product search on video transcriptions (fine-grained segments)
         fine_grained_start = time.time()
         fine_grained_results = client.rpc(
-            'search_video_transcriptions',
+            'dot_product_search',
             {
                 'query_embedding': embedding,
-                'similarity_threshold': fine_grained_params["similarity_threshold"],
+                'match_count': int(max_results * fine_grained_params["result_percentage"]),
                 'content_weight': fine_grained_params["content_weight"],
-                'match_count': int(max_results * fine_grained_params["result_percentage"])
+                'summary_weight': fine_grained_params.get("summary_weight", 1.0 - fine_grained_params["content_weight"])
             }
         ).execute().data
         fine_grained_time = time.time() - fine_grained_start
@@ -1214,12 +1240,12 @@ def search_all(query, max_results=30, skip_prompts=False, run_analysis=True):
         # Run dot product search on document embeddings (contextual segments)
         contextual_start = time.time()
         contextual_results = client.rpc(
-            'search_document_embeddings',
+            'dot_product_search',
             {
                 'query_embedding': embedding,
-                'similarity_threshold': contextual_params["similarity_threshold"],
+                'match_count': int(max_results * contextual_params["result_percentage"]),
                 'content_weight': contextual_params["content_weight"],
-                'match_count': int(max_results * contextual_params["result_percentage"])
+                'summary_weight': contextual_params.get("summary_weight", 1.0 - contextual_params["content_weight"])
             }
         ).execute().data
         contextual_time = time.time() - contextual_start
@@ -1234,12 +1260,12 @@ def search_all(query, max_results=30, skip_prompts=False, run_analysis=True):
         # Run dot product search on full transcripts (overview)
         overview_start = time.time()
         overview_results = client.rpc(
-            'search_video_transcriptions_full',
+            'dot_product_search',
             {
                 'query_embedding': embedding,
-                'similarity_threshold': overview_params["similarity_threshold"],
+                'match_count': int(max_results * overview_params["result_percentage"]),
                 'content_weight': overview_params["content_weight"],
-                'match_count': int(max_results * overview_params["result_percentage"])
+                'summary_weight': overview_params.get("summary_weight", 1.0 - overview_params["content_weight"])
             }
         ).execute().data
         overview_time = time.time() - overview_start
@@ -1273,7 +1299,7 @@ def search_all(query, max_results=30, skip_prompts=False, run_analysis=True):
         keyword_results_raw = client.rpc(
             'keyword_search',
             {
-                'search_query': query,
+                'query_text': query,
                 'match_count': max_results
             }
         ).execute().data
