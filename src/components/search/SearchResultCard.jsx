@@ -61,7 +61,11 @@ export function SearchResultCard({ result, index = 0 }) {
         <div className="flex justify-between items-start">
           <div>
             <CardTitle className={`text-base font-medium ${sourceStyle.textColor}`}>
-              {result.title || `Result from ${result.content_id || 'unknown source'}`}
+              {result.title || (result.source === 'video_transcriptions' ? 
+                `Video Transcript: ${result.content_id || 'Unknown'}` : 
+                result.source === 'document_embeddings' ? 
+                `Document: ${result.content_id || 'Unknown'}` : 
+                `Result from ${result.content_id || 'unknown source'}`)}
             </CardTitle>
             <div className="flex flex-wrap gap-2 mt-1">
               <ScoreBadge score={result.similarity} />

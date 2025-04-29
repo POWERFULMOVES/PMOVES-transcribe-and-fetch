@@ -22,7 +22,9 @@ export const ACTIONS = {
   SET_DRAWER_OPEN: 'SET_DRAWER_OPEN',
   SET_TIMEOUT: 'SET_TIMEOUT',
   SET_EXCLUDED_SELECTOR: 'SET_EXCLUDED_SELECTOR',
-  SET_CLEAN_FORMAT: 'SET_CLEAN_FORMAT'
+  SET_CLEAN_FORMAT: 'SET_CLEAN_FORMAT',
+  SET_SHOULD_DISCONNECT: 'SET_SHOULD_DISCONNECT',
+  ADD_MULTIPLE_TRANSCRIPTION_SEGMENTS: 'ADD_MULTIPLE_TRANSCRIPTION_SEGMENTS'
 };
 
 export const initialState = {
@@ -49,7 +51,8 @@ export const initialState = {
   timeout: 300,
   elapsedTime: 0,
   excludedSelector: '',
-  cleanFormat: true
+  cleanFormat: true,
+  shouldDisconnect: false
 };
 
 export function transcriptionReducer(state, action) {
@@ -69,13 +72,31 @@ export function transcriptionReducer(state, action) {
     case ACTIONS.SET_TRANSCRIBING:
       return { ...state, transcribing: action.payload };
     case ACTIONS.ADD_STATUS_UPDATE:
-      // Check if this exact status update already exists in the array
+      // Check if this is a transcription segment status update
+      if (typeof action.payload === 'string' && action.payload.includes('Transcribing segment')) {
+        // For transcription segment updates, only keep the latest one
+        const filteredUpdates = state.statusUpdates.filter(update =>
+          typeof update !== 'string' || !update.includes('Transcribing segment')
+        );
+        return {
+          ...state,
+          statusUpdates: [...filteredUpdates, action.payload]
+        };
+      }
+
+      // For other updates, check for exact duplicates
       if (state.statusUpdates.includes(action.payload)) {
         return state; // Don't add duplicate
       }
+
+      // Limit the number of status updates to prevent performance issues
+      const maxStatusUpdates = 100;
+      const newStatusUpdates = [...state.statusUpdates, action.payload];
       return {
         ...state,
-        statusUpdates: [...state.statusUpdates, action.payload]
+        statusUpdates: newStatusUpdates.length > maxStatusUpdates
+          ? newStatusUpdates.slice(-maxStatusUpdates)
+          : newStatusUpdates
       };
     case ACTIONS.SET_ACTIVE_STEP:
       return {
@@ -83,12 +104,17 @@ export function transcriptionReducer(state, action) {
         activeStep: action.payload
       };
     case ACTIONS.RESET_TRANSCRIPTION:
-      return { 
-        ...state, 
-        transcriptionSegments: [], 
+      console.log('[transcriptionReducer] RESET_TRANSCRIPTION action called');
+      return {
+        ...state,
+        transcriptionSegments: [],
         completedTranscription: null,
         statusUpdates: [],
-        error: null 
+        error: null,
+        processResult: {},
+        activeStep: 0,
+        // Don't reset transcribing here - it should be managed separately
+        // Don't reset loading here - it should be managed separately
       };
     case ACTIONS.SET_TRANSCRIPTION_MODEL:
       return { ...state, transcriptionModel: action.payload };
@@ -105,23 +131,25 @@ export function transcriptionReducer(state, action) {
     case ACTIONS.ADD_TRANSCRIPTION_SEGMENT:
       // Ensure we're not adding duplicate segments
       const newSegment = action.payload;
+
+      // Skip empty segments
+      if (!newSegment || !newSegment.text) {
+        return state;
+      }
+
+      // Use ID-based duplicate checking for better performance
       const isDuplicate = state.transcriptionSegments.some(
-        segment => 
-          segment.start_time === newSegment.start_time && 
-          segment.end_time === newSegment.end_time && 
-          segment.text === newSegment.text
+        segment => segment.id === newSegment.id
       );
 
       if (isDuplicate) {
         return state;
       }
 
-      // Add the new segment and sort by start time
+      // Add the new segment (without sorting)
       return {
         ...state,
-        transcriptionSegments: [...state.transcriptionSegments, newSegment].sort(
-          (a, b) => a.start_time - b.start_time
-        )
+        transcriptionSegments: [...state.transcriptionSegments, newSegment]
       };
     case ACTIONS.SET_COMPLETED_TRANSCRIPTION:
       return {
@@ -141,6 +169,24 @@ export function transcriptionReducer(state, action) {
       return { ...state, excludedSelector: action.payload };
     case ACTIONS.SET_CLEAN_FORMAT:
       return { ...state, cleanFormat: action.payload };
+    case ACTIONS.SET_SHOULD_DISCONNECT:
+      return { ...state, shouldDisconnect: action.payload };
+    case ACTIONS.ADD_MULTIPLE_TRANSCRIPTION_SEGMENTS: {
+      const newSegments = action.payload || [];
+      // Filter out potential duplicates from the incoming batch and compared to existing state
+      const existingIds = new Set(state.transcriptionSegments.map(s => s.id));
+      const uniqueNewSegments = newSegments.filter(segment => segment && segment.id !== undefined && !existingIds.has(segment.id));
+
+      if (uniqueNewSegments.length === 0) {
+        return state; // No new unique segments to add
+      }
+
+      return {
+        ...state,
+        transcriptionSegments: [...state.transcriptionSegments, ...uniqueNewSegments]
+          .sort((a, b) => a.start_seconds - b.start_seconds), // Keep sorted
+      };
+    }
     default:
       return state;
   }

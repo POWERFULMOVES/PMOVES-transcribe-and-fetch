@@ -1,6 +1,7 @@
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import VectorSearch from '../page';
+import axios from 'axios';
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({
@@ -8,13 +9,13 @@ jest.mock('next/navigation', () => ({
   }),
 }));
 
+// Mock axios
+jest.mock('axios');
+
 describe('VectorSearch Component', () => {
   beforeEach(() => {
-    global.EventSource = jest.fn(() => ({
-      close: jest.fn(),
-      onmessage: null,
-      onerror: null
-    }));
+    // Reset axios mock before each test
+    axios.post.mockReset();
   });
 
   afterEach(() => {
@@ -23,294 +24,235 @@ describe('VectorSearch Component', () => {
 
   it('renders search interface with all parameters', () => {
     render(<VectorSearch />);
-    expect(screen.getByTestId('search-input')).toBeInTheDocument();
-    expect(screen.getByTestId('search-button')).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('Enter your search query')).toBeInTheDocument();
+    // Use a more specific selector for the search button
+    expect(screen.getByText('Search')).toBeInTheDocument();
   });
 
   it('updates fine-grained search parameters', () => {
     render(<VectorSearch />);
-    const thresholdSlider = screen.getByTestId('fine-grained-threshold-slider');
-    expect(thresholdSlider).toBeInTheDocument();
+    // Find the accordion trigger and click it to expand parameters
+    const accordionTrigger = screen.getByText(/Adjust Search Parameters/i);
+    fireEvent.click(accordionTrigger);
+    
+    // Check that sliders are present
+    expect(screen.getByText(/Fine-grained \(High Precision\)/i)).toBeInTheDocument();
+    // Use getAllByText and check the first one
+    expect(screen.getAllByText(/Similarity Threshold:/i)[0]).toBeInTheDocument();
   });
 
-  it('sends correct search parameters in EventSource URL', async () => {
+  it('sends correct search parameters in axios POST request', async () => {
+    // Mock successful response
+    axios.post.mockResolvedValue({
+      data: {
+        results: [],
+        openai_analysis: '',
+        groq_analysis: '',
+        metadata: {}
+      }
+    });
+
     render(<VectorSearch />);
-    const searchInput = screen.getByTestId('search-input');
-    const searchButton = screen.getByTestId('search-button');
+    const searchInput = screen.getByPlaceholderText('Enter your search query');
+    // Use a more specific selector for the search button
+    const searchButton = screen.getByText('Search');
 
     await act(async () => {
       fireEvent.change(searchInput, { target: { value: 'test query' } });
       fireEvent.click(searchButton);
     });
 
-    expect(global.EventSource).toHaveBeenCalledWith(
-      expect.stringMatching(/http:\/\/localhost:8000\/vector-search-stream/)
-    );
-    expect(global.EventSource).toHaveBeenCalledWith(
-      expect.stringMatching(/query=test\+query/)
-    );
-    expect(global.EventSource).toHaveBeenCalledWith(
-      expect.stringMatching(/fine_grained_similarity_threshold=0\.75/)
-    );
+    // Check that axios.post was called with the correct URL and data
+    expect(axios.post).toHaveBeenCalledTimes(1);
+    
+    // Check URL contains the correct parameters
+    const calledUrl = axios.post.mock.calls[0][0];
+    expect(calledUrl).toMatch(/http:\/\/localhost:8000\/api\/search/);
+    expect(calledUrl).toMatch(/preset=default/);
+    
+    // Check request body contains the correct data
+    const requestBody = axios.post.mock.calls[0][1];
+    expect(requestBody).toEqual({
+      query: 'test query',
+      max_results: expect.any(Number),
+      run_analysis: true
+    });
   });
 
   it('handles search results and analysis', async () => {
-    render(<VectorSearch />);
-    const searchInput = screen.getByTestId('search-input');
-    const searchButton = screen.getByTestId('search-button');
+    // Mock successful response with results and analysis
+    axios.post.mockResolvedValue({
+      data: {
+        results: [{ id: 1, content: 'Test Result 1', similarity: 0.9 }],
+        openai_analysis: 'Test OpenAI analysis',
+        groq_analysis: 'Test Groq analysis',
+        metadata: {
+          search_duration_seconds: 1.5,
+          total_results_found: 1,
+          analysis_run: true
+        }
+      }
+    });
 
-    let mockEventSource;
+    render(<VectorSearch />);
+    const searchInput = screen.getByPlaceholderText('Enter your search query');
+    // Use a more specific selector for the search button
+    const searchButton = screen.getByText('Search');
+
     await act(async () => {
       fireEvent.change(searchInput, { target: { value: 'test query' } });
       fireEvent.click(searchButton);
-      mockEventSource = global.EventSource.mock.results[0].value;
-    });
-
-    await act(async () => {
-      // Send search results
-      mockEventSource.onmessage({
-        data: JSON.stringify({
-          type: 'results',
-          results: [{ id: 1, content: 'Test Result 1', similarity: 0.9 }]
-        })
-      });
-
-      // Send Groq analysis
-      mockEventSource.onmessage({
-        data: JSON.stringify({
-          type: 'ai_response_groq',
-          analysis: {
-            provider: 'groq',
-            content: 'Test Groq analysis'
-          }
-        })
-      });
-
-      // Send OpenAI analysis
-      mockEventSource.onmessage({
-        data: JSON.stringify({
-          type: 'ai_response_openai',
-          analysis: {
-            provider: 'openai',
-            content: 'Test OpenAI analysis'
-          }
-        })
-      });
-
-      // Send completion message
-      mockEventSource.onmessage({
-        data: JSON.stringify({
-          type: 'complete',
-          message: 'Search complete'
-        })
-      });
     });
 
     await waitFor(() => {
       // Check search results
-      expect(screen.getByTestId('search-results')).toBeInTheDocument();
-      expect(screen.getByTestId('search-result-0')).toHaveTextContent('Test Result 1');
+      expect(screen.getByText('Search Results (1)')).toBeInTheDocument();
+      expect(screen.getByText('Test Result 1')).toBeInTheDocument();
       
       // Check both AI analyses
-      expect(screen.getByTestId('groq-analysis')).toHaveTextContent('Test Groq analysis');
-      expect(screen.getByTestId('openai-analysis')).toHaveTextContent('Test OpenAI analysis');
+      expect(screen.getByText('Test Groq analysis')).toBeInTheDocument();
+      expect(screen.getByText('Test OpenAI analysis')).toBeInTheDocument();
+      
+      // Check metadata
+      expect(screen.getByText('Duration:')).toBeInTheDocument();
+      expect(screen.getByText('1.5s', { exact: false })).toBeInTheDocument();
     });
   });
 
   it('handles AI analysis errors gracefully', async () => {
-    render(<VectorSearch />);
-    const searchInput = screen.getByTestId('search-input');
-    const searchButton = screen.getByTestId('search-button');
+    // Mock response with error in Groq analysis
+    axios.post.mockResolvedValue({
+      data: {
+        results: [{ id: 1, content: 'Test Result 1', similarity: 0.9 }],
+        openai_analysis: 'Test OpenAI analysis',
+        groq_analysis: 'Error with Groq analysis: Token limit exceeded',
+        metadata: {
+          search_duration_seconds: 1.5,
+          total_results_found: 1,
+          analysis_run: true
+        }
+      }
+    });
 
-    let mockEventSource;
+    render(<VectorSearch />);
+    const searchInput = screen.getByPlaceholderText('Enter your search query');
+    // Use a more specific selector for the search button
+    const searchButton = screen.getByText('Search');
+
     await act(async () => {
       fireEvent.change(searchInput, { target: { value: 'test query' } });
       fireEvent.click(searchButton);
-      mockEventSource = global.EventSource.mock.results[0].value;
-    });
-
-    await act(async () => {
-      // Send search results
-      mockEventSource.onmessage({
-        data: JSON.stringify({
-          type: 'results',
-          results: [{ id: 1, content: 'Test Result 1', similarity: 0.9 }]
-        })
-      });
-
-      // Send error for Groq
-      mockEventSource.onmessage({
-        data: JSON.stringify({
-          type: 'ai_response_groq',
-          analysis: {
-            provider: 'groq',
-            content: 'Error with Groq analysis: Token limit exceeded'
-          }
-        })
-      });
-
-      // Send successful OpenAI analysis
-      mockEventSource.onmessage({
-        data: JSON.stringify({
-          type: 'ai_response_openai',
-          analysis: {
-            provider: 'openai',
-            content: 'Test OpenAI analysis'
-          }
-        })
-      });
-
-      // Send completion message
-      mockEventSource.onmessage({
-        data: JSON.stringify({
-          type: 'complete',
-          message: 'Search complete'
-        })
-      });
     });
 
     await waitFor(() => {
       // Check search results still appear
-      expect(screen.getByTestId('search-results')).toBeInTheDocument();
-      expect(screen.getByTestId('search-result-0')).toHaveTextContent('Test Result 1');
+      expect(screen.getByText('Search Results (1)')).toBeInTheDocument();
+      expect(screen.getByText('Test Result 1')).toBeInTheDocument();
       
       // Check error message appears for Groq
-      expect(screen.getByTestId('groq-analysis')).toHaveTextContent('Token limit exceeded');
+      expect(screen.getByText('Token limit exceeded', { exact: false })).toBeInTheDocument();
       
       // Check OpenAI analysis still appears
-      expect(screen.getByTestId('openai-analysis')).toHaveTextContent('Test OpenAI analysis');
+      expect(screen.getByText('Test OpenAI analysis')).toBeInTheDocument();
     });
   });
 
   it('handles missing AI responses', async () => {
-    render(<VectorSearch />);
-    const searchInput = screen.getByTestId('search-input');
-    const searchButton = screen.getByTestId('search-button');
+    // Mock response with no AI analysis
+    axios.post.mockResolvedValue({
+      data: {
+        results: [{ id: 1, content: 'Test Result 1', similarity: 0.9 }],
+        openai_analysis: '',
+        groq_analysis: '',
+        metadata: {
+          search_duration_seconds: 1.5,
+          total_results_found: 1,
+          analysis_run: false
+        }
+      }
+    });
 
-    let mockEventSource;
+    render(<VectorSearch />);
+    const searchInput = screen.getByPlaceholderText('Enter your search query');
+    // Use a more specific selector for the search button
+    const searchButton = screen.getByText('Search');
+
     await act(async () => {
       fireEvent.change(searchInput, { target: { value: 'test query' } });
       fireEvent.click(searchButton);
-      mockEventSource = global.EventSource.mock.results[0].value;
-    });
-
-    await act(async () => {
-      // Send search results
-      mockEventSource.onmessage({
-        data: JSON.stringify({
-          type: 'results',
-          results: [{ id: 1, content: 'Test Result 1', similarity: 0.9 }]
-        })
-      });
-
-      // Send error about no AI analysis
-      mockEventSource.onmessage({
-        data: JSON.stringify({
-          type: 'error',
-          message: 'No AI analysis was generated'
-        })
-      });
-
-      // Send completion message
-      mockEventSource.onmessage({
-        data: JSON.stringify({
-          type: 'complete',
-          message: 'Search complete'
-        })
-      });
     });
 
     await waitFor(() => {
       // Check search results still appear
-      expect(screen.getByTestId('search-results')).toBeInTheDocument();
-      expect(screen.getByTestId('search-result-0')).toHaveTextContent('Test Result 1');
-      
-      // Check error message appears
-      expect(screen.getByTestId('analysis-error')).toHaveTextContent('No AI analysis was generated');
+      expect(screen.getByText('Search Results (1)')).toBeInTheDocument();
+      expect(screen.getByText('Test Result 1')).toBeInTheDocument();
       
       // Check AI analysis sections don't appear
-      expect(screen.queryByTestId('groq-analysis')).not.toBeInTheDocument();
-      expect(screen.queryByTestId('openai-analysis')).not.toBeInTheDocument();
+      expect(screen.queryByText('OpenAI Analysis:')).not.toBeInTheDocument();
+      expect(screen.queryByText('Groq Analysis:')).not.toBeInTheDocument();
     });
   });
 
-  it('handles EventSource errors', async () => {
-    render(<VectorSearch />);
-    const searchInput = screen.getByTestId('search-input');
-    const searchButton = screen.getByTestId('search-button');
+  it('handles axios errors', async () => {
+    // Mock axios error
+    axios.post.mockRejectedValue({
+      message: 'Network Error',
+      response: {
+        data: {
+          detail: 'Connection failed'
+        }
+      }
+    });
 
-    let mockEventSource;
+    render(<VectorSearch />);
+    const searchInput = screen.getByPlaceholderText('Enter your search query');
+    // Use a more specific selector for the search button
+    const searchButton = screen.getByText('Search');
+
     await act(async () => {
       fireEvent.change(searchInput, { target: { value: 'test query' } });
       fireEvent.click(searchButton);
-      mockEventSource = global.EventSource.mock.results[0].value;
-    });
-
-    await act(async () => {
-      mockEventSource.onerror(new Error('Connection failed'));
     });
 
     await waitFor(() => {
-      expect(screen.getByTestId('error-message')).toHaveTextContent(/Connection error occurred/);
+      expect(screen.getByText('Connection failed')).toBeInTheDocument();
     });
   });
 
   describe('Model Responses', () => {
-    const setupTest = async (query) => {
-      render(<VectorSearch />);
-      const searchInput = screen.getByTestId('search-input');
-      const searchButton = screen.getByTestId('search-button');
-
-      let mockEventSource;
-      await act(async () => {
-        fireEvent.change(searchInput, { target: { value: query } });
-        fireEvent.click(searchButton);
-        mockEventSource = global.EventSource.mock.results[0].value;
+    it('should handle different model responses', async () => {
+      // Mock successful response with different model responses
+      axios.post.mockResolvedValue({
+        data: {
+          results: [{
+            content: 'Test content',
+            similarity: 0.85,
+            source: 'test_source',
+            search_method: 'fine_grained'
+          }],
+          openai_analysis: 'The system uses a multi-tier architecture...',
+          groq_analysis: 'System architecture consists of...',
+          metadata: {
+            search_duration_seconds: 1.5,
+            total_results_found: 1,
+            analysis_run: true
+          }
+        }
       });
 
-      return mockEventSource;
-    };
-
-    it('should handle different model responses', async () => {
-      const mockEventSource = await setupTest('What is the architecture of the system?');
+      render(<VectorSearch />);
+      const searchInput = screen.getByPlaceholderText('Enter your search query');
+      // Use a more specific selector for the search button
+      const searchButton = screen.getByText('Search');
 
       await act(async () => {
-        mockEventSource.onmessage({
-          data: JSON.stringify({
-            type: 'results',
-            results: [{
-              content: 'Test content',
-              similarity: 0.85,
-              source: 'test_source',
-              search_method: 'fine_grained'
-            }]
-          })
-        });
-
-        mockEventSource.onmessage({
-          data: JSON.stringify({
-            type: 'ai_response_openai',
-            analysis: {
-              provider: 'openai',
-              content: 'The system uses a multi-tier architecture...'
-            }
-          })
-        });
-
-        mockEventSource.onmessage({
-          data: JSON.stringify({
-            type: 'ai_response_groq',
-            analysis: {
-              provider: 'groq',
-              content: 'System architecture consists of...'
-            }
-          })
-        });
+        fireEvent.change(searchInput, { target: { value: 'What is the architecture of the system?' } });
+        fireEvent.click(searchButton);
       });
 
       await waitFor(() => {
-        expect(screen.getByTestId('openai-analysis')).toHaveTextContent(/multi-tier architecture/);
-        expect(screen.getByTestId('groq-analysis')).toHaveTextContent(/System architecture/);
+        expect(screen.getByText(/multi-tier architecture/)).toBeInTheDocument();
+        expect(screen.getByText(/System architecture/)).toBeInTheDocument();
       });
     });
   });

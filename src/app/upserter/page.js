@@ -192,7 +192,7 @@ export default function UpserterPage() {
               </CardContent>
               <CardFooter className="flex justify-between">
                 <Button type="button" variant="outline" onClick={handleReset}>Reset</Button>
-                <Button type="submit" disabled={isUploading}>
+                <Button type="submit" disabled={isUploading} className="bg-[hsl(var(--page-accent))] text-[hsl(var(--background))] hover:bg-[hsl(var(--page-accent)/0.9)]">
                   {isUploading ? (
                     <>
                       <ReloadIcon className="mr-2 h-4 w-4 animate-spin" />
@@ -268,7 +268,7 @@ export default function UpserterPage() {
               </CardContent>
               <CardFooter className="flex justify-between">
                 <Button type="button" variant="outline" onClick={handleReset}>Reset</Button>
-                <Button type="submit" disabled={isUploading}>
+                <Button type="submit" disabled={isUploading} className="bg-[hsl(var(--page-accent))] text-[hsl(var(--background))] hover:bg-[hsl(var(--page-accent)/0.9)]">
                   {isUploading ? (
                     <>
                       <ReloadIcon className="mr-2 h-4 w-4 animate-spin" />
@@ -294,9 +294,9 @@ export default function UpserterPage() {
       )}
       
       {result && (
-        <Alert className="mt-8 bg-green-50 border-green-200">
-          <CheckIcon className="h-4 w-4 text-green-600" />
-          <AlertTitle className="text-green-800">Success</AlertTitle>
+        <Alert className="mt-8 border-[hsl(var(--page-accent))] bg-[hsl(var(--page-accent)/0.1)]">
+          <CheckIcon className="h-4 w-4 text-[hsl(var(--page-accent))]" />
+          <AlertTitle className="text-[hsl(var(--page-accent))]">Success</AlertTitle>
           <AlertDescription>
             <div className="mt-2">
               <p><strong>Status:</strong> {result.status}</p>

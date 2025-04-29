@@ -34,6 +34,9 @@
 
     --radius: 0.5rem;
 
+    /* Page-specific accent colors */
+    --page-accent: var(--primary); /* Default to primary */
+
     /* Search-specific colors */
     --document-embeddings-color: 221 83% 53%;
     --video-transcriptions-color: 142 76% 36%;
@@ -82,6 +85,9 @@
     --input: 217.2 32.6% 17.5%;
     --ring: 212.7 26.8% 83.9%;
 
+    /* Page-specific accent colors - dark mode */
+    --page-accent: var(--primary); /* Default to primary */
+
     /* Search-specific colors - dark mode */
     --document-embeddings-color: 221 83% 65%;
     --video-transcriptions-color: 142 76% 45%;
@@ -101,6 +107,28 @@
     --low-score-color: 0 100% 60%;
   }
 }
+
+/* Page-specific themes */
+.theme-transcribe {
+  --page-accent: 180 100% 37%; /* Teal/Blue */
+}
+
+.theme-fetch {
+  --page-accent: 30 100% 50%; /* Orange/Yellow */
+}
+
+.theme-download {
+  --page-accent: 270 76% 72%; /* Purple */
+}
+
+.theme-upserter {
+  --page-accent: 240 83% 53%; /* Indigo */
+}
+
+.theme-vector-search {
+  --page-accent: 280 83% 65%; /* Purple/Gradient base */
+}
+
 
 @layer base {
   * {

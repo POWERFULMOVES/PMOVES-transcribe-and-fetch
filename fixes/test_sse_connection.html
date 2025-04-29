@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSE Connection Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .log-container {
+            height: 400px;
+            overflow-y: auto;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .button {
+            padding: 8px 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            margin-right: 10px;
+        }
+        .button:hover {
+            background-color: #0069d9;
+        }
+        .button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        .badge {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .badge-success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .badge-warning {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        .badge-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .error {
+            color: #dc3545;
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f8d7da;
+            border-radius: 4px;
+        }
+        .success {
+            color: #28a745;
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #d4edda;
+            border-radius: 4px;
+        }
+        .info {
+            color: #17a2b8;
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #d1ecf1;
+            border-radius: 4px;
+        }
+        .network-info {
+            margin-top: 20px;
+            padding: 10px;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+        .request-headers, .response-headers {
+            margin-top: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+    </style>
+</head>
+<body>
+    <h1>SSE Connection Test</h1>
+    
+    <div class="card">
+        <h2>Connection Settings</h2>
+        <div>
+            <label for="backend-url">Backend URL:</label>
+            <input type="text" id="backend-url" value="http://localhost:8000" style="width: 300px; margin-right: 10px;">
+            
+            <label for="endpoint">Endpoint:</label>
+            <select id="endpoint">
+                <option value="/combined-updates" selected>/combined-updates</option>
+                <option value="/api/download-status">/api/download-status</option>
+                <option value="/api/search-sse">/api/search-sse</option>
+                <option value="/debug/test-sse">/debug/test-sse</option>
+            </select>
+        </div>
+        <div style="margin-top: 10px;">
+            <label for="with-credentials">
+                <input type="checkbox" id="with-credentials" checked> 
+                withCredentials
+            </label>
+        </div>
+        <div style="margin-top: 10px;">
+            <button id="connect-button" class="button">Connect</button>
+            <button id="disconnect-button" class="button" disabled>Disconnect</button>
+            <button id="clear-log-button" class="button">Clear Log</button>
+        </div>
+        <div id="status-container" style="margin-top: 10px;">
+            Status: <span id="connection-status" class="badge badge-warning">Disconnected</span>
+        </div>
+        <div id="error-container" class="error" style="display: none;"></div>
+        <div id="success-container" class="success" style="display: none;"></div>
+        <div id="info-container" class="info" style="display: none;"></div>
+    </div>
+    
+    <div class="card">
+        <h2>Connection Log</h2>
+        <div id="log-container" class="log-container"></div>
+    </div>
+    
+    <div class="card">
+        <h2>Network Information</h2>
+        <div class="network-info">
+            <div>
+                <strong>Request Headers:</strong>
+                <div id="request-headers" class="request-headers"></div>
+            </div>
+            <div style="margin-top: 10px;">
+                <strong>Response Headers:</strong>
+                <div id="response-headers" class="response-headers"></div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // DOM Elements
+        const backendUrlInput = document.getElementById('backend-url');
+        const endpointSelect = document.getElementById('endpoint');
+        const withCredentialsCheckbox = document.getElementById('with-credentials');
+        const connectButton = document.getElementById('connect-button');
+        const disconnectButton = document.getElementById('disconnect-button');
+        const clearLogButton = document.getElementById('clear-log-button');
+        const connectionStatus = document.getElementById('connection-status');
+        const errorContainer = document.getElementById('error-container');
+        const successContainer = document.getElementById('success-container');
+        const infoContainer = document.getElementById('info-container');
+        const logContainer = document.getElementById('log-container');
+        const requestHeadersContainer = document.getElementById('request-headers');
+        const responseHeadersContainer = document.getElementById('response-headers');
+        
+        // State
+        let eventSource = null;
+        let messageCount = 0;
+        
+        // Helper function to log messages
+        function log(message, type = 'info') {
+            const timestamp = new Date().toISOString();
+            const logElement = document.createElement('div');
+            logElement.innerHTML = `<span style="color: #888;">[${timestamp}]</span> <span style="color: ${type === 'error' ? '#dc3545' : type === 'success' ? '#28a745' : '#17a2b8'};">${message}</span>`;
+            logContainer.appendChild(logElement);
+            logContainer.scrollTop = logContainer.scrollHeight;
+            console.log(`[${timestamp}] ${message}`);
+        }
+        
+        // Helper function to show error
+        function showError(message) {
+            errorContainer.textContent = message;
+            errorContainer.style.display = 'block';
+            successContainer.style.display = 'none';
+            infoContainer.style.display = 'none';
+        }
+        
+        // Helper function to show success
+        function showSuccess(message) {
+            successContainer.textContent = message;
+            successContainer.style.display = 'block';
+            errorContainer.style.display = 'none';
+            infoContainer.style.display = 'none';
+        }
+        
+        // Helper function to show info
+        function showInfo(message) {
+            infoContainer.textContent = message;
+            infoContainer.style.display = 'block';
+            errorContainer.style.display = 'none';
+            successContainer.style.display = 'none';
+        }
+        
+        // Helper function to update request headers display
+        function updateRequestHeaders(url, withCredentials) {
+            requestHeadersContainer.textContent = `GET ${url} HTTP/1.1
+Accept: text/event-stream
+Cache-Control: no-cache
+Connection: keep-alive
+${withCredentials ? 'Credentials: include' : ''}`;
+        }
+        
+        // Helper function to fetch and display response headers
+        async function fetchResponseHeaders(url) {
+            try {
+                // Use fetch with HEAD method to get headers without body
+                const response = await fetch(url, {
+                    method: 'HEAD',
+                    credentials: withCredentialsCheckbox.checked ? 'include' : 'same-origin'
+                });
+                
+                // Format headers for display
+                let headersText = '';
+                response.headers.forEach((value, key) => {
+                    headersText += `${key}: ${value}\n`;
+                });
+                
+                responseHeadersContainer.textContent = headersText || 'No headers received';
+                
+                // Check for CORS headers
+                const corsHeaders = [
+                    'Access-Control-Allow-Origin',
+                    'Access-Control-Allow-Credentials',
+                    'Access-Control-Allow-Methods',
+                    'Access-Control-Allow-Headers'
+                ];
+                
+                const missingCorsHeaders = corsHeaders.filter(header => !response.headers.has(header));
+                
+                if (missingCorsHeaders.length > 0) {
+                    log(`Warning: Missing CORS headers: ${missingCorsHeaders.join(', ')}`, 'error');
+                } else {
+                    log('All required CORS headers are present', 'success');
+                }
+                
+                // Check Access-Control-Allow-Origin value
+                const allowOrigin = response.headers.get('Access-Control-Allow-Origin');
+                if (allowOrigin) {
+                    const currentOrigin = window.location.origin;
+                    if (allowOrigin !== '*' && allowOrigin !== currentOrigin) {
+                        log(`Warning: Access-Control-Allow-Origin (${allowOrigin}) does not match current origin (${currentOrigin})`, 'error');
+                    } else {
+                        log(`Access-Control-Allow-Origin is properly set to ${allowOrigin}`, 'success');
+                    }
+                }
+                
+            } catch (error) {
+                responseHeadersContainer.textContent = `Error fetching headers: ${error.message}`;
+                log(`Error fetching response headers: ${error.message}`, 'error');
+            }
+        }
+        
+        // Connect to SSE endpoint
+        function connectSSE() {
+            if (eventSource) {
+                log('Already connected, disconnecting first...', 'info');
+                eventSource.close();
+                eventSource = null;
+            }
+            
+            const backendUrl = backendUrlInput.value.trim();
+            const endpoint = endpointSelect.value;
+            const withCredentials = withCredentialsCheckbox.checked;
+            const fullUrl = `${backendUrl}${endpoint}`;
+            
+            log(`Connecting to SSE endpoint: ${fullUrl}`, 'info');
+            connectionStatus.textContent = 'Connecting...';
+            connectionStatus.className = 'badge badge-warning';
+            
+            // Update request headers display
+            updateRequestHeaders(fullUrl, withCredentials);
+            
+            // Fetch response headers
+            fetchResponseHeaders(fullUrl).catch(error => {
+                log(`Error checking response headers: ${error.message}`, 'error');
+            });
+            
+            try {
+                // Create EventSource
+                eventSource = new EventSource(fullUrl, {
+                    withCredentials: withCredentials
+                });
+                
+                // Handle connection open
+                eventSource.onopen = (event) => {
+                    log('SSE connection opened successfully', 'success');
+                    connectionStatus.textContent = 'Connected';
+                    connectionStatus.className = 'badge badge-success';
+                    connectButton.disabled = true;
+                    disconnectButton.disabled = false;
+                    errorContainer.style.display = 'none';
+                    showSuccess('Connection established successfully');
+                    
+                    // Log connection details
+                    log(`Connection details:`, 'info');
+                    log(`- URL: ${fullUrl}`, 'info');
+                    log(`- withCredentials: ${withCredentials}`, 'info');
+                    log(`- readyState: ${eventSource.readyState} (OPEN)`, 'info');
+                };
+                
+                // Handle messages
+                eventSource.onmessage = (event) => {
+                    messageCount++;
+                    
+                    try {
+                        // Try to parse the message data
+                        let data;
+                        try {
+                            // Handle 'data: ' prefix if present
+                            const jsonStr = event.data.startsWith('data: ') ? event.data.slice(6).trim() : event.data.trim();
+                            data = JSON.parse(jsonStr);
+                            log(`Received message #${messageCount}: ${JSON.stringify(data).substring(0, 100)}...`, 'success');
+                        } catch (parseError) {
+                            log(`Error parsing message #${messageCount}: ${parseError.message}`, 'error');
+                            log(`Raw message data: ${event.data}`, 'error');
+                            return;
+                        }
+                        
+                        // Process different message types
+                        if (data.type) {
+                            log(`Message type: ${data.type}`, 'info');
+                        }
+                    } catch (error) {
+                        log(`Error processing message #${messageCount}: ${error.message}`, 'error');
+                    }
+                };
+                
+                // Handle errors
+                eventSource.onerror = (error) => {
+                    log(`SSE connection error: ${error.message || 'Unknown error'}`, 'error');
+                    
+                    connectionStatus.textContent = 'Error';
+                    connectionStatus.className = 'badge badge-danger';
+                    
+                    showError(`Connection error: ${error.message || 'Unknown error'}`);
+                    
+                    // Check if the connection is closed
+                    if (eventSource.readyState === 2) { // CLOSED
+                        log('Connection is in CLOSED state', 'error');
+                        connectButton.disabled = false;
+                        disconnectButton.disabled = true;
+                        eventSource = null;
+                    }
+                };
+            } catch (error) {
+                log(`Error creating EventSource: ${error.message}`, 'error');
+                showError(`Error creating EventSource: ${error.message}`);
+                connectionStatus.textContent = 'Error';
+                connectionStatus.className = 'badge badge-danger';
+                connectButton.disabled = false;
+                disconnectButton.disabled = true;
+            }
+        }
+        
+        // Disconnect from SSE endpoint
+        function disconnectSSE() {
+            if (eventSource) {
+                log('Disconnecting from SSE endpoint', 'info');
+                eventSource.close();
+                eventSource = null;
+                
+                connectionStatus.textContent = 'Disconnected';
+                connectionStatus.className = 'badge badge-warning';
+                connectButton.disabled = false;
+                disconnectButton.disabled = true;
+                showInfo('Manually disconnected');
+            }
+        }
+        
+        // Clear log
+        function clearLog() {
+            logContainer.innerHTML = '';
+            log('Log cleared', 'info');
+        }
+        
+        // Event listeners
+        connectButton.addEventListener('click', connectSSE);
+        disconnectButton.addEventListener('click', disconnectSSE);
+        clearLogButton.addEventListener('click', clearLog);
+        
+        // Initialize
+        log('Test page loaded. Configure connection settings and click "Connect" to start.', 'info');
+        
+        // Check if file:// protocol
+        if (window.location.protocol === 'file:') {
+            log('Warning: Running from file:// protocol. CORS restrictions may prevent SSE connections.', 'error');
+            showError('This page should be served from an HTTP server to avoid CORS issues.');
+        }
+    </script>
+</body>
+</html>

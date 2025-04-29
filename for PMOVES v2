@@ -1,8 +1,0 @@
-[33mcommit e583a9115e302096b30137ec04a443e6c0309ec9[m[33m ([m[1;36mHEAD[m[33m -> [m[1;32mpmoves-v2[m[33m)[m
-Author: POWERFULMOVES <cataclysmstudios@gmail.com>
-Date:   Mon Mar 24 10:45:27 2025 -0400
-
-    Add agent-based architecture implementation documentation for PMOVES v2
-
-A	PMOVES Supabase/supabasedocs/implementation/1_agent_templates.md
-A	PMOVES Supabase/supabasedocs/implementation/2_workflow_examples.md

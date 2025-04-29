@@ -64,7 +64,7 @@ async def download_audio(youtube_url, output_path):
 
         await asyncio.to_thread(ydl.download, [youtube_url])
 
-    
+
 
     if os.path.exists(output_path):
 
@@ -112,7 +112,7 @@ async def save_text_to_markdown(content: Union[str, dict], output_path: str) -> 
 
     Save content to a markdown file, handling both string and JSON responses.
 
-    
+
 
     Args:
 
@@ -132,7 +132,7 @@ async def save_text_to_markdown(content: Union[str, dict], output_path: str) -> 
 
             text_parts = []
 
-            
+
 
             # Add title if available
 
@@ -140,7 +140,7 @@ async def save_text_to_markdown(content: Union[str, dict], output_path: str) -> 
 
                 text_parts.append(f"# {content['title']}\n")
 
-            
+
 
             # Add main content
 
@@ -148,7 +148,7 @@ async def save_text_to_markdown(content: Union[str, dict], output_path: str) -> 
 
                 text_parts.append(content['content'])
 
-            
+
 
             # Add links section if available
 
@@ -160,7 +160,7 @@ async def save_text_to_markdown(content: Union[str, dict], output_path: str) -> 
 
                     text_parts.append(f"- [{link.get('text', link['url'])}]({link['url']})")
 
-            
+
 
             text_content = "\n".join(text_parts)
 
@@ -168,7 +168,7 @@ async def save_text_to_markdown(content: Union[str, dict], output_path: str) -> 
 
             text_content = str(content)
 
-        
+
 
         # Ensure the directory exists
 
@@ -188,7 +188,7 @@ async def save_text_to_markdown(content: Union[str, dict], output_path: str) -> 
 
             await file.write(text_content)
 
-            
+
 
         logger.info(f"Markdown file saved successfully: {output_path}")
 
@@ -207,15 +207,15 @@ async def convert_markdown_to_pdf(markdown_path: str, pdf_path: str) -> None:
     try:
         # Configure pdfkit with wkhtmltopdf path
         from .config import WKHTMLTOPDF_PATH
-        
+
         # Check if wkhtmltopdf is installed
         if not os.path.isfile(WKHTMLTOPDF_PATH):
             logger.error(f"Missing wkhtmltopdf at {WKHTMLTOPDF_PATH}")
             logger.error("Please install wkhtmltopdf from https://wkhtmltopdf.org/downloads.html")
             return  # Skip PDF generation but don't raise an exception
-            
+
         config = pdfkit.configuration(wkhtmltopdf=WKHTMLTOPDF_PATH)
-        
+
         # Read markdown content
         async with aiofiles.open(markdown_path, 'r', encoding='utf-8') as file:
             markdown_content = await file.read()
@@ -244,24 +244,24 @@ async def convert_markdown_to_pdf(markdown_path: str, pdf_path: str) -> None:
             <meta charset="UTF-8">
             <title>Converted Document</title>
             <style>
-                body {{ 
-                    font-family: Arial, sans-serif; 
-                    font-size: 12pt; 
+                body {{
+                    font-family: Arial, sans-serif;
+                    font-size: 12pt;
                     line-height: 1.5;
                     margin: 0;
                     padding: 0;
                 }}
-                pre {{ 
-                    background-color: #f5f5f5; 
-                    border: 1px solid #ddd; 
-                    border-radius: 3px; 
-                    padding: 10px; 
+                pre {{
+                    background-color: #f5f5f5;
+                    border: 1px solid #ddd;
+                    border-radius: 3px;
+                    padding: 10px;
                     overflow: auto;
                     font-family: monospace;
                     font-size: 10pt;
                 }}
-                code {{ 
-                    font-family: monospace; 
+                code {{
+                    font-family: monospace;
                     background-color: #f5f5f5;
                     padding: 2px 4px;
                     border-radius: 3px;
@@ -347,13 +347,31 @@ async def convert_markdown_to_pdf(markdown_path: str, pdf_path: str) -> None:
     except Exception as e:
         logger.error(f"Critical error converting markdown to PDF: {str(e)}")
         return False
+def sanitize_filename(filename: str) -> str:
+    """Removes or replaces characters invalid in filenames."""
+    # Remove characters invalid in Windows/Linux/macOS filenames
+    sanitized = re.sub(r'[\\/*?:"<>|]', '_', filename)
+    # Optionally replace multiple spaces/underscores with a single one
+    sanitized = re.sub(r'[_ ]+', '_', sanitized)
+    # Optionally remove leading/trailing underscores/spaces
+    sanitized = sanitized.strip('_ ')
+    # Optionally limit length (example, adjust if needed)
+    MAX_FILENAME_LENGTH = 100
+    if len(sanitized) > MAX_FILENAME_LENGTH:
+         # Ensure extension is preserved if present
+         name, ext = os.path.splitext(sanitized)
+         if len(ext) < MAX_FILENAME_LENGTH: # Check if ext itself isn't too long
+             name = name[:MAX_FILENAME_LENGTH - len(ext) - 1] # Adjust name length
+             sanitized = name + ext
+         else: # Handle case where extension is very long
+             sanitized = sanitized[:MAX_FILENAME_LENGTH]
 
+    return sanitized if sanitized else "untitled" # Ensure not empty
 
 
 def format_timestamp(seconds):
-
+    """ Convert seconds to HH:MM:SS format without decimal places """
     minutes, seconds = divmod(seconds, 60)
-
     hours, minutes = divmod(minutes, 60)
 
-    return f"{int(hours):02d}:{int(minutes):02d}:{seconds:.2f}"
+    return f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}"

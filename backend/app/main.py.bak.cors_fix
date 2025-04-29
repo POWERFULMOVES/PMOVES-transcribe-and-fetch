@@ -1,0 +1,1154 @@
+import os
+import re
+import json
+import shutil
+import logging
+import asyncio
+import urllib.parse
+from datetime import datetime
+from typing import List, Dict, Any, Optional
+from pathlib import Path
+import tkinter as tk
+from tkinter import filedialog
+import time
+
+# OpenAI imports and initialization
+from openai import OpenAI
+from groq import Groq
+from dotenv import load_dotenv
+from pathlib import Path
+
+# Get the app directory path
+APP_DIR = Path(__file__).parent.absolute()
+ENV_PATH = APP_DIR / '.env'
+
+# Load environment variables from the specific .env file location
+if ENV_PATH.exists():
+    load_dotenv(dotenv_path=ENV_PATH)
+    print(f"Loaded environment variables from {ENV_PATH}")
+else:
+    print(f"Warning: .env file not found at {ENV_PATH}")
+    # Fallback to default load_dotenv behavior
+    load_dotenv()
+
+# Initialize OpenAI client (used only for analysis)
+if not os.getenv("OPENAI_API_KEY"):
+    logger = logging.getLogger(__name__)
+    logger.warning("OPENAI_API_KEY environment variable is not set. Some analysis features may be limited.")
+    openai_client = None
+else:
+    openai_client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    logger = logging.getLogger(__name__)
+    logger.info("OpenAI client initialized for analysis")
+
+# Initialize Groq client (used for both transcription and analysis)
+if not os.getenv("GROQ_API_KEY"):
+    logger = logging.getLogger(__name__)
+    logger.error("GROQ_API_KEY environment variable is not set")
+    raise ValueError("GROQ_API_KEY environment variable is not set. Please set it before starting the server.")
+groq_client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+logger.info("Groq client initialized for transcription and analysis")
+
+# Add the missing rich import
+try:
+    from rich.progress import SpinnerColumn
+except ImportError:
+    # Define a fallback if rich is not installed
+    class SpinnerColumn:
+        def __init__(self, *args, **kwargs):
+            pass
+
+# FastAPI and Starlette imports
+from fastapi import FastAPI, HTTPException, BackgroundTasks, Body, Request, status, Query, Depends
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
+from starlette.responses import StreamingResponse
+from sse_starlette.sse import EventSourceResponse
+
+# Third-party imports
+import torch
+import aiofiles
+from pydantic import BaseModel, validator, ValidationError, Field
+try:
+    from tiktoken import get_encoding
+except ImportError:
+    print("Warning: tiktoken not found. Token counting will be estimated.")
+    get_encoding = None
+
+# Local imports
+from .queue_manager import QueueManager
+from .monitoring.logger import CustomLogger, PerformanceMonitor, async_timer
+from .monitoring.metrics import MetricsCollector, TranscriptionMetrics, router as metrics_router
+from .error_handlers import TranscriptionErrorHandler, ErrorSeverity
+from .transcribe1 import process_video, VideoProcessRequest, get_optimal_device
+from .utils import (
+    convert_markdown_to_pdf,
+    save_text_to_markdown,
+    clean_filename,
+    format_timestamp
+)
+from .fetch_content import (
+    fetch_content_from_url,
+    generate_unique_filename,
+    sanitize_filename
+)
+from .config import DEFAULT_OUTPUT_FOLDER
+from .psearchworking import search_all, ModelSelector, search_params, SearchParameters, analyze_search_results
+from .config.search_config import get_preset, validate_search_params, DEFAULT_SEARCH_PARAMS, SEARCH_PRESETS, VALIDATION_LIMITS
+from .routes.content_upserter import router as content_upserter_router
+from .vector_search import VectorSearcher  # Add this import
+from .monitoring.sse_monitor import sse_monitoring_middleware
+from .monitoring.routes import router as monitoring_router
+
+# Initialize logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# Initialize monitoring components
+custom_logger = CustomLogger('transcription_service')
+performance_monitor = PerformanceMonitor(custom_logger)
+metrics_collector = MetricsCollector()
+transcription_metrics = TranscriptionMetrics()
+
+# Initialize queue manager
+queue_manager = QueueManager()
+
+# Add download status queue
+download_status_queue = asyncio.Queue()
+
+# Add status and transcription update queues
+status_updates = asyncio.Queue()
+transcription_updates = asyncio.Queue()
+
+# Add TokenCounter class before any other classes that depend on it
+class TokenCounter:
+    """Tracks token usage for embeddings and generations."""
+    
+    def __init__(self):
+        self.embedding_tokens = 0
+        self.generation_tokens = {
+            'input': 0,
+            'output': 0
+        }
+        try:
+            if get_encoding:
+                self.encoders = {
+                    'cl100k_base': get_encoding('cl100k_base'),  # For text-embedding-3-small
+                    'gpt-4': get_encoding('cl100k_base'),  # For GPT-4 models
+                }
+            else:
+                self.encoders = None
+                logging.warning("TokenCounter initialized without tiktoken. Token counting will be estimated.")
+        except Exception as e:
+            logging.warning(f"Could not initialize encoders: {str(e)}")
+            logging.warning("Token counting will be disabled.")
+            self.encoders = None
+    
+    def count_embedding_tokens(self, text: str) -> int:
+        """Count tokens for embedding."""
+        if not self.encoders:
+            # Estimate 4 chars per token as fallback
+            return len(text) // 4
+            
+        try:
+            tokens = len(self.encoders['cl100k_base'].encode(text))
+            self.embedding_tokens += tokens
+            return tokens
+        except Exception as e:
+            logging.warning(f"Could not count embedding tokens: {str(e)}")
+            return len(text) // 4  # Estimate 4 chars per token
+    
+    def count_generation_tokens(self, input_text: str, output_text: str = None) -> dict:
+        """Count tokens for generation (input and output)."""
+        result = {'input': 0, 'output': 0}
+        
+        if not self.encoders:
+            # Estimate 4 chars per token as fallback
+            result['input'] = len(input_text) // 4
+            if output_text:
+                result['output'] = len(output_text) // 4
+            return result
+            
+        try:
+            input_tokens = len(self.encoders['gpt-4'].encode(input_text))
+            self.generation_tokens['input'] += input_tokens
+            result['input'] = input_tokens
+            
+            if output_text:
+                output_tokens = len(self.encoders['gpt-4'].encode(output_text))
+                self.generation_tokens['output'] += output_tokens
+                result['output'] = output_tokens
+        except Exception as e:
+            logging.warning(f"Could not count generation tokens: {str(e)}")
+            result['input'] = len(input_text) // 4  # Estimate 4 chars per token
+            if output_text:
+                result['output'] = len(output_text) // 4
+            
+        return result
+    
+    def get_stats(self) -> dict:
+        """Get current token usage statistics."""
+        return {
+            'embedding_tokens': self.embedding_tokens,
+            'generation_tokens': self.generation_tokens,
+            'total_tokens': self.embedding_tokens + sum(self.generation_tokens.values())
+        }
+
+# Initialize token counter
+token_counter = TokenCounter()
+
+# Function to get Supabase client
+def get_client():
+    """Get a Supabase client instance from psearchworking.py."""
+    from .psearchworking import get_client as get_psearch_client
+    
+    # Use the existing client from psearchworking.py
+    return get_psearch_client()
+
+class VideoRequest(BaseModel):
+    youtube_video_url: str
+    obsidian_dir: str
+    output_folder: str
+    transcription_model: str = "faster-whisper"
+    use_groq: bool = False
+
+    @validator('youtube_video_url')
+    def validate_youtube_url(cls, v):
+        youtube_regex = r'^(https?\:\/\/)?(www\.youtube\.com|youtu\.?be)\/.+$'
+        if not re.match(youtube_regex, v):
+            raise ValueError('Invalid YouTube URL')
+        return v
+
+    @validator('output_folder')
+    def output_folder_must_not_be_empty(cls, v):
+        if not v:
+            v = DEFAULT_OUTPUT_FOLDER
+        return v
+
+    @validator('obsidian_dir')
+    def obsidian_dir_must_not_be_empty(cls, v):
+        if not v:
+            raise ValueError('Obsidian directory must not be empty')
+        return v
+
+    @validator('transcription_model')
+    def validate_transcription_model(cls, v):
+        valid_models = ["faster-whisper", "groq"]
+        if v.lower() not in valid_models:
+            raise ValueError(f"Invalid transcription model. Must be one of: {', '.join(valid_models)}")
+        return v.lower()
+
+    @validator('use_groq')
+    def set_use_groq_based_on_model(cls, v, values):
+        # Override use_groq based on transcription_model if present
+        if 'transcription_model' in values:
+            return values['transcription_model'].lower() == 'groq'
+        return v
+
+class VectorSearchRequest(BaseModel):
+    """Request model for vector search."""
+    query: str = Field(..., description="Search query")
+    threshold: float = Field(0.7, ge=0.0, le=1.0, description="Similarity threshold")
+    max_results: int = Field(10, ge=1, le=50, description="Maximum number of results")
+    
+    @validator('query')
+    def query_must_not_be_empty(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Search query must not be empty')
+        return v.strip()
+
+class VectorSearchResponse(BaseModel):
+    """Response model for vector search results."""
+    results: List[Dict[str, Any]] = Field(default_factory=list, description="List of search results")
+    ai_response: Optional[str] = Field(None, description="AI-generated response based on search results")
+    metadata: Dict[str, Any] = Field(default_factory=dict, description="Additional metadata about the search")
+    
+    class Config:
+        orm_mode = True
+
+class FolderUpdate(BaseModel):
+    old_path: str
+    new_path: str
+
+class DownloadRequest(BaseModel):
+    url: str
+    options: dict = {}
+
+class VideoInfoRequest(BaseModel):
+    url: str
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="PMOVES Transcription API",
+    description="API for transcribing YouTube videos and processing content",
+    version="1.0.0"
+)
+
+# Configure CORS - Development mode with permissive settings
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # Allow all origins in development
+    allow_credentials=True,
+    allow_methods=["*"],  # Allow all methods
+    allow_headers=["*"],  # Allow all headers
+    expose_headers=["Content-Type", "X-Content-Type-Options"],
+)
+
+# Enable SSE monitoring middleware
+app.middleware("http")(sse_monitoring_middleware)
+
+# Include monitoring routes
+app.include_router(monitoring_router)
+
+@app.middleware("http")
+async def error_handling_middleware(request: Request, call_next):
+    try:
+        response = await call_next(request)
+        return response
+    except Exception as exc:
+        error_details = TranscriptionErrorHandler.handle_error(
+            "UNKNOWN_ERROR",
+            exc,
+            path=str(request.url.path)
+        )
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content=error_details
+        )
+
+# Add HTTP request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    # Log the request
+    start_time = time.time()
+    method = request.method
+    url = request.url
+    path = request.url.path
+    
+    # Create a console for colorful terminal output
+    from rich.console import Console
+    console = Console()
+    
+    # Print the request info
+    console.print(f"[bold blue]>> REQUEST:[/bold blue] {method} {path}")
+    
+    # Process the request
+    response = await call_next(request)
+    
+    # Calculate request processing time
+    process_time = time.time() - start_time
+    formatted_process_time = f"{process_time:.3f}"
+    
+    # Get status code with color
+    status_code = response.status_code
+    status_color = "green" if status_code < 400 else "red"
+    
+    # Print the response info
+    console.print(f"[bold blue]<< RESPONSE:[/bold blue] {method} {path} [bold {status_color}]{status_code}[/bold {status_color}] - {formatted_process_time}s")
+    
+    return response
+
+@app.on_event("startup")
+async def startup_event():
+    await queue_manager.start()
+    # Start system metrics collection
+    asyncio.create_task(metrics_collector.collect_system_metrics())
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    await queue_manager.stop()
+
+@app.get("/")
+async def root():
+    """Root endpoint for health checks from the frontend."""
+    # Log that we received a request using the proper logger
+    custom_logger.info("Root endpoint called - health check request received")
+    custom_logger.info(f"Request time: {datetime.now()}")
+    
+    # Add a status update to show in the UI
+    try:
+        await queue_manager.status_queue.put(json.dumps({
+            "type": "status",
+            "content": "Backend connection established",
+            "timestamp": datetime.now().isoformat()
+        }))
+        custom_logger.info("Status update added to queue: Backend connection established")
+    except Exception as e:
+        custom_logger.error(f"Error putting to status queue: {str(e)}", exc_info=e)
+    
+    # Return response with basic info
+    return {"status": "ok", "content": "Backend server is running", "timestamp": datetime.now().isoformat()}
+
+
+# Standardized SSE message formatter
+def format_sse_message(message_type: str, content: Any, metadata: dict = None) -> str:
+    '''Format a message for SSE transmission with consistent structure.'''
+    message = {
+        "type": message_type,
+        "content": content,
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    if metadata:
+        message["metadata"] = metadata
+        
+    return f"data: {json.dumps(message)}\n\n"
+
+
+# Standardized SSE message formatter
+def format_sse_message(message_type: str, content: Any, metadata: dict = None) -> str:
+    '''Format a message for SSE transmission with consistent structure.'''
+    message = {
+        "type": message_type,
+        "content": content,
+        "timestamp": datetime.now().isoformat()
+    }
+    
+    if metadata:
+        message["metadata"] = metadata
+        
+    return f"data: {json.dumps(message)}\n\n"
+
+@app.get("/combined-updates")
+async def get_combined_updates(request: Request):
+    """Endpoint for Server-Sent Events that combines status and transcription updates."""
+    from rich.console import Console
+    console = Console()
+    client_host = request.client.host if request.client else "unknown"
+    client_id = f"client_{time.time()}"
+    origin = request.headers.get("origin", "http://localhost:3000")
+    console.print(f"[bold green]SSE connection requested from {client_host} with origin {origin}[/bold green]")
+    
+    # Use the actual origin from the request if available, otherwise use a default
+    # This is critical for CORS to work properly
+    fixed_origin = origin if origin else "http://localhost:3000"
+    
+    async def event_generator():
+        heartbeat_interval = 15  # seconds
+        last_heartbeat = 0
+        transcription_active = True
+        
+        # Send immediate confirmation that connection is established
+        # Send immediate confirmation that connection is established
+        yield format_sse_message(
+            "status",
+            f"SSE connection established from {client_host}"
+        )
+        
+        try:
+            console.print("[bold blue]Starting SSE event generator[/bold blue]")
+            while transcription_active:
+                # Get current time for heartbeat
+                current_time = time.time()
+                
+                # Check for status updates (non-blocking)
+                try:
+                    status_update = queue_manager.status_queue.get_nowait()
+                    console.print(f"[yellow]Sending status update: {status_update}[/yellow]")
+                    
+                    # Parse the update to check for completion and standardize format
+                    try:
+                        update_data = json.loads(status_update)
+                        
+                        # Standardize field names (message -> content)
+                        if 'message' in update_data and 'content' not in update_data:
+                            update_data['content'] = update_data.pop('message')
+                        
+                        # Add timestamp if missing
+                        if 'timestamp' not in update_data:
+                            update_data['timestamp'] = datetime.now().isoformat()
+                        
+                        # Check for completion
+                        if update_data.get("type") == "transcription_complete":
+                            transcription_active = False
+                            console.print("[bold green]Transcription complete, will close SSE connection[/bold green]")
+                        
+                        # Send standardized update
+                        yield f"data: {json.dumps(update_data)}\n\n"
+                    except json.JSONDecodeError:
+                        # If not valid JSON, wrap in standard format
+                        standardized_update = {
+                            'type': 'status',
+                            'content': status_update,
+                            'timestamp': datetime.now().isoformat()
+                        }
+                        yield f"data: {json.dumps(standardized_update)}\n\n"
+                except asyncio.QueueEmpty:
+                    pass
+                
+                # Check for transcription updates (non-blocking)
+                try:
+                    transcription_update = queue_manager.transcription_queue.get_nowait()
+                    console.print(f"[cyan]Sending transcription update: {transcription_update[:50]}...[/cyan]")
+                    
+                    # Parse the update to check for completion and standardize format
+                    try:
+                        update_data = json.loads(transcription_update)
+                        
+                        # Standardize field names (message -> content)
+                        if 'message' in update_data and 'content' not in update_data:
+                            update_data['content'] = update_data.pop('message')
+                        
+                        # Add timestamp if missing
+                        if 'timestamp' not in update_data:
+                            update_data['timestamp'] = datetime.now().isoformat()
+                        
+                        # Check for completion
+                        if update_data.get("type") == "transcription_complete":
+                            transcription_active = False
+                            console.print("[bold green]Transcription complete, will close SSE connection[/bold green]")
+                        
+                        # Send standardized update
+                        yield f"data: {json.dumps(update_data)}\n\n"
+                    except json.JSONDecodeError:
+                        # If not valid JSON, wrap in standard format
+                        standardized_update = {
+                            'type': 'transcription_segment',
+                            'content': transcription_update,
+                            'timestamp': datetime.now().isoformat()
+                        }
+                        yield f"data: {json.dumps(standardized_update)}\n\n"
+                except asyncio.QueueEmpty:
+                    pass
+                
+                # Send heartbeat if no updates for a while
+                if current_time - last_heartbeat > heartbeat_interval:
+                    console.print(f"[dim]Sending heartbeat[/dim]")
+                    yield format_sse_message('heartbeat', 'ping')
+                    last_heartbeat = current_time
+                
+                # Short delay to prevent CPU spinning
+                await asyncio.sleep(0.1)
+            
+            # Send final completion message before closing
+            console.print("[bold blue]Sending connection closed message[/bold blue]")
+            yield format_sse_message(
+                "connection_closed",
+                "SSE connection closed - transcription complete"
+            )
+                
+        except Exception as e:
+            error_message = f"Error in combined updates SSE: {str(e)}"
+            console.print(f"[bold red]Error in event generator:[/bold red] {error_message}")
+            error_json = json.dumps({
+                'type': 'error', 
+                'content': error_message,
+                'timestamp': datetime.now().isoformat()
+            })
+            yield f"data: {error_json}\n\n"
+    
+    # Create the response with proper CORS headers
+    response = EventSourceResponse(event_generator())
+    
+    # Always use the fixed origin for this endpoint
+    response.headers["Access-Control-Allow-Origin"] = fixed_origin
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS, POST"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Max-Age"] = "86400"  # Cache preflight for 24 hours
+    
+    # Set other required headers for SSE
+    response.headers["Cache-Control"] = "no-cache, no-transform"
+    response.headers["Connection"] = "keep-alive"
+    response.headers["Content-Type"] = "text/event-stream"
+    response.headers["X-Accel-Buffering"] = "no"  # Disable proxy buffering
+    
+    # Log the headers for debugging
+    console.print("[bold cyan]SSE Response Headers:[/bold cyan]")
+    for key, value in response.headers.items():
+        console.print(f"  [blue]{key}:[/blue] {value}")
+    
+    return response
+
+
+# Add a specific OPTIONS handler for the SSE endpoint
+@app.options("/combined-updates")
+async def options_combined_updates(request: Request):
+    """Handle OPTIONS requests for the SSE endpoint."""
+    from fastapi.responses import JSONResponse
+    from rich.console import Console
+    console = Console()
+    
+    # Get the origin from the request or use a default
+    origin = request.headers.get("origin", "http://localhost:3000")
+    
+    console.print(f"[bold green]OPTIONS request for SSE endpoint from {request.client.host if request.client else 'unknown'}[/bold green]")
+    console.print(f"[bold cyan]Request headers: {dict(request.headers)}[/bold cyan]")
+    
+    response = JSONResponse(
+        content={"detail": "OK"},
+        status_code=200
+    )
+    
+    # Use the actual origin from the request
+    response.headers["Access-Control-Allow-Origin"] = origin
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS, POST"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Max-Age"] = "86400"  # Cache preflight for 24 hours
+    
+    # Log the headers for debugging
+    console.print("[bold cyan]OPTIONS Response Headers:[/bold cyan]")
+    for key, value in response.headers.items():
+        console.print(f"  [blue]{key}:[/blue] {value}")
+    
+    return response
+
+@app.post("/process-video/")
+@async_timer(custom_logger)
+async def process_video_endpoint(request: VideoRequest):
+    try:
+        performance_monitor.start_timer('process_video')
+        transcription_metrics.record_request(True)
+        
+        logger.info(f"Processing video request: {request.dict()}")
+        
+        if not os.path.exists(request.obsidian_dir):
+            raise HTTPException(status_code=400, detail="Obsidian directory does not exist")
+
+        if not os.path.exists(request.output_folder):
+            os.makedirs(request.output_folder, exist_ok=True)
+            logger.info(f"Created output folder: {request.output_folder}")
+
+        # Configure model settings based on request
+        model_config = {
+            "model": request.transcription_model,
+            "use_groq": request.use_groq
+        }
+        
+        if request.use_groq and request.transcription_model in ["llama-3.3-70b", "mixtral"]:
+            # Add Groq-specific configuration
+            model_config.update({
+                "api_key": os.getenv("GROQ_API_KEY"),
+                "model_name": f"groq/{request.transcription_model}"
+            })
+
+        # Start the background task with model configuration
+        task = asyncio.create_task(process_video(
+            request.youtube_video_url,
+            request.obsidian_dir,
+            queue_manager.status_queue,
+            queue_manager.transcription_queue,
+            output_folder=request.output_folder,
+            model_config=model_config
+        ))
+
+        duration = performance_monitor.stop_timer('process_video')
+        metrics_collector.add_metric('transcription_duration', duration)
+
+        return {
+            "status": "started",
+            "content": "Video processing started",
+            "timestamp": datetime.now().isoformat()
+        }
+
+    except ValidationError as e:
+        transcription_metrics.record_request(False)
+        logger.error(f"Validation error: {str(e)}")
+        raise HTTPException(status_code=422, detail=str(e))
+    except Exception as e:
+        transcription_metrics.record_request(False)
+        logger.error(f"Error in process_video_endpoint: {str(e)}", exc_info=True)
+        error_details = TranscriptionErrorHandler.handle_error(
+            "UNKNOWN_ERROR",
+            e,
+            video_url=request.youtube_video_url
+        )
+        raise HTTPException(status_code=500, detail=error_details)
+
+async def select_directory_dialog() -> str:
+    """Open a directory selection dialog and return the selected path."""
+    root = tk.Tk()
+    root.withdraw()  # Hide the main window
+    root.attributes('-topmost', True)  # Ensure dialog appears on top
+    path = filedialog.askdirectory()
+    return path if path else ""
+
+@app.post("/select-directory")
+async def select_directory():
+    """Endpoint to open a directory selection dialog."""
+    try:
+        selected_path = await select_directory_dialog()
+        if not selected_path:
+            raise HTTPException(status_code=400, detail="No directory selected")
+        return {"path": selected_path}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+# New functions for video download feature using yt-dlp
+
+async def download_video(url: str, options: dict, status_queue: asyncio.Queue):
+    """Background task for downloading videos with yt-dlp"""
+    try:
+        import yt_dlp
+        
+        # Create download directory if it doesn't exist
+        download_dir = options.get('download_dir', 'downloads')
+        os.makedirs(download_dir, exist_ok=True)
+        
+        # Add timestamp to filename to prevent overwrites
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        filename_template = os.path.join(download_dir, f'%(title)s_{timestamp}.%(ext)s')
+        
+        # Configure yt-dlp options
+        ydl_opts = {
+            'outtmpl': filename_template,
+            'progress_hooks': [lambda d: report_download_progress(d, status_queue)],
+            'quiet': False,
+            'no_warnings': False,
+            'keepvideo': True,  # Always keep video files regardless of extraction
+            'overwrites': False  # Never overwrite existing files
+        }
+        
+        # Handle format selection
+        if options.get('format') == 'best':
+            ydl_opts['format'] = 'bestvideo+bestaudio/best'
+        elif options.get('format') in ['1080p', '720p', '480p', '360p']:
+            res = options.get('format').replace('p', '')
+            ydl_opts['format'] = f'bestvideo[height<={res}]+bestaudio/best[height<={res}]'
+        
+        # Handle audio extraction
+        if options.get('extractAudio', False):
+            ydl_opts.update({
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': options.get('audioFormat', 'mp3'),
+                    'preferredquality': options.get('audioQuality', '192'),
+                }]
+            })
+            # Always keep the original video
+            ydl_opts['keepvideo'] = True
+        
+        # Handle thumbnail embedding
+        if options.get('embedThumbnail', False):
+            if 'postprocessors' not in ydl_opts:
+                ydl_opts['postprocessors'] = []
+            ydl_opts['postprocessors'].append({
+                'key': 'EmbedThumbnail',
+                'already_have_thumbnail': False
+            })
+            # For thumbnail embedding to work
+            ydl_opts['writethumbnail'] = True
+        
+        # Handle metadata embedding
+        if options.get('embedMetadata', True):
+            if 'postprocessors' not in ydl_opts:
+                ydl_opts['postprocessors'] = []
+            ydl_opts['postprocessors'].append({
+                'key': 'FFmpegMetadata',
+                'add_metadata': True,
+            })
+        
+        # Handle subtitles - enhanced to save subtitles as separate files too
+        if options.get('subtitles', False):
+            ydl_opts.update({
+                'writesubtitles': True,
+                'writeautomaticsub': options.get('autoSubtitles', False),
+                'subtitleslangs': [options.get('subtitleLanguage', 'en'), 'all'][options.get('subtitleLanguage', 'en') == 'auto'],
+                'subtitlesformat': 'srt',  # Save as SRT format for maximum compatibility
+                'allsubtitles': options.get('subtitleLanguage', 'en') == 'auto',
+            })
+        
+        # Handle playlist downloading
+        if options.get('downloadPlaylist', False):
+            ydl_opts.update({
+                'noplaylist': False,
+                'playlist_items': f"{options.get('playlistStart', '1')}-{options.get('playlistEnd', '')}"
+            })
+        else:
+            ydl_opts['noplaylist'] = True
+        
+        # Send initial status
+        await status_queue.put(
+            json.dumps({
+                'type': 'status',
+                'content': f'Starting download for: {url}',
+                'download_dir': download_dir,
+                'timestamp': datetime.now().isoformat()
+            })
+        )
+        
+        # Fetch video info first to get the title
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=False)
+            title = info.get('title', 'Unknown Title')
+            
+            # Send status with video title
+            await status_queue.put(
+                json.dumps({
+                    'type': 'info',
+                    'content': f'Found video: {title}',
+                    'title': title,
+                    'timestamp': datetime.now().isoformat()
+                })
+            )
+            
+            # Start actual download
+            await status_queue.put(
+                json.dumps({
+                    'type': 'status',
+                    'content': 'Download started',
+                    'timestamp': datetime.now().isoformat()
+                })
+            )
+            
+            # Execute the download
+            ydl.download([url])
+        
+        # Send completion status
+        await status_queue.put(
+            json.dumps({
+                'type': 'complete',
+                'content': f'Download completed for: {title}',
+                'timestamp': datetime.now().isoformat()
+            })
+        )
+        
+    except Exception as e:
+        logger.error(f"Error downloading video: {str(e)}", exc_info=True)
+        # Send error to client
+        await status_queue.put(
+            json.dumps({
+                'type': 'error',
+                'content': f'Error downloading video: {str(e)}',
+                'timestamp': datetime.now().isoformat()
+            })
+        )
+
+async def report_download_progress(d, status_queue: asyncio.Queue):
+    """Report download progress to the client"""
+    if d['status'] == 'downloading':
+        try:
+            # Extract progress information
+            progress_str = d.get('_percent_str', '0%').strip()
+            progress = float(progress_str.replace('%', ''))
+            
+            speed = d.get('_speed_str', 'Unknown speed')
+            eta = d.get('_eta_str', 'Unknown ETA')
+            filename = d.get('filename', 'Unknown filename')
+            total_bytes = d.get('total_bytes', 0)
+            
+            # Format total size in human-readable format
+            total_size = "Unknown size"
+            if total_bytes:
+                # Convert bytes to MB or GB
+                if total_bytes < 1024*1024*1024:  # Less than 1GB
+                    total_size = f"{total_bytes/(1024*1024):.2f} MB"
+                else:
+                    total_size = f"{total_bytes/(1024*1024*1024):.2f} GB"
+            
+            # Send progress update
+            await status_queue.put(
+                json.dumps({
+                    'type': 'progress',
+                    'content': {
+                        'progress': progress,
+                        'speed': speed,
+                        'eta': eta,
+                        'filename': os.path.basename(filename),
+                        'total_size': total_size
+                    },
+                    'timestamp': datetime.now().isoformat()
+                })
+            )
+        except Exception as e:
+            logger.error(f"Error reporting download progress: {str(e)}", exc_info=True)
+    
+    elif d['status'] == 'finished':
+        # Send post-processing notification
+        await status_queue.put(
+            json.dumps({
+                'type': 'status',
+                'content': 'Download finished, post-processing file...',
+                'timestamp': datetime.now().isoformat()
+            })
+        )
+
+@app.post("/api/download")
+async def download_video_endpoint(request: DownloadRequest):
+    """Endpoint to start a video download."""
+    try:
+        logger.info(f"Download request received for URL: {request.url}")
+        
+        # Set default download directory
+        if 'download_dir' not in request.options:
+            request.options['download_dir'] = os.path.join(os.getcwd(), 'downloads')
+        
+        # Start download in background
+        asyncio.create_task(download_video(request.url, request.options, download_status_queue))
+        
+        return {
+            "status": "success",
+            "content": "Download started",
+            "title": "Video download",  # This will be updated with actual title during download
+            "timestamp": datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"Error in download_video_endpoint: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.options("/api/download-status")
+async def options_download_status(request: Request):
+    """Handle OPTIONS requests for the download status SSE endpoint."""
+    from fastapi.responses import JSONResponse
+    from rich.console import Console
+    console = Console()
+    
+    # Get the origin from the request or use a default
+    origin = request.headers.get("origin", "http://localhost:3000")
+    
+    console.print(f"[bold green]OPTIONS request for download status SSE endpoint from {request.client.host if request.client else 'unknown'}[/bold green]")
+    console.print(f"[bold cyan]Request headers: {dict(request.headers)}[/bold cyan]")
+    
+    response = JSONResponse(
+        content={"detail": "OK"},
+        status_code=200
+    )
+    
+    # Use the actual origin from the request
+    response.headers["Access-Control-Allow-Origin"] = origin
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS, POST"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    response.headers["Access-Control-Max-Age"] = "86400"  # Cache preflight for 24 hours
+    
+    # Log the headers for debugging
+    console.print("[bold cyan]OPTIONS Response Headers:[/bold cyan]")
+    for key, value in response.headers.items():
+        console.print(f"  [blue]{key}:[/blue] {value}")
+    
+    return response
+
+@app.get("/api/download-status")
+async def get_download_status(request: Request):
+    """Endpoint for Server-Sent Events that provides download status updates."""
+    from rich.console import Console
+    console = Console()
+    client_host = request.client.host if request.client else "unknown"
+    client_id = f"download_client_{time.time()}"
+    console.print(f"[bold green]Download status SSE connection requested from {client_host}[/bold green]")
+    console.print(f"[bold cyan]Headers: {dict(request.headers)}[/bold cyan]")
+    
+    async def event_generator():
+        try:
+            # Send initial connection message
+            connection_message = json.dumps({
+                'type': 'status',
+                'content': 'Connected to download status stream',
+                'timestamp': datetime.now().isoformat()
+            })
+            yield f"data: {connection_message}\n\n"
+            
+            # Initialize heartbeat time
+            last_heartbeat = time.time()
+            
+            while True:
+                # Check for status updates (non-blocking)
+                try:
+                    status_update = download_status_queue.get_nowait()
+                    # Ensure the status_update is proper JSON with consistent field names
+                    if isinstance(status_update, str):
+                        try:
+                            # Check if it's already a valid JSON string
+                            update_data = json.loads(status_update)
+                            
+                            # Standardize field names (message -> content)
+                            if 'message' in update_data and 'content' not in update_data:
+                                update_data['content'] = update_data.pop('message')
+                            
+                            # Add timestamp if missing
+                            if 'timestamp' not in update_data:
+                                update_data['timestamp'] = datetime.now().isoformat()
+                                
+                            yield f"data: {json.dumps(update_data)}\n\n"
+                        except json.JSONDecodeError:
+                            # If not valid JSON string, convert it to one with standard format
+                            standardized_update = {
+                                'type': 'status',
+                                'content': status_update,
+                                'timestamp': datetime.now().isoformat()
+                            }
+                            yield f"data: {json.dumps(standardized_update)}\n\n"
+                    elif isinstance(status_update, dict):
+                        # Standardize field names for dict
+                        if 'message' in status_update and 'content' not in status_update:
+                            status_update['content'] = status_update.pop('message')
+                        
+                        # Add timestamp if missing
+                        if 'timestamp' not in status_update:
+                            status_update['timestamp'] = datetime.now().isoformat()
+                            
+                        # Convert dict to JSON string
+                        yield f"data: {json.dumps(status_update)}\n\n"
+                    else:
+                        # Try to convert other types to string with standard format
+                        standardized_update = {
+                            'type': 'status',
+                            'content': str(status_update),
+                            'timestamp': datetime.now().isoformat()
+                        }
+                        yield f"data: {json.dumps(standardized_update)}\n\n"
+                    
+                    # Force flush the event
+                    await asyncio.sleep(0)
+                except asyncio.QueueEmpty:
+                    # If no updates, send heartbeat to keep connection alive
+                    current_time = time.time()
+                    if current_time - last_heartbeat > 15:  # Send heartbeat every 15 seconds
+                        last_heartbeat = current_time
+                        heartbeat_msg = json.dumps({
+                            'type': 'heartbeat',
+                            'content': 'ping',
+                            'timestamp': datetime.now().isoformat()
+                        })
+                        yield f"data: {heartbeat_msg}\n\n"
+                        # Force flush heartbeat
+                        await asyncio.sleep(0)
+                    
+                    # Small sleep to prevent CPU spinning
+                    await asyncio.sleep(0.5)
+        
+        except Exception as e:
+            logger.error(f"Error in download status event generator: {str(e)}", exc_info=True)
+            # Send error to client with standardized format
+            error_message = json.dumps({
+                'type': 'error',
+                'content': f'Stream error: {str(e)}',
+                'timestamp': datetime.now().isoformat()
+            })
+            yield f"data: {error_message}\n\n"
+            await asyncio.sleep(0)
+    
+    # Use EventSourceResponse for SSE
+    response = EventSourceResponse(event_generator())
+    
+    # Get the origin from the request or use a default
+    origin = request.headers.get("origin", "http://localhost:3000")
+    
+    # Set CORS headers explicitly - use the actual origin from the request
+    response.headers["Access-Control-Allow-Origin"] = origin
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS, POST"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    
+    # Set other required headers for SSE
+    response.headers["Cache-Control"] = "no-cache, no-transform"
+    response.headers["Connection"] = "keep-alive"
+    response.headers["Content-Type"] = "text/event-stream"
+    response.headers["X-Accel-Buffering"] = "no"  # Disable proxy buffering
+    
+    # Log the headers for debugging
+    console.print("[bold cyan]SSE Response Headers:[/bold cyan]")
+    for key, value in response.headers.items():
+        console.print(f"  [blue]{key}:[/blue] {value}")
+    
+    return response
+
+@app.post("/api/video-info")
+async def get_video_info(request: VideoInfoRequest):
+    """Endpoint to get information about a video without downloading it."""
+    try:
+        import yt_dlp
+        
+        logger.info(f"Video info request received for URL: {request.url}")
+        
+        # Configure yt-dlp options for info extraction only
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'extract_flat': 'in_playlist',
+            'skip_download': True
+        }
+        
+        # Extract video info
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(request.url, download=False)
+            
+            # Check if it's a playlist
+            is_playlist = False
+            playlist_count = 0
+            
+            if 'entries' in info:
+                # It's a playlist
+                is_playlist = True
+                playlist_count = len(info.get('entries', []))
+                
+                # Get the first video info for thumbnail
+                if playlist_count > 0:
+                    try:
+                        # Try to get the first entry's full info
+                        first_video_url = info['entries'][0]['url']
+                        first_video_info = ydl.extract_info(first_video_url, download=False)
+                        thumbnail = first_video_info.get('thumbnail', '')
+                    except Exception:
+                        # If that fails, use playlist thumbnail
+                        thumbnail = info.get('thumbnail', '')
+                else:
+                    thumbnail = info.get('thumbnail', '')
+                    
+                title = info.get('title', 'Unknown Playlist')
+                author = info.get('uploader', '')
+                duration = "Playlist"
+                
+            else:
+                # It's a single video
+                thumbnail = info.get('thumbnail', '')
+                title = info.get('title', 'Unknown Video')
+                author = info.get('uploader', '')
+                
+                # Format duration
+                duration_seconds = info.get('duration', 0)
+                if duration_seconds:
+                    minutes, seconds = divmod(duration_seconds, 60)
+                    hours, minutes = divmod(minutes, 60)
+                    if hours:
+                        duration = f"{hours}:{minutes:02d}:{seconds:02d}"
+                    else:
+                        duration = f"{minutes}:{seconds:02d}"
+                else:
+                    duration = "Unknown"
+            
+            # Return formatted response
+            return {
+                "title": title,
+                "author": author,
+                "thumbnail": thumbnail,
+                "duration": duration,
+                "is_playlist": is_playlist,
+                "playlist_count": playlist_count,
+                "available_formats": [
+                    format_info.get('format_note', 'Unknown') 
+                    for format_info in info.get('formats', [])
+                    if 'format_note' in format_info
+                ],
+                "has_subtitles": len(info.get('subtitles', {})) > 0,
+                "id": info.get('id', '')
+            }
+    
+    except Exception as e:
+        logger.error(f"Error fetching video info: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error fetching video info: {str(e)}")
+
+@app.get("/api/default-directory")
+async def get_default_directory():
+    """Endpoint to get the default download directory."""
+    try:
+        # Return the downloads directory in the current working directory
+        download_dir = os.path.join(os.getcwd(), 'downloads')
+        
+        # Create directory if it doesn't exist
+        os.makedirs(download_dir, exist_ok=True)
+        
+        return {"path": download_dir}
+    except Exception as e:
+        logger.error(f"Error getting default directory: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+# Include the content_upserter router
+app.include_router(content_upserter_router, prefix="/api/content")
+
+@app.get("/health")
+async def health_check():
+    """Simple health check endpoint without any queue operations."""
+    custom_logger.info("Health check endpoint called")
+    return {"status": "healthy", "content": "Backend server is running", "timestamp": datetime.now().isoformat()}

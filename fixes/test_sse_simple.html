@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Simple SSE Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #messages {
+            margin-top: 20px;
+            border: 1px solid #ddd;
+            padding: 10px;
+            height: 400px;
+            overflow-y: auto;
+        }
+        .message {
+            margin: 5px 0;
+            padding: 5px;
+            border-radius: 3px;
+        }
+        .status { background-color: #e3f2fd; }
+        .transcription { background-color: #e8f5e9; }
+        .complete { background-color: #fff9c4; }
+        .error { background-color: #ffebee; }
+    </style>
+</head>
+<body>
+    <h1>Simple SSE Test</h1>
+    <button id="connect">Connect</button>
+    <button id="disconnect">Disconnect</button>
+    <button id="test-debug">Test Debug SSE</button>
+    <button id="send-test">Send Test Segment</button>
+    <button id="check-queue">Check Queue Status</button>
+    <div id="messages"></div>
+
+    <script>
+        let eventSource = null;
+        const messagesDiv = document.getElementById('messages');
+
+        function addMessage(type, data) {
+            const messageEl = document.createElement('div');
+            messageEl.className = `message ${type}`;
+
+            let content = '';
+            if (typeof data === 'object') {
+                content = JSON.stringify(data, null, 2);
+            } else {
+                content = data;
+            }
+
+            messageEl.innerHTML = `<strong>${type.toUpperCase()}:</strong> <pre>${content}</pre>`;
+            messagesDiv.appendChild(messageEl);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function connect() {
+            if (eventSource) {
+                eventSource.close();
+            }
+
+            addMessage('status', 'Connecting to SSE...');
+
+            try {
+                eventSource = new EventSource('http://localhost:8000/combined-updates', { withCredentials: true });
+
+                eventSource.onopen = function() {
+                    addMessage('status', 'Connection opened');
+                };
+
+                eventSource.onmessage = function(event) {
+                    console.log('Raw SSE message:', event.data);
+
+                    try {
+                        // Extract the JSON part from the SSE message
+                        // The format is "data: {json}"
+                        let jsonStr = event.data;
+                        if (jsonStr.startsWith('data: ')) {
+                            jsonStr = jsonStr.substring(6); // Remove 'data: ' prefix
+                        }
+
+                        const data = JSON.parse(jsonStr);
+                        const type = data.type || 'unknown';
+
+                        addMessage(type, data);
+
+                        // Log special messages
+                        if (type === 'transcription_complete') {
+                            console.log('TRANSCRIPTION COMPLETE RECEIVED:', data);
+                        } else if (type === 'transcription_segment') {
+                            console.log('TRANSCRIPTION SEGMENT RECEIVED:', data);
+                        }
+                    } catch (error) {
+                        console.error('Error parsing message:', error, '\nRaw data:', event.data);
+                        addMessage('error', `Failed to parse: ${event.data}`);
+                    }
+                };
+
+                eventSource.onerror = function(error) {
+                    console.error('SSE error:', error);
+                    addMessage('error', 'Connection error');
+                };
+            } catch (error) {
+                console.error('Failed to create EventSource:', error);
+                addMessage('error', `Failed to connect: ${error.message}`);
+            }
+        }
+
+        function disconnect() {
+            if (eventSource) {
+                eventSource.close();
+                eventSource = null;
+                addMessage('status', 'Disconnected');
+            }
+        }
+
+        function testDebugSSE() {
+            if (eventSource) {
+                eventSource.close();
+            }
+
+            addMessage('status', 'Connecting to Debug SSE...');
+
+            try {
+                eventSource = new EventSource('http://localhost:8000/debug/test-sse', { withCredentials: true });
+
+                eventSource.onopen = function() {
+                    addMessage('status', 'Debug connection opened');
+                };
+
+                eventSource.onmessage = function(event) {
+                    console.log('Raw Debug SSE message:', event.data);
+
+                    try {
+                        // Extract the JSON part from the SSE message
+                        // The format is "data: {json}"
+                        let jsonStr = event.data;
+                        if (jsonStr.startsWith('data: ')) {
+                            jsonStr = jsonStr.substring(6); // Remove 'data: ' prefix
+                        }
+
+                        const data = JSON.parse(jsonStr);
+                        const type = data.type || 'unknown';
+
+                        addMessage(type, data);
+
+                        // Log special messages
+                        if (type === 'transcription_complete') {
+                            console.log('TRANSCRIPTION COMPLETE RECEIVED:', data);
+                        } else if (type === 'transcription_segment') {
+                            console.log('TRANSCRIPTION SEGMENT RECEIVED:', data);
+                        }
+                    } catch (error) {
+                        console.error('Error parsing message:', error, '\nRaw data:', event.data);
+                        addMessage('error', `Failed to parse: ${event.data}`);
+                    }
+                };
+
+                eventSource.onerror = function(error) {
+                    console.error('Debug SSE error:', error);
+                    addMessage('error', 'Debug connection error');
+                };
+            } catch (error) {
+                console.error('Failed to create Debug EventSource:', error);
+                addMessage('error', `Failed to connect to debug: ${error.message}`);
+            }
+        }
+
+        async function sendTestSegment() {
+            try {
+                addMessage('status', 'Sending test segment...');
+                const response = await fetch('http://localhost:8000/debug/send-test-segment', {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+                addMessage('status', data);
+            } catch (error) {
+                console.error('Error sending test segment:', error);
+                addMessage('error', `Failed to send test segment: ${error.message}`);
+            }
+        }
+
+        async function checkQueueStatus() {
+            try {
+                addMessage('status', 'Checking queue status...');
+                const response = await fetch('http://localhost:8000/debug/queue-status');
+
+                const data = await response.json();
+                addMessage('status', data);
+            } catch (error) {
+                console.error('Error checking queue status:', error);
+                addMessage('error', `Failed to check queue status: ${error.message}`);
+            }
+        }
+
+        document.getElementById('connect').addEventListener('click', connect);
+        document.getElementById('disconnect').addEventListener('click', disconnect);
+        document.getElementById('test-debug').addEventListener('click', testDebugSSE);
+        document.getElementById('send-test').addEventListener('click', sendTestSegment);
+        document.getElementById('check-queue').addEventListener('click', checkQueueStatus);
+    </script>
+</body>
+</html>

@@ -3,6 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { ANALYSIS_STEPS, PROGRESS_STAGES } from '@/lib/search-styles';
+import { AnalysisFormatter } from './AnalysisFormatter';
 
 /**
  * Component for displaying AI analysis with rich formatting and animations
@@ -10,6 +11,127 @@ import { ANALYSIS_STEPS, PROGRESS_STAGES } from '@/lib/search-styles';
 export function AnalysisDisplay({ openaiAnalysis, groqAnalysis }) {
   const [activeTab, setActiveTab] = useState('openai');
   const [animateIn, setAnimateIn] = useState(false);
+  
+  // Add custom CSS for analysis content
+  useEffect(() => {
+    const style = document.createElement('style');
+    style.textContent = `
+      .analysis-formatted-content h3, 
+      .analysis-formatted-content h4, 
+      .analysis-formatted-content h5,
+      .analysis-formatted-content h6 {
+        margin-top: 1rem;
+        margin-bottom: 0.5rem;
+        font-weight: 600;
+        line-height: 1.4;
+      }
+      .analysis-formatted-content h3 {
+        font-size: 1.25rem;
+        color: rgb(29, 78, 216);
+      }
+      .analysis-formatted-content h4 {
+        font-size: 1.125rem;
+        color: rgb(37, 99, 235);
+      }
+      .analysis-formatted-content h5,
+      .analysis-formatted-content h6 {
+        font-size: 1rem;
+        color: rgb(59, 130, 246);
+      }
+      .analysis-formatted-content ul, 
+      .analysis-formatted-content ol {
+        margin-left: 1.5rem;
+        margin-bottom: 1rem;
+        padding-left: 1rem;
+      }
+      .analysis-formatted-content li {
+        margin-bottom: 0.25rem;
+        padding-left: 0.25rem;
+      }
+      .analysis-formatted-content p {
+        margin-bottom: 0.75rem;
+        line-height: 1.6;
+      }
+      .analysis-formatted-content blockquote {
+        border-left: 2px solid rgb(147, 197, 253);
+        padding-left: 0.75rem;
+        margin: 0.75rem 0;
+        font-style: italic;
+        color: rgb(75, 85, 99);
+      }
+      .analysis-formatted-content pre {
+        background-color: rgb(243, 244, 246);
+        padding: 0.75rem;
+        border-radius: 0.375rem;
+        overflow-x: auto;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 0.875rem;
+        margin: 0.75rem 0;
+        white-space: pre-wrap;
+      }
+      .analysis-formatted-content code {
+        background-color: rgb(243, 244, 246);
+        padding: 0.125rem 0.375rem;
+        border-radius: 0.25rem;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+        font-size: 0.875rem;
+        white-space: nowrap;
+      }
+      .analysis-formatted-content a {
+        color: rgb(37, 99, 235);
+        text-decoration: underline;
+        transition: all 0.2s ease;
+      }
+      .analysis-formatted-content a:hover {
+        text-decoration: none;
+        color: rgb(29, 78, 216);
+      }
+      .analysis-formatted-content strong {
+        font-weight: 600;
+        color: rgb(31, 41, 55);
+      }
+      .analysis-formatted-content em {
+        font-style: italic;
+        color: rgb(55, 65, 81);
+      }
+      .analysis-formatted-content hr {
+        margin: 1.5rem 0;
+        border-top: 1px solid rgb(229, 231, 235);
+      }
+      .analysis-formatted-content .flex {
+        display: flex;
+      }
+      .analysis-formatted-content .items-start {
+        align-items: flex-start;
+      }
+      .analysis-formatted-content .mb-1 {
+        margin-bottom: 0.25rem;
+      }
+      .analysis-formatted-content .mr-2 {
+        margin-right: 0.5rem;
+      }
+      .analysis-formatted-content .mt-1 {
+        margin-top: 0.25rem;
+      }
+      .analysis-formatted-content .text-blue-500 {
+        color: rgb(59, 130, 246);
+      }
+      .analysis-formatted-content .font-medium {
+        font-weight: 500;
+      }
+      .analysis-formatted-content .text-blue-700 {
+        color: rgb(29, 78, 216);
+      }
+      .analysis-formatted-content .font-bold {
+        font-weight: 700;
+      }
+    `;
+    document.head.appendChild(style);
+    
+    return () => {
+      document.head.removeChild(style);
+    };
+  }, []);
   
   // Check if analysis is available
   const hasOpenAI = openaiAnalysis && openaiAnalysis.trim() !== '';
@@ -114,9 +236,9 @@ function FormattedAnalysis({ content, provider }) {
     return () => clearTimeout(timer);
   }, []);
   
-  // Determine if content should be truncated
-  const shouldTruncate = content.length > 500 && !expanded;
-  const displayContent = shouldTruncate ? content.substring(0, 500) + '...' : content;
+  // We'll always use the full content with the AnalysisFormatter
+  // but control the display height with CSS instead of truncating the content
+  const shouldTruncate = content.length > 1200 && !expanded;
   
   // Provider-specific styling
   const providerStyles = {
@@ -145,13 +267,14 @@ function FormattedAnalysis({ content, provider }) {
       <div className={`prose prose-sm max-w-none ${provider === 'OpenAI' ? 'prose-blue' : 'prose-purple'}`}>
         <div 
           className={`p-4 rounded-md border ${style.borderColor} ${style.bgColor} 
-            ${shouldTruncate ? 'max-h-96 overflow-y-auto' : ''} 
+            ${shouldTruncate ? 'max-h-[500px] overflow-y-auto' : ''} 
             analysis-content shadow-sm`}
-          dangerouslySetInnerHTML={{ __html: formatAnalysisContent(displayContent) }}
-        />
+        >
+          <AnalysisFormatter content={content} />
+        </div>
       </div>
       
-      {content.length > 500 && (
+      {content.length > 1200 && (
         <div className="mt-2 text-right">
           <Button 
             variant="outline" 
@@ -165,49 +288,4 @@ function FormattedAnalysis({ content, provider }) {
       )}
     </div>
   );
-}
-
-/**
- * Format analysis content with enhanced Markdown-like formatting
- */
-function formatAnalysisContent(content) {
-  if (!content) return '';
-  
-  // Replace newlines with <br> tags
-  let formatted = content.replace(/\n/g, '<br>');
-  
-  // Format headings (# Heading)
-  formatted = formatted.replace(/(?:<br>|^)#\s+(.*?)(?:<br>|$)/g, '<h3 class="text-lg font-semibold mt-4 mb-2 text-blue-700">$1</h3>');
-  formatted = formatted.replace(/(?:<br>|^)##\s+(.*?)(?:<br>|$)/g, '<h4 class="text-md font-semibold mt-3 mb-1 text-blue-600">$1</h4>');
-  formatted = formatted.replace(/(?:<br>|^)###\s+(.*?)(?:<br>|$)/g, '<h5 class="text-sm font-semibold mt-2 mb-1 text-blue-500">$1</h5>');
-  
-  // Format bold (**text**)
-  formatted = formatted.replace(/\*\*(.*?)\*\*/g, '<strong class="font-bold">$1</strong>');
-  
-  // Format italic (*text*)
-  formatted = formatted.replace(/\*(.*?)\*/g, '<em class="italic">$1</em>');
-  
-  // Format lists with better styling
-  // Unordered lists
-  formatted = formatted.replace(/(?:<br>|^)\s*-\s+(.*?)(?=<br>|$)/g, '<br><span class="inline-flex items-start"><span class="text-blue-500 mr-2">•</span><span>$1</span></span>');
-  
-  // Ordered lists (improved implementation)
-  formatted = formatted.replace(/(?:<br>|^)\s*(\d+)\.\s+(.*?)(?=<br>|$)/g, '<br><span class="inline-flex items-start"><span class="text-blue-500 font-medium mr-2">$1.</span><span>$2</span></span>');
-  
-  // Format code blocks (improved implementation)
-  formatted = formatted.replace(/`(.*?)`/g, '<code class="bg-gray-100 px-1.5 py-0.5 rounded text-sm font-mono text-blue-600">$1</code>');
-  
-  // Format horizontal rules
-  formatted = formatted.replace(/(?:<br>|^)-{3,}(?:<br>|$)/g, '<hr class="my-4 border-t border-gray-200">');
-  
-  // Format blockquotes
-  formatted = formatted.replace(/(?:<br>|^)>\s+(.*?)(?=<br>|$)/g, '<br><blockquote class="pl-3 border-l-2 border-blue-300 text-gray-600 italic">$1</blockquote>');
-  
-  // Format links (if any)
-  formatted = formatted.replace(/\[(.*?)\]\((.*?)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline hover:no-underline clickable-url">$1</a>');
-  
-  // Highlight key terms
-  formatted = formatted.replace(/"([^"]+)"/g, '<span class="text-blue-700">"$1"</span>');
-  
-  return formatted;
 }

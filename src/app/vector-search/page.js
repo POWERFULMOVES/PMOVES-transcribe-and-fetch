@@ -481,15 +481,15 @@ export default function VectorSearch() {
                             <h4 className="text-sm font-medium text-gray-700 mb-2">Search Methods</h4>
                             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
                                 <div>
-                                    <span className="text-blue-600 font-medium block">Vector Search</span>
+                                    <span className="text-[hsl(var(--page-accent))] font-medium block">Vector Search</span>
                                     <p className="text-gray-600">Uses AI embeddings to find semantically similar content, even when exact keywords don't match. Provides conceptually related results.</p>
                                 </div>
                                 <div>
-                                    <span className="text-blue-600 font-medium block">Keyword Search</span>
+                                    <span className="text-[hsl(var(--page-accent))] font-medium block">Keyword Search</span>
                                     <p className="text-gray-600">Traditional text matching to find content containing specific keywords. Useful for finding exact phrases or terms.</p>
                                 </div>
                                 <div>
-                                    <span className="text-blue-600 font-medium block">Hybrid Search</span>
+                                    <span className="text-[hsl(var(--page-accent))] font-medium block">Hybrid Search</span>
                                     <p className="text-gray-600">Combines both approaches for comprehensive results. Prioritizes based on multiple factors including similarity and content type.</p>
                                 </div>
                             </div>
@@ -520,7 +520,7 @@ export default function VectorSearch() {
                               </div>
                               {/* Fine-grained Sliders */}
                               <div className="p-4 border rounded-md">
-                                <h4 className="font-semibold mb-3 text-blue-700">Fine-grained (High Precision)</h4>
+                                <h4 className="font-semibold mb-3 text-[hsl(var(--page-accent))]">Fine-grained (High Precision)</h4>
                                 <p className="text-sm text-gray-600 mb-3">For finding specific, precise information. Best for technical details, exact quotes, and specific timestamps. Searches individual segments with high similarity thresholds.</p>
                                 {/* Similarity Threshold */}
                                 <div className="mb-4">
@@ -549,7 +549,7 @@ export default function VectorSearch() {
                               </div>
                               {/* Contextual Sliders */}
                                <div className="p-4 border rounded-md">
-                                 <h4 className="font-semibold mb-3 text-purple-700">Contextual (Balanced)</h4>
+                                 <h4 className="font-semibold mb-3 text-[hsl(var(--page-accent))]">Contextual (Balanced)</h4>
                                  <p className="text-sm text-gray-600 mb-3">For finding content with surrounding context. Best for understanding topics in context and finding related content. Balances precision and recall, includes context from surrounding segments.</p>
                                  {/* Similarity Threshold */}
                                  <div className="mb-4">
@@ -578,7 +578,7 @@ export default function VectorSearch() {
                                </div>
                                {/* Overview Sliders */}
                                 <div className="p-4 border rounded-md">
-                                  <h4 className="font-semibold mb-3 text-indigo-700">Overview (Broad Insights)</h4>
+                                  <h4 className="font-semibold mb-3 text-[hsl(var(--page-accent))]">Overview (Broad Insights)</h4>
                                   <p className="text-sm text-gray-600 mb-3">For getting broader insights across content. Best for exploratory searches and finding thematic connections. Uses lower thresholds to capture more conceptual matches.</p>
                                   {/* Similarity Threshold */}
                                    <div className="mb-4">
@@ -638,15 +638,17 @@ export default function VectorSearch() {
                     {/* AI Analysis Display */}
                     {runAnalysis && (
                         <>
-                            <AnalysisProcess 
-                                currentStep={metadata?.analysis_complete ? 'complete' : 'generating'} 
-                                openaiAnalysis={openaiAnalysis} 
+                            <AnalysisProcess
+                                currentStep={metadata?.analysis_complete ? 'complete' : 'generating'}
+                                openaiAnalysis={openaiAnalysis}
                                 groqAnalysis={groqAnalysis}
+                                accentColor="var(--page-accent)" // Pass accent color
                             />
                             
-                            <AnalysisDisplay 
-                                openaiAnalysis={openaiAnalysis} 
-                                groqAnalysis={groqAnalysis} 
+                            <AnalysisDisplay
+                                openaiAnalysis={openaiAnalysis}
+                                groqAnalysis={groqAnalysis}
+                                accentColor="var(--page-accent)" // Pass accent color
                             />
                         </>
                     )}

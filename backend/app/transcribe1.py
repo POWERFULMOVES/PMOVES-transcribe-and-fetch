@@ -1,1038 +1,1309 @@
+# --- START OF REFACTORED Transcribe1.py ---
+
 import os
+# Environment variables recommended to be set before importing torch/numpy
 os.environ['KMP_DUPLICATE_LIB_OK'] = 'TRUE'
 os.environ['OPENBLAS_NUM_THREADS'] = '1'
+
 import asyncio
 import pandas as pd
+import math
 from faster_whisper import WhisperModel
 from pydantic import BaseModel
+# Assuming these utils exist and are correctly implemented in '.utils'
+# Make sure they use async file I/O (like aiofiles) if needed for save functions
 from .utils import (
     clean_filename,
-    format_as_hyperlink,
+    format_as_hyperlink, # Note: This wasn't used in the final markdown format, but kept import
     ensure_directory_exists,
-    download_audio,
+    # download_audio is defined below for clarity, assuming it was in utils
     save_text_to_markdown,
-    convert_markdown_to_pdf,
+    convert_markdown_to_pdf, # Note: PDF conversion wasn't called, but kept import
     save_segments_to_csv,
     save_segments_to_excel,
-    format_timestamp
+    format_timestamp # Defined below for clarity, assuming it was in utils
 )
+# Assuming configuration variables are correctly set in '.config'
 from .config import WHISPER_MODEL, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE, GROQ_API_KEY
 import logging
 import json
-import aiohttp
-from fastapi import HTTPException
+import aiohttp # Keep for potential future API integrations
+from fastapi import HTTPException # Keep if parts integrate with FastAPI elsewhere
 import torch
-from typing import Literal
+from typing import Literal, List, Tuple, Dict, Any, Optional # Added Optional
 import yt_dlp
-from pydub import AudioSegment
-import tempfile
-import math
+# from pydub import AudioSegment # Commented out - only used in removed chunking function
+# import tempfile # Commented out - only used in removed chunking function
+import math # Keep for potential future calculations
 import re
-from datetime import datetime
+from datetime import datetime, timedelta # Added timedelta
+import time # Needed for time.sleep in sync loop and timing
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.syntax import Syntax
-from rich.table import Table
-from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
+# Rich imports for optional enhanced console output
+try:
+    from rich.console import Console
+    # Removed Progress imports as direct integration with to_thread is complex
+    # Rely on queue messages for progress reporting
+    console = Console()
+    RICH_AVAILABLE = True
+    print("Rich console is available.")
+except ImportError:
+    # Basic fallback if rich is not installed
+    class Console:
+        def print(self, *args, **kwargs): print(*args)
+    console = Console()
+    RICH_AVAILABLE = False
+    print("Rich console not found, using standard print.")
 
 
-logger = logging.getLogger(__name__)
+# --- Logging Setup ---
+# Configure logging basic setup (consider moving to a central setup in main app)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__) # Get logger instance for this module
 
-# Initialize rich console
-console = Console()
 
-# First get device info
-def get_optimal_device() -> tuple[Literal["cpu", "cuda", "mps"], Literal["int8", "float16", "int8_float16"]]:
+# --- Device and Model Configuration ---
+
+def get_optimal_device() -> tuple[Literal["cpu", "cuda"], Literal["int8", "float16", "int8_float16"]]:
+    """Determines the best device (CUDA or CPU) and compute type."""
     if torch.cuda.is_available():
-        return "cuda", "float16"
-    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return "mps", "float16"
+        # Check CUDA capability for float16 support if needed, default to float16 for CUDA
+        # cap = torch.cuda.get_device_capability(0)
+        # compute_type = "float16" if cap[0] >= 7 else "int8_float16" # Example capability check
+        return "cuda", "float16" # Defaulting to float16 for simplicity if CUDA found
+    # Add MPS check if relevant for target hardware
+    # elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+    #     logger.info("MPS device detected.")
+    #     return "mps", "float16"
     else:
-        return "cpu", "int8"
+        return "cpu", "int8" # Default to int8 for CPU for broader compatibility
 
-# Then use it
 optimal_device, optimal_compute_type = get_optimal_device()
 
-# Now log the information
-logger.info(f"Loading Whisper model: {WHISPER_MODEL}")
+# Log device info at startup
+logger.info(f"--- System Info ---")
+logger.info(f"Selected Whisper model size: {WHISPER_MODEL}")
 logger.info(f"CUDA available: {torch.cuda.is_available()}")
-logger.info(f"Using device: {optimal_device} with compute type: {optimal_compute_type}")
-if torch.cuda.is_available():
-    logger.info(f"GPU Device: {torch.cuda.get_device_name(0)}")
-    logger.info(f"GPU Memory: {torch.cuda.get_device_properties(0).total_memory / 1024**3:.2f} GB")
+logger.info(f"Determined optimal device: '{optimal_device}' with compute type: '{optimal_compute_type}'")
+if optimal_device == "cuda":
+    try:
+        logger.info(f"GPU Device Name: {torch.cuda.get_device_name(0)}")
+        props = torch.cuda.get_device_properties(0)
+        logger.info(f"GPU Memory: {props.total_memory / 1024**3:.2f} GB")
+        logger.info(f"CUDA Device Capability: {torch.cuda.get_device_capability(0)}")
+        logger.info(f"CUDA Device Count: {torch.cuda.device_count()}")
+    except Exception as e:
+        logger.error(f"Could not get detailed CUDA device info: {e}")
+logger.info(f"--- End System Info ---")
 
-# Log CUDA device information for diagnostics
-logger.info(f"CUDA available: {torch.cuda.is_available()}")
-if torch.cuda.is_available():
-    logger.info(f"CUDA device count: {torch.cuda.device_count()}")
-    logger.info(f"CUDA device name: {torch.cuda.get_device_name(0)}")
-    logger.info(f"CUDA device capability: {torch.cuda.get_device_capability(0)}")
 
-# Remove global model initialization
-# Instead, create a function to get or initialize the model when needed
-def get_whisper_model():
-    """Get or initialize the Whisper model only when needed"""
-    logger.info(f"Initializing Whisper model: {WHISPER_MODEL}")
-    return WhisperModel(
-        WHISPER_MODEL,
-        device="cuda" if torch.cuda.is_available() else "cpu",  # Use CUDA if available
-        compute_type="float16" if torch.cuda.is_available() else "int8",  # Use appropriate precision
-        cpu_threads=8,           # Increase CPU threads
-        num_workers=4,           # Increase workers for parallel processing
-        download_root=None,
-        local_files_only=False
-    )
+# --- Whisper Model Initialization (Lazy Loading) ---
+_whisper_model_instance: Optional[WhisperModel] = None
 
-class VideoProcessRequest(BaseModel):
+def get_whisper_model() -> WhisperModel:
+    """Gets or initializes the Whisper model instance. Ensures it's loaded only once."""
+    global _whisper_model_instance
+    if _whisper_model_instance is None:
+        # Use the globally determined optimal device and compute type
+        device_to_use = optimal_device # e.g., "cuda" or "cpu"
+        # Ensure compute_type is appropriate for the device
+        compute_to_use = optimal_compute_type if device_to_use == "cuda" else "int8"
+
+        logger.info(f"Initializing Whisper model '{WHISPER_MODEL}' on device='{device_to_use}' with compute_type='{compute_to_use}'...")
+        console.print(f"[yellow]Initializing Whisper model '{WHISPER_MODEL}' (this might take a moment)...[/yellow]")
+        try:
+            # Adjust threads/workers based on your system and use case
+            # More cpu_threads can help preprocessing on CPU even if using GPU
+            # num_workers often benefits from being > 1 for parallel batch processing if applicable
+            _whisper_model_instance = WhisperModel(
+                WHISPER_MODEL,
+                device=device_to_use,
+                compute_type=compute_to_use,
+                cpu_threads=os.cpu_count() or 4, # Use more threads if available
+                num_workers=1, # Often 1 is fine for single sequential transcription
+                # download_root=None, # Default location okay?
+                # local_files_only=False # Allow download if needed
+            )
+            logger.info("Whisper model initialized successfully.")
+            console.print("[green]Whisper model loaded.[/green]")
+        except Exception as e:
+            logger.error(f"FATAL: Failed to initialize Whisper model: {e}", exc_info=True)
+            console.print(f"[bold red]Error initializing Whisper model: {e}[/bold red]")
+            # This is critical, so raise an exception to stop the process if the model fails
+            raise RuntimeError(f"Whisper model initialization failed: {e}")
+    return _whisper_model_instance
+
+
+# --- Pydantic Model ---
+class VideoProcessRequest(BaseModel): # Matches definition in main.py or caller
     youtube_video_url: str
     obsidian_dir: str
     output_folder: str
-    use_groq: bool = False
-    transcription_model: str = "faster-whisper"
+    use_groq: bool = False # Should be determined by transcription_model in caller's logic
+    transcription_model: str = "faster-whisper" # Default value
 
-# Add this function at the module level (outside any other function)
-async def save_to_both_locations(content, filename, output_folder, obsidian_dir, is_markdown=False):
-    """
-    Save content to both output_folder and obsidian_dir
-    Returns tuple of (output_path, obsidian_path)
-    """
-    # Create full paths
+
+# --- Utility Functions (Copied from provided code for completeness) ---
+
+# Assume these save functions are async and correctly implemented in .utils
+# Example placeholder if they were defined here:
+# async def save_text_to_markdown(content, path): ...
+# async def save_segments_to_csv(df, path): ...
+# async def save_segments_to_excel(df, path): ...
+
+async def save_to_both_locations(content: Any, filename: str, output_folder: str, obsidian_dir: str, is_markdown: bool = False):
+    """ Saves content to both output_folder and obsidian_dir (as CSV or MD). """
+    # Ensure target directories exist before saving
+    await ensure_directory_exists(output_folder)
+    await ensure_directory_exists(obsidian_dir)
+
     output_path = os.path.join(output_folder, filename)
     obsidian_path = os.path.join(obsidian_dir, filename)
-    
-    logger.info(f"Saving to output path: {output_path}")
-    logger.info(f"Saving to obsidian path: {obsidian_path}")
-    
-    if is_markdown:
-        if isinstance(content, pd.DataFrame):
-            # Convert DataFrame to markdown table string
-            markdown_content = content.to_markdown(index=False)
-            await save_text_to_markdown(markdown_content, output_path)
-            await save_text_to_markdown(markdown_content, obsidian_path)
-        else:
-            # Regular text content
+    logger.info(f"Attempting to save to output path: {output_path}")
+    logger.info(f"Attempting to save to obsidian path: {obsidian_path}")
+
+    try:
+        if is_markdown:
+            # Assumes save_text_to_markdown is async
             await save_text_to_markdown(content, output_path)
             await save_text_to_markdown(content, obsidian_path)
-    else:
-        # If content is a DataFrame, save directly
-        if isinstance(content, pd.DataFrame):
-            await save_segments_to_csv(content, output_path)
-            await save_segments_to_csv(content, obsidian_path)
-        else:
-            # If content is a list, convert to DataFrame first
-            df = pd.DataFrame(content)
-            await save_segments_to_csv(df, output_path)
-            await save_segments_to_csv(df, obsidian_path)
-    
-    return output_path, obsidian_path
+            logger.info(f"Saved Markdown successfully: {filename}")
+        else: # Assume CSV/Excel for non-markdown (DataFrame expected)
+            df = None
+            if isinstance(content, pd.DataFrame):
+                df = content
+            elif isinstance(content, list) and all(isinstance(item, dict) for item in content):
+                 logger.info(f"Converting list of {len(content)} dicts to DataFrame for saving.")
+                 df = pd.DataFrame(content)
+            else:
+                 logger.warning(f"Cannot save content of type {type(content)} as CSV/Excel. Needs DataFrame or list of dicts. Skipping save for '{filename}'.")
+                 return None, None # Indicate failure
 
-# Function to process a video
+            # Determine file type and save
+            if filename.endswith('.csv'):
+                # Assumes save_segments_to_csv is async
+                await save_segments_to_csv(df, output_path)
+                await save_segments_to_csv(df, obsidian_path)
+                logger.info(f"Saved CSV successfully: {filename}")
+            elif filename.endswith('.xlsx'):
+                # Assumes save_segments_to_excel is async
+                await save_segments_to_excel(df, output_path)
+                await save_segments_to_excel(df, obsidian_path)
+                logger.info(f"Saved Excel successfully: {filename}")
+            else:
+                logger.warning(f"Unsupported file extension for DataFrame saving: {filename}. Skipping.")
+                return None, None
+
+        return output_path, obsidian_path
+    except Exception as e:
+        logger.error(f"Error saving file '{filename}' to locations '{output_path}' and '{obsidian_path}': {e}", exc_info=True)
+        # Optionally send an error status via queue if available in this context
+        return None, None # Indicate failure
+
+def get_best_thumbnail(thumbnails: Optional[List[Dict[str, Any]]]) -> Tuple[Optional[str], Optional[int], Optional[int]]:
+    """ Gets the highest resolution thumbnail URL and dimensions. Handles potential None input. """
+    if not thumbnails: return None, None, None
+    try:
+        # Filter out entries without width/height for sorting
+        valid_thumbnails = [t for t in thumbnails if t.get('width') and t.get('height')]
+        if not valid_thumbnails:
+             # If no dimensions, fallback to the last thumbnail URL (often highest res)
+             return thumbnails[-1].get('url'), None, None
+
+        # Sort by area (width * height)
+        sorted_thumbnails = sorted(
+            valid_thumbnails,
+            key=lambda x: x['width'] * x['height'],
+            reverse=True
+        )
+        best = sorted_thumbnails[0]
+        return best.get('url'), best.get('width'), best.get('height')
+    except Exception as e:
+        logger.warning(f"Error processing thumbnails: {e}. Using first available URL as fallback.")
+        # Fallback to the very first thumbnail URL if sorting fails
+        return thumbnails[0].get('url'), None, None
+
+def format_timestamp(seconds: float) -> str:
+    """ Convert seconds to HH:MM:SS format without milliseconds """
+    if seconds < 0: seconds = 0 # Handle potential negative start times
+    hours = int(seconds // 3600)
+    minutes = int((seconds % 3600) // 60)
+    secs = int(seconds % 60)
+
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{secs:02d}"
+    else:
+        return f"{minutes:02d}:{secs:02d}"
+
+async def extract_video_info(youtube_video_url: str) -> Dict[str, Any]:
+    """ Extracts detailed video information using yt-dlp. """
+    logger.info(f"Attempting to extract video info for: {youtube_video_url}")
+    try:
+        ydl_opts = {
+            'quiet': True,
+            'no_warnings': True,
+            'skip_download': True, # We only want metadata
+            'extract_flat': False, # Get detailed info, not just URL list
+            # Consider adding options for subtitles/chapters if needed later
+            # 'writesubtitles': True,
+            # 'writeautomaticsub': True, # Auto-generated captions
+            # 'listsubtitles': True,
+        }
+        loop = asyncio.get_running_loop()
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # Run blocking IO in executor thread
+            info = await loop.run_in_executor(
+                None, lambda: ydl.extract_info(youtube_video_url, download=False)
+            )
+
+        if not info:
+            raise ValueError("yt-dlp returned no information for the URL.")
+
+        # --- Process extracted info ---
+        video_id = info.get('id', 'N/A')
+        logger.info(f"Successfully extracted info for video ID: {video_id}")
+
+        thumbnail_url, thumb_width, thumb_height = get_best_thumbnail(info.get('thumbnails'))
+        duration_sec = info.get('duration')
+        duration_str = str(timedelta(seconds=int(duration_sec))) if duration_sec else "N/A"
+        upload_date_str = info.get('upload_date') # YYYYMMDD format
+        formatted_upload_date = f"{upload_date_str[:4]}-{upload_date_str[4:6]}-{upload_date_str[6:]}" if upload_date_str and len(upload_date_str) == 8 else "N/A"
+
+        video_info = {
+            'id': video_id,
+            'title': info.get('title', 'N/A'),
+            'description': info.get('description'),
+            'duration': duration_sec, # Raw seconds
+            'duration_formatted': duration_str, # HH:MM:SS format
+            'view_count': info.get('view_count'),
+            'like_count': info.get('like_count'),
+            'channel': info.get('channel', info.get('uploader', 'N/A')), # Fallback uploader
+            'channel_id': info.get('channel_id'),
+            'channel_url': info.get('channel_url'),
+            'upload_date': formatted_upload_date, # Formatted YYYY-MM-DD
+            'raw_upload_date': upload_date_str, # Original YYYYMMDD
+            'best_thumbnail': { 'url': thumbnail_url, 'width': thumb_width, 'height': thumb_height },
+            'watch_url': info.get('webpage_url', youtube_video_url), # Use original URL as fallback
+            'tags': info.get('tags', []),
+            'categories': info.get('categories', []),
+            # Add more fields as needed (e.g., chapters, subtitles if extracted)
+            # 'chapters': info.get('chapters'),
+        }
+        return video_info
+
+    except yt_dlp.utils.DownloadError as dle:
+         # Handle specific yt-dlp errors (e.g., video unavailable, private)
+         logger.error(f"yt-dlp download error for {youtube_video_url}: {dle}", exc_info=True)
+         raise ValueError(f"Video not accessible or private: {dle}")
+    except Exception as e:
+        logger.error(f"Generic error extracting video info for {youtube_video_url}: {e}", exc_info=True)
+        # Re-raise a generic error or a specific one if identifiable
+        raise ValueError(f"Failed to extract video info: {e}")
+
+
+async def download_audio(youtube_url: str, output_template: str, progress_callback=None):
+    """
+    Downloads audio using yt-dlp, preferring 'm4a'.
+    Returns the actual path of the downloaded file.
+    `output_template` should include '%(ext)s'.
+    """
+    logger.info(f"Starting audio download for: {youtube_url}")
+    output_dir = os.path.dirname(output_template)
+    await ensure_directory_exists(output_dir) # Ensure directory exists first
+
+    actual_download_path = None # Variable to store the final path
+
+    try:
+        loop = asyncio.get_running_loop()
+
+        # --- Progress Hook Setup ---
+        last_progress_sent_local = -10.0 # Track progress for this specific download
+
+        def sync_progress_hook(d):
+            nonlocal last_progress_sent_local, actual_download_path # Allow modification
+            status = d.get('status')
+
+            if status == 'finished':
+                actual_download_path = d.get('filename') # Store the final filename from yt-dlp
+                logger.info(f"Download hook: status 'finished'. Final path reported: {actual_download_path}")
+                # Ensure 100% is sent on completion if callback exists
+                if progress_callback and last_progress_sent_local < 100.0:
+                    logger.info(f"Download complete: 100%")
+                    # Use run_coroutine_threadsafe as hook might be called from ytdlp's thread
+                    asyncio.run_coroutine_threadsafe(progress_callback(100.0), loop)
+
+            elif status == 'downloading':
+                total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
+                downloaded = d.get('downloaded_bytes', 0)
+                if total > 0 and progress_callback:
+                    current_progress = round((downloaded / total) * 100, 1)
+                    # Send updates more frequently (e.g., every 2%)
+                    if abs(current_progress - last_progress_sent_local) >= 2.0:
+                        logger.info(f"Download progress: {current_progress:.1f}% ({downloaded/(1024*1024):.1f}MB/{total/(1024*1024):.1f}MB)")
+                        # Use run_coroutine_threadsafe for thread safety
+                        asyncio.run_coroutine_threadsafe(progress_callback(current_progress), loop)
+                        last_progress_sent_local = current_progress
+
+            elif status == 'error':
+                logger.error(f"Download hook: status 'error'. Info: {d}")
+
+
+        # --- yt-dlp Options ---
+        ydl_opts = {
+            'format': 'm4a/bestaudio/best', # Prefer M4A, fallback to best audio
+            'outtmpl': output_template, # Template like 'path/to/base.%(ext)s'
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'm4a', # Specify desired codec for extraction
+                # 'preferredquality': '192', # Optional: set bitrate
+            }],
+            'progress_hooks': [sync_progress_hook] if progress_callback else [],
+            'quiet': True, # Suppress yt-dlp stdout unless error
+            'no_warnings': True,
+            'noprogress': True if not progress_callback else False, # Only enable internal progress if using hook
+            # 'verbose': True, # Enable for deep debugging
+        }
+
+        # --- Execute Download ---
+        logger.info(f"Using yt-dlp options: {ydl_opts}")
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            await loop.run_in_executor(None, lambda: ydl.download([youtube_url]))
+
+        # --- Verify Download ---
+        if actual_download_path and os.path.exists(actual_download_path):
+            logger.info(f"Audio download successful. File saved to: {actual_download_path}")
+            return actual_download_path
+        else:
+            # Fallback check if hook didn't capture path or file missing
+            logger.warning(f"Download hook did not provide final path or file is missing. Attempting to find file...")
+            base_name = os.path.splitext(os.path.basename(output_template))[0]
+            found_files = [f for f in os.listdir(output_dir) if f.startswith(base_name) and f.endswith(('.m4a', '.mp3', '.ogg', '.wav'))]
+            if found_files:
+                actual_download_path = os.path.join(output_dir, found_files[0])
+                logger.warning(f"Found matching audio file: {actual_download_path}")
+                return actual_download_path
+            else:
+                error_msg = f"Audio file could not be found in '{output_dir}' after download attempt for base name '{base_name}'."
+                logger.error(error_msg)
+                raise FileNotFoundError(error_msg)
+
+    except Exception as e:
+        # Catch potential errors during download or options processing
+        error_msg = f"Error during audio download process for {youtube_url}: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        # Re-raise the exception to be caught by the calling function (process_video)
+        raise Exception(error_msg)
+
+
+# --- Utility Functions ---
+
+def extract_video_id(youtube_url: str) -> str:
+    """Extract video ID from YouTube URL."""
+    if not youtube_url:
+        return ""
+
+    # Try to match various YouTube URL formats
+    patterns = [
+        r'(?:v=|\/)([a-zA-Z0-9_-]{11})(?:\?|&|$|\/)',  # Standard YouTube URLs
+        r'(?:youtu\.be\/)([a-zA-Z0-9_-]{11})',           # Short youtu.be URLs
+        r'(?:embed\/)([a-zA-Z0-9_-]{11})',               # Embed URLs
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, youtube_url)
+        if match:
+            return match.group(1)
+
+    # If no match found, return empty string
+    return ""
+
+# --- Transcription Functions ---
+
+def _transcribe_loop_sync(model: WhisperModel, audio_path: str, video_id: str, base_url: str,
+                         status_queue_sync: asyncio.Queue, transcription_queue_sync: asyncio.Queue, loop: asyncio.AbstractEventLoop):
+    """
+    Synchronous function containing the blocking transcription loop.
+    Designed to be run in a separate thread via asyncio.to_thread.
+    Communicates progress and results back to the main asyncio loop via queues.
+    """
+    thread_id = os.getpid() # Get thread/process ID for logging
+    logger.info(f"[Thread-{thread_id}] Starting synchronous transcription loop for {audio_path}")
+    results_list = [] # Store segment dicts for final return
+    full_text_parts = [] # Store markdown formatted text parts for final return
+
+    try:
+        # --- Core Blocking Call ---
+        segments_gen, info = model.transcribe(
+            audio_path,
+            beam_size=1, # Optimized for speed (higher beam_size might increase accuracy but slow down)
+            best_of=1,   # Keep only the single best hypothesis
+            temperature=0.0, # Deterministic output
+            condition_on_previous_text=False, # Can sometimes speed up, potentially less accurate context
+            vad_filter=True, # Use Voice Activity Detection - crucial for filtering silence
+            vad_parameters=dict(min_silence_duration_ms=500, speech_pad_ms=200) # VAD tuning
+        )
+        logger.info(f"[Thread-{thread_id}] model.transcribe yielded generator. Language: {info.language}, Duration: {info.duration:.2f}s")
+        detected_language = info.language
+        detected_lang_prob = info.language_probability
+
+        total_segments_processed = 0
+        start_loop_time = time.time()
+
+        # --- Process Segments ---
+        for idx, segment in enumerate(segments_gen):
+            total_segments_processed = idx + 1
+            try:
+                segment_text = segment.text.strip()
+                start_time_secs = segment.start
+                end_time_secs = segment.end
+
+                # Formatting for display/storage
+                start_time_fmt = format_timestamp(start_time_secs) # HH:MM:SS.ms
+                end_time_fmt = format_timestamp(end_time_secs) # HH:MM:SS.ms
+                timestamp_seconds_int = int(start_time_secs) # Integer seconds for URL
+                watch_url = f"{base_url}&t={timestamp_seconds_int}s" # Add 's' suffix for clarity
+
+                # Create the dictionary for this segment's data
+                segment_dict = {
+                    'watch_url': watch_url,
+                    'video_id': video_id,
+                    'id': idx, # Sequential ID
+                    'start': start_time_fmt, # Formatted string HH:MM:SS.ms
+                    'end': end_time_fmt, # Formatted string HH:MM:SS.ms
+                    'text': segment_text,
+                    # Include raw float times maybe useful for frontend waveform sync?
+                    'start_seconds': start_time_secs,
+                    'end_seconds': end_time_secs,
+                }
+                results_list.append(segment_dict) # Add to list for final return value
+
+                # Prepare data for SSE queues (must be JSON serializable)
+                segment_data_for_queue = {
+                    "type": "transcription_segment",
+                    "content": segment_dict, # Send the structured dict
+                    "timestamp": datetime.now().isoformat(),
+                    "priority": "high"  # Add priority flag for immediate delivery
+                }
+                status_msg_for_queue = {
+                    "type": "status",
+                    "content": f"Transcribing segment {idx + 1}...",
+                    "timestamp": datetime.now().isoformat()
+                }
+
+                # Log the segment being sent to the frontend
+                print(f"[Thread-{thread_id}] Sending segment {idx + 1} to frontend: {segment_text[:50]}...")
+                logger.info(f"[Thread-{thread_id}] Sending segment {idx + 1} to frontend: {segment_text[:50]}...")
+                logger.info(f"[Thread-{thread_id}] Segment data: {json.dumps(segment_data_for_queue)[:200]}...")
+
+                # --- Queue Interaction (Thread-Safe) ---
+                if loop.is_running():
+                    # Convert to JSON string and log it
+                    segment_json = json.dumps(segment_data_for_queue)
+                    print(f"[Thread-{thread_id}] JSON string to be sent: {segment_json[:200]}...")
+                    logger.info(f"[Thread-{thread_id}] JSON string to be sent: {segment_json[:200]}...")
+
+                    # Always send transcription segments to the transcription queue
+                    asyncio.run_coroutine_threadsafe(transcription_queue_sync.put(segment_json), loop)
+
+                    # Only send status updates periodically to avoid overwhelming the frontend
+                    # Send status updates for the first few segments and then every 10 segments
+                    if idx < 5 or idx % 10 == 0:
+                        asyncio.run_coroutine_threadsafe(status_queue_sync.put(json.dumps(status_msg_for_queue)), loop)
+                        logger.debug(f"[Thread-{thread_id}] QUEUE PUT: Status update for segment #{idx}")
+                else:
+                    # If the main loop stops (e.g., application shutdown), stop processing
+                    logger.warning(f"[Thread-{thread_id}] Event loop stopped. Halting transcription segment processing at index {idx}.")
+                    break # Exit the loop
+
+                # Append to markdown text parts (for final file saving)
+                # Format for Markdown table row
+                md_link = f"[{start_time_fmt}]({watch_url})" # Clickable timestamp link
+                formatted_text_part = f"| {md_link} | {video_id} | {idx} | {start_time_fmt} | {end_time_fmt} | {segment_text.replace('|', ' ')} |\n" # Replace pipes in text
+                full_text_parts.append(formatted_text_part)
+
+                # Minimal sleep to potentially yield within the thread, maybe not effective
+                # time.sleep(0.001) # Usually not needed / has little effect
+
+            except Exception as segment_error:
+                logger.error(f"[Thread-{thread_id}] Error processing segment {idx}: {segment_error}", exc_info=True)
+                error_segment_msg = {"type": "error", "content": f"Error processing transcription segment {idx}: {segment_error}"}
+                # Try sending error message back to main thread
+                if loop.is_running():
+                    asyncio.run_coroutine_threadsafe(status_queue_sync.put(json.dumps(error_segment_msg)), loop)
+                continue # Skip this segment and continue with the next
+
+        # --- Loop Finished ---
+        end_loop_time = time.time()
+        loop_duration = end_loop_time - start_loop_time
+        logger.info(f"[Thread-{thread_id}] Synchronous transcription loop finished. Processed {total_segments_processed} segments in {loop_duration:.2f}s.")
+        logger.info(f"[Thread-{thread_id}] Detected language: {detected_language} (Probability: {detected_lang_prob:.2f})")
+
+        # Return the collected results and the detected language info
+        return results_list, full_text_parts, {"language": detected_language, "probability": detected_lang_prob}
+
+    except Exception as transcription_error:
+        # Catch errors during the model.transcribe call itself or loop setup
+        logger.error(f"[Thread-{thread_id}] Core transcription error in sync loop: {transcription_error}", exc_info=True)
+        error_general_msg = {"type": "error", "content": f"Core transcription process failed: {transcription_error}"}
+        if loop.is_running():
+            # Use run_coroutine_threadsafe from the thread
+            asyncio.run_coroutine_threadsafe(status_queue_sync.put(json.dumps(error_general_msg)), loop)
+        # Return None to indicate failure to the awaiting async function
+        return None, None, None
+
+
+async def transcribe_audio(audio_path: str, status_queue: asyncio.Queue, transcription_queue: asyncio.Queue, youtube_video_url: str):
+    """
+    Asynchronously manages the transcription of an audio file using faster-whisper.
+    Runs the blocking transcription process in a separate thread.
+    Sends real-time updates via asyncio Queues.
+    """
+    logger.info(f"Preparing for local transcription task: {audio_path}")
+    console.print(f"🎙️ Starting transcription for: [cyan]{os.path.basename(audio_path)}[/cyan]")
+    results: Optional[List[Dict]] = None
+    full_text: Optional[str] = None
+    language_info: Optional[Dict] = None
+
+    try:
+        # --- Pre-checks ---
+        if not os.path.exists(audio_path):
+            error_msg = f"Audio file not found at path: {audio_path}"
+            logger.error(error_msg)
+            await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
+            raise FileNotFoundError(error_msg)
+
+        await status_queue.put(json.dumps({"type": "status", "content": "Loading Whisper model..."}))
+        # Get model (initialization happens here if it's the first call)
+        model = get_whisper_model() # This might block briefly if first time, but it's acceptable here.
+
+        # --- Extract Info Needed by Thread ---
+        # Use regex to robustly find video ID from various URL formats
+        video_id_match = re.search(r"(?:v=|\/)([a-zA-Z0-9_-]{11})(?:\?|&|\/|$)", youtube_video_url)
+        video_id = video_id_match.group(1) if video_id_match else "UNKNOWN_ID"
+        base_url = f"https://www.youtube.com/watch?v={video_id}"
+        logger.info(f"Extracted Video ID: {video_id} for transcription.")
+
+        # Get the current running event loop to pass to the thread
+        loop = asyncio.get_running_loop()
+
+        # --- Dispatch to Thread ---
+        await status_queue.put(json.dumps({"type": "status", "content": "Dispatching transcription to background thread..."}))
+        logger.info(f"Dispatching transcription task to thread for: {audio_path}")
+
+        # Run the synchronous blocking function in a separate thread
+        results, full_text_parts, language_info = await asyncio.to_thread(
+            _transcribe_loop_sync, # The function to run
+            # Arguments for the function:
+            model,
+            audio_path,
+            video_id,
+            base_url,
+            status_queue, # Pass the queues
+            transcription_queue,
+            loop # Pass the event loop
+        )
+
+        logger.info(f"Transcription thread completed for: {audio_path}")
+
+        # --- Process Results ---
+        if results is None or full_text_parts is None or language_info is None:
+             # The thread function returned None, indicating failure. Error logged within thread.
+             logger.error("Transcription thread failed to return valid results.")
+             # Error message should have been sent via queue from the thread already
+             # No final "transcription_complete" message will be sent.
+             return None, None # Indicate failure up to process_video
+
+        logger.info(f"Transcription successful. Segments processed: {len(results)}")
+        if language_info:
+             logger.info(f"Detected Language: {language_info.get('language', 'N/A')} (Prob: {language_info.get('probability', 0):.2f})")
+
+        # Assemble the final markdown text from parts collected in the thread
+        title_md = f"# Transcription for Video: [{video_id}]({base_url})\n\n"
+        table_header_md = "| Timestamp Link | Video ID | Seg ID | Start | End | Text |\n"
+        table_separator_md = "|---|---|---|---|---|---|\n"
+        full_text = title_md + table_header_md + table_separator_md + "".join(full_text_parts)
+
+        # Send completion messages *after* thread is done and results processed
+        completion_msg = {"type": "transcription_complete", "content": "Transcription process finished."} # Keep content minimal
+        await transcription_queue.put(json.dumps(completion_msg))
+        logger.info(f"QUEUE PUT (Transcription Complete)")
+
+        status_msg_final = {"type": "status", "content": f"Transcription complete. Segments: {len(results)}. Language: {language_info.get('language', 'N/A')}."}
+        await status_queue.put(json.dumps(status_msg_final))
+        logger.info(f"QUEUE PUT (Status): Transcription Completed")
+        console.print(f"[bold green]✅ Transcription complete for {os.path.basename(audio_path)}.[/bold green]")
+
+        return results, full_text # Return results and assembled text
+
+    except FileNotFoundError as fnf_err:
+        # Already handled logging and status queue message, just re-raise
+        raise fnf_err
+    except RuntimeError as rt_err:
+         # Catch model initialization errors from get_whisper_model
+         error_msg = f"Whisper model runtime error: {str(rt_err)}"
+         logger.critical(error_msg, exc_info=True) # Critical error
+         await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
+         raise rt_err # Re-raise to stop processing
+    except Exception as e:
+        # Catch any other unexpected errors in this async wrapper function
+        error_msg = f"Unexpected error in transcribe_audio wrapper: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        try:
+            # Try to send error message via queue
+            await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
+        except Exception as status_error:
+            logger.error(f"Error sending error status to queue: {str(status_error)}")
+        # Re-raise so process_video knows this step failed critically
+        raise e
+
+# Groq transcription implementation
+async def process_audio_with_groq(audio_path: str, status_queue: asyncio.Queue, transcription_queue: asyncio.Queue, youtube_video_url: str):
+    """
+    Process audio using the Groq API in chunks to avoid rate limits and provide a better user experience.
+    """
+    try:
+        # Extract video ID from YouTube URL
+        video_id = extract_video_id(youtube_video_url)
+        if not video_id:
+            error_msg = f"Could not extract video ID from URL: {youtube_video_url}"
+            logger.error(error_msg)
+            await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
+            return None, None
+
+        # Create base URL for watch links
+        base_url = f"https://www.youtube.com/watch?v={video_id}"
+
+        # Send status update
+        await status_queue.put(json.dumps({"type": "status", "content": "Preparing audio for Groq transcription...", "timestamp": datetime.now().isoformat()}))
+
+        # Import required modules for Groq transcription
+        try:
+            from openai import OpenAI
+            import os
+            from pydub import AudioSegment
+            import tempfile
+        except ImportError as e:
+            error_msg = f"Missing required modules for Groq transcription: {e}"
+            logger.error(error_msg)
+            await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
+            return None, None
+
+        # Check if GROQ_API_KEY is set
+        groq_api_key = os.getenv("GROQ_API_KEY")
+        if not groq_api_key:
+            error_msg = "GROQ_API_KEY environment variable not set"
+            logger.error(error_msg)
+            await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
+            return None, None
+
+        # Initialize Groq client
+        client = OpenAI(api_key=groq_api_key, base_url="https://api.groq.com/openai/v1")
+
+        # Convert audio to MP3 format if needed
+        audio_format = audio_path.split('.')[-1].lower()
+        if audio_format != 'mp3':
+            await status_queue.put(json.dumps({"type": "status", "content": "Converting audio to MP3 format...", "timestamp": datetime.now().isoformat()}))
+            try:
+                # Create a temporary file for the MP3
+                with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
+                    mp3_path = temp_file.name
+
+                # Convert to MP3
+                audio = AudioSegment.from_file(audio_path, format=audio_format)
+                audio.export(mp3_path, format="mp3")
+                logger.info(f"Converted {audio_path} to MP3 format: {mp3_path}")
+
+                # Use the MP3 file for transcription
+                audio_path_for_transcription = mp3_path
+            except Exception as e:
+                error_msg = f"Error converting audio to MP3: {e}"
+                logger.error(error_msg)
+                await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
+                return None, None
+        else:
+            audio_path_for_transcription = audio_path
+
+        # Load the audio file
+        try:
+            audio = AudioSegment.from_file(audio_path_for_transcription)
+            total_duration_ms = len(audio)
+            total_duration_sec = total_duration_ms / 1000
+
+            # Calculate chunk size (5 minutes per chunk)
+            chunk_size_ms = 5 * 60 * 1000  # 5 minutes in milliseconds
+            num_chunks = math.ceil(total_duration_ms / chunk_size_ms)
+
+            await status_queue.put(json.dumps({
+                "type": "status",
+                "content": f"Audio duration: {total_duration_sec:.2f} seconds. Processing in {num_chunks} chunks.",
+                "timestamp": datetime.now().isoformat()
+            }))
+
+            # Initialize results containers
+            results_list = []
+            full_text_parts = []
+            segment_counter = 0
+
+            # Process audio in chunks
+            for chunk_idx in range(num_chunks):
+                chunk_start_ms = chunk_idx * chunk_size_ms
+                chunk_end_ms = min(chunk_start_ms + chunk_size_ms, total_duration_ms)
+
+                # Extract chunk
+                chunk = audio[chunk_start_ms:chunk_end_ms]
+
+                # Create a temporary file for the chunk
+                with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as chunk_file:
+                    chunk_path = chunk_file.name
+
+                # Export chunk to temporary file
+                chunk.export(chunk_path, format="mp3")
+
+                # Send status update
+                await status_queue.put(json.dumps({
+                    "type": "status",
+                    "content": f"Processing chunk {chunk_idx + 1}/{num_chunks} ({chunk_start_ms/1000:.2f}s to {chunk_end_ms/1000:.2f}s)...",
+                    "timestamp": datetime.now().isoformat()
+                }))
+
+                # Process chunk with Groq API
+                with open(chunk_path, 'rb') as audio_chunk_file:
+                    try:
+                        # Call Groq API for transcription
+                        response = client.audio.transcriptions.create(
+                            file=audio_chunk_file,
+                            model="whisper-large-v3",
+                            response_format="verbose_json",
+                            timestamp_granularities=["segment"]
+                        )
+
+                        # Process the response
+                        if hasattr(response, 'segments') and response.segments:
+                            # Send status update
+                            await status_queue.put(json.dumps({
+                                "type": "status",
+                                "content": f"Received {len(response.segments)} segments for chunk {chunk_idx + 1}",
+                                "timestamp": datetime.now().isoformat()
+                            }))
+
+                            # Process segments
+                            for idx, segment in enumerate(response.segments):
+                                # Extract segment data
+                                segment_text = segment.text.strip()
+
+                                # Adjust timestamps to account for chunk position
+                                start_time_secs = segment.start + (chunk_start_ms / 1000)
+                                end_time_secs = segment.end + (chunk_start_ms / 1000)
+
+                                # Format timestamps
+                                start_time_fmt = format_timestamp(start_time_secs)
+                                end_time_fmt = format_timestamp(end_time_secs)
+                                timestamp_seconds_int = int(start_time_secs)
+                                watch_url = f"{base_url}&t={timestamp_seconds_int}s"
+
+                                # Create segment dictionary
+                                segment_dict = {
+                                    'watch_url': watch_url,
+                                    'video_id': video_id,
+                                    'id': segment_counter,
+                                    'start': start_time_fmt,
+                                    'end': end_time_fmt,
+                                    'text': segment_text,
+                                    'start_seconds': start_time_secs,
+                                    'end_seconds': end_time_secs,
+                                }
+
+                                # Add to results list
+                                results_list.append(segment_dict)
+
+                                # Format for markdown
+                                md_link = f"[{start_time_fmt}]({watch_url})"
+                                formatted_text_part = f"| {md_link} | {video_id} | {segment_counter} | {start_time_fmt} | {end_time_fmt} | {segment_text.replace('|', ' ')} |\n"
+                                full_text_parts.append(formatted_text_part)
+
+                                # Send segment to frontend
+                                segment_data_for_queue = {
+                                    "type": "transcription_segment",
+                                    "content": segment_dict,
+                                    "timestamp": datetime.now().isoformat(),
+                                    "priority": "high"  # Add priority flag for immediate delivery
+                                }
+
+                                # Log the segment being sent to the frontend
+                                console.print(f"[bold green]Sending segment {segment_counter + 1} to frontend:[/bold green] {segment_text[:50]}...")
+                                logger.info(f"Sending segment {segment_counter + 1} to frontend: {segment_text[:50]}...")
+
+                                # Send segment to frontend
+                                await transcription_queue.put(json.dumps(segment_data_for_queue))
+
+                                # Increment segment counter
+                                segment_counter += 1
+
+                                # Send status update less frequently to avoid overwhelming the frontend
+                                # Send for the first few segments and then every 20 segments
+                                if segment_counter < 5 or segment_counter % 20 == 0:
+                                    await status_queue.put(json.dumps({
+                                        "type": "status",
+                                        "content": f"Processed {segment_counter} segments so far...",
+                                        "timestamp": datetime.now().isoformat()
+                                    }))
+                        else:
+                            logger.warning(f"No segments found in chunk {chunk_idx + 1}")
+                    except Exception as e:
+                        logger.error(f"Error processing chunk {chunk_idx + 1}: {e}")
+                        await status_queue.put(json.dumps({
+                            "type": "status",
+                            "content": f"Error processing chunk {chunk_idx + 1}: {e}",
+                            "timestamp": datetime.now().isoformat()
+                        }))
+
+                # Clean up temporary chunk file
+                try:
+                    os.unlink(chunk_path)
+                except Exception as e:
+                    logger.warning(f"Failed to remove temporary chunk file: {e}")
+
+                # Add a small delay between chunks to avoid rate limits
+                await asyncio.sleep(1)
+
+            # Send completion status
+            await status_queue.put(json.dumps({
+                "type": "status",
+                "content": f"Completed processing {segment_counter} segments from {num_chunks} chunks",
+                "timestamp": datetime.now().isoformat()
+            }))
+
+            # Send transcription_complete message
+            await transcription_queue.put(json.dumps({
+                "type": "transcription_complete",
+                "content": {
+                    "segments": segment_counter,
+                    "chunks": num_chunks
+                },
+                "timestamp": datetime.now().isoformat()
+            }))
+            logger.info(f"Sent transcription_complete message for Groq transcription")
+
+            # Join full text parts
+            full_text = ''.join(full_text_parts)
+
+            # Clean up temporary file if created
+            if audio_format != 'mp3':
+                try:
+                    os.unlink(mp3_path)
+                    logger.info(f"Removed temporary MP3 file: {mp3_path}")
+                except Exception as e:
+                    logger.warning(f"Failed to remove temporary MP3 file: {e}")
+
+            return results_list, full_text
+        except Exception as e:
+            error_msg = f"Error processing audio: {e}"
+            logger.error(error_msg)
+            await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
+            return None, None
+    except Exception as e:
+        error_msg = f"Unexpected error in Groq transcription: {e}"
+        logger.error(error_msg)
+        await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
+        return None, None
+
+
+# --- Main Video Processing Orchestrator ---
 async def process_video(
     youtube_video_url: str,
     obsidian_dir: str,
     status_queue: asyncio.Queue,
     transcription_queue: asyncio.Queue,
-    output_folder: str = None,
-    model_config: dict = None
-):
+    output_folder: str = None, # Optional output folder override
+    model_config: dict = None # Configuration dict
+) -> Dict[str, Any]:
+    """
+    Orchestrates the video download, transcription, and saving process.
+    Sends status updates and results via provided asyncio Queues.
+    Returns a dictionary summarizing the outcome.
+    """
+    process_start_time = time.time()
+    logger.info(f"--- Starting Video Processing ---")
+    logger.info(f"Received request for URL: {youtube_video_url}")
+    console.print(f"\n🚀 [bold blue]Starting processing for:[/bold blue] {youtube_video_url}")
+
+    # Use defaults if not provided
+    if not output_folder: output_folder = os.path.join(os.getcwd(), "output", "transcriptions")
+    if not model_config: model_config = {"model": "faster-whisper", "use_groq": False}
+
+    use_groq = model_config.get("use_groq", False)
+    transcription_engine = "Groq" if use_groq else "Local Faster-Whisper"
+    logger.info(f"Output Folder: {output_folder}")
+    logger.info(f"Obsidian Folder: {obsidian_dir}")
+    logger.info(f"Transcription Engine: {transcription_engine}")
+
+    video_id = "UNKNOWN" # Default value
+    video_title = "Untitled Video" # Default value
+    base_filename = "transcription" # Default value
+    actual_audio_path = None # To store path of downloaded audio
+
     try:
-        if not model_config:
-            model_config = {
-                "model": "faster-whisper",
-                "use_groq": False
+        # --- 1. Extract Video Info ---
+        await status_queue.put(json.dumps({"type": "status", "content": "Extracting video information..."}))
+        logger.info("Step 1: Extracting video info...")
+        try:
+            video_info = await extract_video_info(youtube_video_url)
+            video_id = video_info.get('id', 'N/A')
+            video_title = video_info.get('title', 'Untitled Video')
+            clean_title = clean_filename(video_title) # Sanitize title for filenames
+            logger.info(f"Video Info Extracted: ID={video_id}, Title='{video_title}'")
+
+            # Send detailed metadata via SSE queue
+            metadata_content = {
+                "title": video_title,
+                "id": video_id,
+                "thumbnail": video_info.get('best_thumbnail', {}).get('url'),
+                "channel": video_info.get('channel'),
+                "duration": video_info.get('duration_formatted'),
+                "upload_date": video_info.get('upload_date')
+                # Add more fields from video_info if needed by frontend
             }
+            metadata_msg = {"type": "video_metadata", "content": metadata_content}
+            await status_queue.put(json.dumps(metadata_msg))
+            logger.info(f"QUEUE PUT (Metadata): '{video_title}'")
+            console.print(f"🎬 Video Info: [green]'{video_title}'[/green] (ID: {video_id})")
 
-        # Extract video info first to get title and ID
-        video_info = await extract_video_info(youtube_video_url)
-        video_id = video_info['id']
-        clean_title = clean_filename(video_info['title'])
-        
-        # Add model prefix to base filename
-        model_prefix = "groq" if model_config["use_groq"] else "nvidia"
-        base_filename = f"{model_prefix}_{clean_title}_{video_id}"
+            # Set base filename using extracted info and engine type
+            model_prefix = "groq" if use_groq else "local"
+            base_filename = f"{model_prefix}_{clean_title}_{video_id}"
+            logger.info(f"Base filename set to: {base_filename}")
 
-        # Create directory structure
-        if not output_folder:
-            output_folder = os.path.join(os.getcwd(), "output")
-        
-        # Create main output directories
-        os.makedirs(output_folder, exist_ok=True)
-        os.makedirs(obsidian_dir, exist_ok=True)
-        
-        # Create subdirectories for different file types
-        mp4_dir = os.path.join(output_folder, 'mp4')
+        except Exception as info_err:
+            # Handle failure to get video info (critical step)
+            error_msg = f"Failed to extract video info: {info_err}"
+            logger.error(error_msg, exc_info=True)
+            console.print(f"[bold red]Error: {error_msg}[/bold red]")
+            await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
+            # Return failure dict immediately
+            return {"status": "error", "message": error_msg, "step": "extract_info"}
+
+        # --- 2. Prepare Directories ---
+        logger.info("Step 2: Preparing output directories...")
+        # Define subdirs for organization
+        # Output Folder Structure
+        mp4_dir = os.path.join(output_folder, 'audio') # Changed mp4 to audio for clarity
         csv_dir = os.path.join(output_folder, 'csv')
         excel_dir = os.path.join(output_folder, 'excel')
-        md_dir = os.path.join(output_folder, 'md')
-        pdf_dir = os.path.join(output_folder, 'pdf')
+        md_dir = os.path.join(output_folder, 'markdown')
+        # pdf_dir = os.path.join(output_folder, 'pdf') # PDF saving not implemented
 
-        # Create directories in output_folder
-        for directory in [mp4_dir, csv_dir, excel_dir, md_dir, pdf_dir]:
-            os.makedirs(directory, exist_ok=True)
-            logger.info(f"Created directory in output_folder: {directory}")
-
-        # Create directories in obsidian_dir
-        obsidian_md_dir = os.path.join(obsidian_dir, 'md')
+        # Obsidian Folder Structure (mirrored)
+        obsidian_md_dir = os.path.join(obsidian_dir, 'markdown')
         obsidian_csv_dir = os.path.join(obsidian_dir, 'csv')
         obsidian_excel_dir = os.path.join(obsidian_dir, 'excel')
-        obsidian_pdf_dir = os.path.join(obsidian_dir, 'pdf')
+        # obsidian_pdf_dir = os.path.join(obsidian_dir, 'pdf') # PDF saving not implemented
 
-        for directory in [obsidian_md_dir, obsidian_csv_dir, obsidian_excel_dir, obsidian_pdf_dir]:
-            os.makedirs(directory, exist_ok=True)
-            logger.info(f"Created directory in obsidian_dir: {directory}")
-        
-        # Download audio to mp4 directory
-        audio_path = os.path.join(mp4_dir, f"{base_filename}.mp3")
-        audio_path = await download_audio(youtube_video_url, audio_path)
+        # Create all needed directories, use ensure_directory_exists from utils
+        dirs_to_create = [mp4_dir, csv_dir, excel_dir, md_dir,
+                          obsidian_md_dir, obsidian_csv_dir, obsidian_excel_dir]
+        for directory in dirs_to_create:
+            try:
+                await ensure_directory_exists(directory) # Assumes this handles creation
+                logger.debug(f"Ensured directory exists: {directory}")
+            except Exception as dir_err:
+                # Log warning but attempt to continue if possible
+                logger.warning(f"Could not create or access directory {directory}: {dir_err}")
+        logger.info(f"Output directories prepared in '{output_folder}' and '{obsidian_dir}'")
 
-        # Process with appropriate model
-        if model_config["use_groq"]:
-            await status_queue.put(json.dumps({
-                "type": "status", 
-                "content": "Using Groq API for transcription (cloud-based)"
-            }))
-            segments, full_text = await process_audio_with_groq(
-                audio_path,
-                status_queue,
-                transcription_queue,
-                youtube_video_url
+        # --- 3. Download Audio ---
+        await status_queue.put(json.dumps({"type": "status", "content": "Starting audio download..."}))
+        logger.info("Step 3: Downloading audio...")
+        console.print(f"⬇️ Downloading audio...")
+        # Use m4a as preferred format, let yt-dlp determine final extension in template
+        # Place downloaded audio in the 'audio' subdirectory
+        audio_output_template = os.path.join(mp4_dir, f"{base_filename}.%(ext)s")
+
+        # Define the async progress callback for download_audio
+        async def download_progress_callback(progress_percent: float):
+            """ Sends download progress updates to the status queue. """
+            progress_msg = { "type": "status", "content": f"Downloading audio: {progress_percent:.1f}%" }
+            await status_queue.put(json.dumps(progress_msg))
+            # Optionally print to console too, but sparingly
+            # if int(progress_percent) % 10 == 0: console.print(f"   Download progress: {progress_percent:.1f}%")
+
+        try:
+            actual_audio_path = await download_audio(
+                youtube_video_url,
+                audio_output_template,
+                progress_callback=download_progress_callback # Pass the callback
             )
-        else:
-            await status_queue.put(json.dumps({
-                "type": "status",
-                "content": "Using local Whisper model on GPU"
-            }))
-            segments, full_text = await transcribe_audio(
-                audio_path,
-                status_queue,
-                transcription_queue,
-                youtube_video_url
-            )
+            if not actual_audio_path or not os.path.exists(actual_audio_path):
+                 # This case should ideally be caught within download_audio, but double-check
+                 raise FileNotFoundError("Audio file path not returned or file does not exist after download.")
+            logger.info(f"Audio downloaded successfully to: {actual_audio_path}")
+            await status_queue.put(json.dumps({"type": "status", "content": "Audio download complete."}))
+            logger.info(f"QUEUE PUT (Status): Download complete.")
+            console.print(f"[green]   Download complete:[/green] {os.path.basename(actual_audio_path)}")
+        except Exception as download_err:
+            error_msg = f"Audio download failed: {str(download_err)}"
+            logger.error(error_msg, exc_info=True)
+            console.print(f"[bold red]Error: {error_msg}[/bold red]")
+            await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
+            # Return failure dict immediately
+            return {"status": "error", "message": error_msg, "step": "download_audio"}
 
-        # Save transcriptions in multiple formats
+        # --- 4. Perform Transcription ---
+        await status_queue.put(json.dumps({"type": "status", "content": f"Starting transcription ({transcription_engine})..."}))
+        logger.info(f"Step 4: Starting transcription using {transcription_engine}...")
+        segments: Optional[List[Dict[str, Any]]] = None
+        full_text: Optional[str] = None
+        transcription_start_time = time.time()
+
+        try:
+            if use_groq:
+                # Call the placeholder Groq function
+                segments, full_text = await process_audio_with_groq(
+                    actual_audio_path, status_queue, transcription_queue, youtube_video_url
+                )
+            else:
+                # Call the local Faster Whisper transcription function (runs in thread)
+                segments, full_text = await transcribe_audio(
+                    actual_audio_path, status_queue, transcription_queue, youtube_video_url
+                )
+
+            transcription_duration = time.time() - transcription_start_time
+            logger.info(f"Transcription step finished in {transcription_duration:.2f}s.")
+
+            # Check if transcription step failed (returned None)
+            if segments is None or full_text is None:
+                # Error message should have been sent from the transcription function via queue
+                logger.error(f"Transcription using {transcription_engine} failed.")
+                console.print(f"[bold red]Error: Transcription process failed.[/bold red]")
+                # Return failure dict - step already logged error internally
+                return {"status": "failed", "message": f"{transcription_engine} transcription failed.", "step": "transcribe"}
+
+        except Exception as transcribe_err:
+             # Catch unexpected errors during the transcription call itself
+             error_msg = f"Error during {transcription_engine} transcription call: {str(transcribe_err)}"
+             logger.error(error_msg, exc_info=True)
+             console.print(f"[bold red]Error: {error_msg}[/bold red]")
+             await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
+             return {"status": "error", "message": error_msg, "step": "transcribe"}
+
+
+        # --- 5. Save Results ---
+        await status_queue.put(json.dumps({"type": "status", "content": "Saving transcription files..."}))
+        logger.info("Step 5: Saving transcription results...")
+        console.print(f"💾 Saving transcription files...")
+        files_saved = {} # Dictionary to store paths of successfully saved files
+
+        try:
+            # Create DataFrame from segments (which should be a list of dicts)
+            if isinstance(segments, list):
+                 df = pd.DataFrame(segments)
+                 logger.info(f"Created DataFrame with {len(df)} segments.")
+            else:
+                 # This shouldn't happen if transcription succeeded, but handle defensively
+                 logger.error("Transcription segments were not in the expected list format. Cannot create DataFrame.")
+                 df = pd.DataFrame() # Create empty DF to avoid errors below, but saving will likely fail or be empty
+
+            # Save CSV
+            csv_filename = f"{base_filename}_transcription.csv"
+            csv_output_path, csv_obsidian_path = await save_to_both_locations(df, csv_filename, csv_dir, obsidian_csv_dir)
+            if csv_output_path: files_saved['csv'] = csv_filename
+            await status_queue.put(json.dumps({"type": "status", "content": "CSV files saved."}))
+            logger.info(f"QUEUE PUT (Status): CSV saved")
+            console.print(f"[green]   CSV saved:[/green] {csv_filename}")
+
+            # Save Markdown
+            md_filename = f"{base_filename}_transcription.md"
+            md_output_path, md_obsidian_path = await save_to_both_locations(full_text, md_filename, md_dir, obsidian_md_dir, is_markdown=True)
+            if md_output_path: files_saved['markdown'] = md_filename
+            await status_queue.put(json.dumps({"type": "status", "content": "Markdown files saved."}))
+            logger.info(f"QUEUE PUT (Status): MD saved")
+            console.print(f"[green]   Markdown saved:[/green] {md_filename}")
+
+            # Save Excel
+            excel_filename = f"{base_filename}_transcription.xlsx"
+            excel_output_path, excel_obsidian_path = await save_to_both_locations(df, excel_filename, excel_dir, obsidian_excel_dir)
+            if excel_output_path: files_saved['excel'] = excel_filename
+            await status_queue.put(json.dumps({"type": "status", "content": "Excel files saved."}))
+            logger.info(f"QUEUE PUT (Status): Excel saved")
+            console.print(f"[green]   Excel saved:[/green] {excel_filename}")
+
+        except Exception as save_err:
+             # Log saving errors but maybe don't fail the whole process if some files saved?
+             error_msg = f"Error occurred during file saving: {str(save_err)}"
+             logger.error(error_msg, exc_info=True)
+             console.print(f"[bold orange]Warning: {error_msg}[/bold orange]")
+             # Send a non-fatal error/warning to the queue
+             await status_queue.put(json.dumps({"type": "warning", "content": error_msg}))
+             # Continue to final status message, but results might be incomplete
+
+        # --- 6. Final Completion Status ---
+        process_end_time = time.time()
+        total_duration = process_end_time - process_start_time
+        logger.info(f"--- Video Processing Completed ---")
+        logger.info(f"Total processing time: {total_duration:.2f} seconds.")
+        final_status_content = f"Processing complete for '{video_title}' ({total_duration:.2f}s)."
+        final_status_msg = {"type": "status", "content": final_status_content}
+        await status_queue.put(json.dumps(final_status_msg))
+        logger.info(f"QUEUE PUT (Status): Processing complete")
+        console.print(f"\n🎉 [bold green]Processing complete for '{video_title}' in {total_duration:.2f}s.[/bold green]")
+
+        # --- ADDED: Send safe_to_disconnect AFTER completion message ---
+        await asyncio.sleep(0.5) # Small delay to ensure message gets processed
         await status_queue.put(json.dumps({
-            "type": "status",
-            "content": "Saving transcription files..."
+            "type": "connection_status",
+            "content": "safe_to_disconnect",
+            "timestamp": datetime.now().isoformat()
         }))
+        logger.info("Sent final safe_to_disconnect signal (success path)")
+        # --- END ADDED ---
 
-        # Save as CSV
-        csv_filename = f"{base_filename}_transcription.csv"
-        df = pd.DataFrame(segments)
-        csv_path = os.path.join(csv_dir, csv_filename)
-        obsidian_csv_path = os.path.join(obsidian_csv_dir, csv_filename)
-        await save_segments_to_csv(df, csv_path)
-        await save_segments_to_csv(df, obsidian_csv_path)
-        logger.info(f"Saved CSV files to: {csv_path} and {obsidian_csv_path}")
-
-        # Save as Markdown
-        md_filename = f"{base_filename}_transcription.md"
-        md_path = os.path.join(md_dir, md_filename)
-        obsidian_md_path = os.path.join(obsidian_md_dir, md_filename)
-        await save_text_to_markdown(full_text, md_path)
-        await save_text_to_markdown(full_text, obsidian_md_path)
-        logger.info(f"Saved markdown files to: {md_path} and {obsidian_md_path}")
-
-        # Save as Excel
-        excel_filename = f"{base_filename}_transcription.xlsx"
-        excel_path = os.path.join(excel_dir, excel_filename)
-        obsidian_excel_path = os.path.join(obsidian_excel_dir, excel_filename)
-        await save_segments_to_excel(df, excel_path)
-        await save_segments_to_excel(df, obsidian_excel_path)
-        logger.info(f"Saved Excel files to: {excel_path} and {obsidian_excel_path}")
-
-        # Send completion status with detailed paths
-        await status_queue.put(json.dumps({
-            "type": "status",
-            "content": f"Transcription saved to:\n" +
-                      f"Output Directory:\n" +
-                      f"- MP4: {mp4_dir}\n" +
-                      f"- CSV: {csv_dir}\n" +
-                      f"- Excel: {excel_dir}\n" +
-                      f"- Markdown: {md_dir}\n" +
-                      f"- PDF: {pdf_dir}\n" +
-                      f"Obsidian Directory:\n" +
-                      f"- CSV: {obsidian_csv_dir}\n" +
-                      f"- Excel: {obsidian_excel_dir}\n" +
-                      f"- Markdown: {obsidian_md_dir}\n" +
-                      f"- PDF: {obsidian_pdf_dir}"
-        }))
-
+        # Return success details
         return {
             "status": "completed",
-            "files": {
-                "audio": f"{base_filename}.mp3",
-                "csv": csv_filename,
-                "markdown": md_filename,
-                "excel": excel_filename
+            "message": final_status_content,
+            "files": files_saved, # Dict of successfully saved filenames by type
+            "paths": { # Base directories where files were saved
+                "output_folder": output_folder,
+                "obsidian_folder": obsidian_dir,
+                "audio_file": os.path.basename(actual_audio_path) if actual_audio_path else None
             },
-            "paths": {
-                "output": {
-                    "mp4": mp4_dir,
-                    "csv": csv_dir,
-                    "excel": excel_dir,
-                    "markdown": md_dir,
-                    "pdf": pdf_dir
-                },
-                "obsidian": {
-                    "csv": obsidian_csv_dir,
-                    "excel": obsidian_excel_dir,
-                    "markdown": obsidian_md_dir,
-                    "pdf": obsidian_pdf_dir
-                }
-            }
+            "duration_seconds": total_duration
         }
 
     except Exception as e:
-        error_msg = f"Error processing video: {str(e)}"
-        logger.error(error_msg)
-        await status_queue.put(json.dumps({
-            "type": "error",
-            "content": error_msg
-        }))
-        raise
-
-# Function to transcribe audio
-async def transcribe_audio(audio_path: str, status_queue: asyncio.Queue, transcription_queue: asyncio.Queue, youtube_video_url: str):
-    # Create a rich progress display
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(),
-        TextColumn("[bold green]{task.completed}/{task.total}"),
-        TimeElapsedColumn(),
-        console=console,
-        transient=True
-    ) as progress:
-        transcription_task = progress.add_task("[cyan]Transcribing audio...", total=None)
-        
-    # Create a rich progress display
-    with Progress(
-        SpinnerColumn(),
-        TextColumn("[bold blue]{task.description}"),
-        BarColumn(),
-        TextColumn("[bold green]{task.completed}/{task.total}"),
-        TimeElapsedColumn(),
-        console=console,
-        transient=True
-    ) as progress:
-        transcription_task = progress.add_task("[cyan]Transcribing audio...", total=None)
-        
-    """
-    Transcribe audio file with real-time updates and proper formatting
-    
-    Args:
-        audio_path: Path to audio file
-        status_queue: Queue for status messages
-        transcription_queue: Queue for transcription segments
-        youtube_video_url: Original YouTube URL for timestamps
-    """
-    try:
-        # Verify file exists
-        if not os.path.exists(audio_path):
-            error_msg = f"Audio file not found: {audio_path}"
-            logger.error(error_msg)
-            await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
-            raise FileNotFoundError(error_msg)
-            
-        # Send initial status
-        await status_queue.put(json.dumps({
-            "type": "status",
-            "content": "Starting transcription..."
-        }))
-
-        # Initialize Whisper model only when needed
-        await status_queue.put(json.dumps({
-            "type": "status",
-            "content": "Loading Whisper model on GPU..."
-        }))
-        model = get_whisper_model()
-        logger.info("Whisper model loaded successfully")
-
-        # Initialize result containers
-        result = []  # For structured data
-        full_text = ""  # For formatted text output
-
-        # Extract video ID from URL
-        video_id = youtube_video_url.split('v=')[1].split('&')[0]
-        base_url = f"https://www.youtube.com/watch?v={video_id}"
-
-        # Optimized transcription parameters for GPU
-        segments_gen, info = model.transcribe(
-            audio_path,
-            beam_size=1,           # Reduced for speed
-            best_of=1,             # Only keep best result
-            temperature=0.0,        # Reduce randomness
-            condition_on_previous_text=False,  # Disable for speed
-            vad_filter=True,       # Keep VAD for accuracy
-            vad_parameters=dict(
-                min_silence_duration_ms=500,
-                speech_pad_ms=100
-            )
-        )
-        
-        
-        # Process segments with rich formatting
-        for idx, segment in enumerate(segments_gen):
-            # Update progress
-            progress.update(transcription_task, advance=1, description=f"[cyan]Transcribing segment {idx+1}")
-
-            try:
-                # Clean and format segment text
-                segment_text = segment.text.strip()
-                
-                # Format timestamps
-                start_time = format_timestamp(segment.start)
-                end_time = format_timestamp(segment.end)
-                
-                # Create timestamped YouTube URL
-                timestamp_seconds = int(segment.start)
-                watch_url = f"{base_url}&t={timestamp_seconds}"
-                
-                # Format segment data for structured output
-                segment_dict = {
-                    'watch_url': watch_url,
-                    'video_id': video_id,
-                    'id': idx,
-                    'start': start_time,
-                    'end': end_time,
-                    'text': segment_text
-                }
-                result.append(segment_dict)
-                
-                
-                # Format segment for display
-                segment_panel = Panel(
-                    f"{segment_text}",
-                    title=f"[bold green]Segment {idx+1}[/bold green]",
-                    subtitle=f"[yellow]{start_time} - {end_time}[/yellow]",
-                    border_style="green"
-                )
-                
-                # Display in console with rich formatting
-                if idx % 5 == 0:  # Only show every 5th segment to reduce console spam
-                    console.print(segment_panel)
-                
-                # Send transcription segment immediately for real-time updates
-                await transcription_queue.put(json.dumps({
-                    "type": "transcription_segment",
-                    "content": {
-                        "watch_url": watch_url,
-                        "video_id": video_id,
-                        "id": idx,
-                        "start": start_time,
-                        "end": end_time,
-                        "text": segment_text
-                    },
-                    "timestamp": datetime.now().isoformat()
-                }))
-                logger.info(f"Sent transcription segment: {segment_text[:50]}... at {start_time}")
-
-                
-                # Send status updates periodically
-                if idx % 5 == 0:
-                    await status_queue.put(json.dumps({
-                        "type": "status",
-                        "content": f"Transcribing segment {idx + 1}"
-                    }))
-                
-                # Format text for markdown table
-                formatted_text = (
-                    f"| [{start_time}]({watch_url}) | {video_id} | "
-                    f"{idx} | {start_time} | {end_time} | "
-                    f"{segment_text} |\n"
-                )
-                full_text += formatted_text
-                
-                # Prevent blocking
-                await asyncio.sleep(0)
-                
-            except Exception as segment_error:
-                logger.error(f"Error processing segment {idx}: {str(segment_error)}")
-                continue
-
-        # Create final markdown document
-        title = f"# Transcription for Video: [{video_id}]({base_url})\n\n"
-        table_header = "| Timestamp | Video ID | Segment ID | Start | End | Text |\n"
-        table_separator = "|---|---|---|---|---|\n"
-        full_text = title + table_header + table_separator + full_text
-
-        # Send completion message with the full formatted text
-        await transcription_queue.put(json.dumps({
-            "type": "transcription_complete",
-            "content": full_text
-        }))
-
-        # Send final status message
-        await status_queue.put(json.dumps({
-            "type": "status",
-            "content": f"Transcription completed. Total segments: {len(result)}"
-        }))
-
-        return result, full_text
-
-    except Exception as e:
-        error_msg = f"Error in transcribe_audio: {str(e)}"
-        logger.error(error_msg)
+        # --- Global Exception Handler for process_video ---
+        process_end_time = time.time()
+        total_duration = process_end_time - process_start_time
+        error_msg = f"Unhandled error during video processing ({total_duration:.2f}s elapsed): {str(e)}"
+        logger.critical(error_msg, exc_info=True) # Use CRITICAL for unexpected top-level errors
+        console.print(f"[bold red]CRITICAL ERROR: {error_msg}[/bold red]")
         try:
-            await status_queue.put(json.dumps({
-                "type": "error",
-                "content": error_msg
-            }))
-        except Exception as status_error:
-            logger.error(f"Error sending error status: {str(status_error)}")
-        raise
-
-def format_timestamp(seconds: float) -> str:
-    """
-    Convert seconds to HH:MM:SS.MS format
-    
-    Args:
-        seconds: Time in seconds
-        
-    Returns:
-        Formatted timestamp string
-    """
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = int(seconds % 60)
-    ms = seconds % 1
-    
-    if hours > 0:
-        return f"{hours:02d}:{minutes:02d}:{secs:02d}.{int(ms * 100):02d}"
-    return f"{minutes:02d}:{secs:02d}.{int(ms * 100):02d}"
-
-# Add near the top of the file after torch import
-logger.info(f"CUDA available: {torch.cuda.is_available()}")
-logger.info(f"CUDA device count: {torch.cuda.device_count()}")
-if torch.cuda.is_available():
-    logger.info(f"CUDA device name: {torch.cuda.get_device_name(0)}")
-    logger.info(f"CUDA device capability: {torch.cuda.get_device_capability(0)}")
-
-# Add this helper function near the top of the file
-def should_send_progress_update(last_progress: float, current_progress: float, threshold: float = 5.0) -> bool:
-    """
-    Determine if a progress update should be sent based on the difference from the last update
-    Args:
-        last_progress: Last progress percentage that was sent
-        current_progress: Current progress percentage
-        threshold: Minimum percentage change required to send update (default 5%)
-    Returns:
-        bool: Whether update should be sent
-    """
-    return abs(current_progress - last_progress) >= threshold
-
-# Modify the download_audio function
-async def download_audio(youtube_url: str, output_path: str, progress_callback=None):
-    """
-    Download audio from YouTube URL with minimal progress updates
-    Returns the actual file path after potential format conversion
-    """
-    try:
-        loop = asyncio.get_event_loop()
-        output_dir = os.path.dirname(output_path)
-        filename_base, _ = os.path.splitext(os.path.basename(output_path))
-        
-        ydl_opts = {
-            'format': 'm4a/bestaudio/best',
-            'outtmpl': output_path,
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'm4a',
-            }],
-            'progress_hooks': [],
-        }
-
-        if progress_callback:
-            def sync_progress_hook(d):
-                if d['status'] == 'downloading':
-                    try:
-                        total = d.get('total_bytes') or d.get('total_bytes_estimate', 0)
-                        downloaded = d.get('downloaded_bytes', 0)
-                        if total > 0:
-                            current_progress = round((downloaded / total) * 100, 1)
-                            
-                            # Only send update at start and completion
-                            if current_progress == 0 or current_progress >= 100:
-                                loop.create_task(progress_callback(current_progress))
-                                
-                    except Exception as e:
-                        logger.error(f"Error in progress hook: {str(e)}")
-                        
-            ydl_opts['progress_hooks'].append(sync_progress_hook)
-
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            logger.info(f"Downloading audio from: {youtube_url}")
-            await loop.run_in_executor(None, lambda: ydl.download([youtube_url]))
-            
-            # Check for the actual file - it might have been converted to .m4a
-            m4a_path = f"{output_path}.m4a"
-            actual_path = m4a_path if os.path.exists(m4a_path) else output_path
-            
-            logger.info(f"Audio downloaded successfully to: {actual_path}")
-            return actual_path
-
-    except Exception as e:
-        error_msg = f"Error downloading audio: {str(e)}"
-        logger.error(error_msg)
-        raise Exception(error_msg)
-
-# Add this function to handle audio chunking
-async def process_audio_in_chunks(audio_file_path: str, chunk_duration_ms: int = 300000) -> str:
-    """
-    Process audio file in smaller chunks with compression
-    Returns combined transcription text
-    """
-    logger.info(f"Processing audio file in chunks: {audio_file_path}")
-    audio = AudioSegment.from_file(audio_file_path)
-    total_duration = len(audio)
-    chunks = []
-    transcriptions = []
-
-    # Split audio into smaller chunks and compress
-    for i in range(0, total_duration, chunk_duration_ms):
-        chunk = audio[i:i + chunk_duration_ms]
-        
-        # Compress audio to reduce file size
-        chunk = chunk.set_frame_rate(16000)  # Reduce sample rate
-        chunk = chunk.set_channels(1)        # Convert to mono
-        
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
-            # Export with compression
-            chunk.export(
-                temp_file.name,
-                format='wav',
-                parameters=[
-                    "-ac", "1",          # mono
-                    "-ar", "16000",      # 16kHz sample rate
-                    "-b:a", "64k"        # 64kbps bitrate
-                ]
-            )
-            chunks.append(temp_file.name)
-            chunk_size = os.path.getsize(temp_file.name) / (1024 * 1024)  # Size in MB
-            logger.info(f"Created chunk {len(chunks)}: {temp_file.name} (Size: {chunk_size:.2f}MB)")
-
-    try:
-        # Process each chunk
-        async with aiohttp.ClientSession() as session:
-            for i, chunk_path in enumerate(chunks):
-                logger.info(f"Processing chunk {i+1}/{len(chunks)}")
-                
-                # Check file size before sending
-                file_size = os.path.getsize(chunk_path) / (1024 * 1024)  # Size in MB
-                if file_size > 25:  # Groq's limit is around 25MB
-                    logger.warning(f"Chunk {i+1} is too large ({file_size:.2f}MB), skipping")
-                    continue
-                
-                form = aiohttp.FormData()
-                form.add_field('file', 
-                             open(chunk_path, 'rb'),
-                             filename=f'chunk_{i+1}.wav',
-                             content_type='audio/wav')
-                form.add_field('model', 'distil-whisper-large-v3-en')  # Corrected model name
-                form.add_field('response_format', 'json')
-                form.add_field('language', 'en')
-
-                headers = {
-                    'Authorization': f'Bearer {GROQ_API_KEY}',
-                    'Accept': 'application/json'
-                }
-
-                try:
-                    async with session.post(
-                        'https://api.groq.com/openai/v1/audio/transcriptions',
-                        data=form,
-                        headers=headers
-                    ) as response:
-                        if response.status != 200:
-                            error_text = await response.text()
-                            logger.error(f"Error on chunk {i+1}: {error_text}")
-                            continue
-                        
-                        result = await response.json()
-                        transcription = result.get('text', '')
-                        if transcription:
-                            transcriptions.append(transcription)
-                            logger.info(f"Successfully transcribed chunk {i+1}")
-                except Exception as e:
-                    logger.error(f"Error processing chunk {i+1}: {str(e)}")
-                    continue
-
-                # Add a small delay between chunks to avoid rate limits
-                await asyncio.sleep(1)
-
-        # Combine all transcriptions
-        if not transcriptions:
-            raise Exception("No chunks were successfully transcribed")
-            
-        full_transcription = ' '.join(transcriptions)
-        logger.info("Successfully combined all transcriptions")
-        return full_transcription
-
-    finally:
-        # Cleanup temporary files
-        for chunk_path in chunks:
-            try:
-                os.remove(chunk_path)
-            except Exception as e:
-                logger.warning(f"Failed to remove temporary file {chunk_path}: {e}")
-
-async def process_audio_with_groq(
-    audio_file_path: str,
-    status_queue: asyncio.Queue,
-    transcription_queue: asyncio.Queue,
-    youtube_video_url: str,
-    chunk_duration_ms: int = 30000,  # Reduced to 30 seconds for more frequent updates
-    model_name: str = "distil-whisper-large-v3"
-) -> tuple[list, str]:
-    """
-    Process audio using OpenAI's Whisper API since Groq doesn't directly support audio transcription
-    
-    Args:
-        audio_file_path: Path to the audio file
-        status_queue: Queue for status updates
-        transcription_queue: Queue for transcription updates
-        youtube_video_url: Original YouTube URL for timestamps
-        chunk_duration_ms: Duration of each audio chunk in milliseconds
-        model_name: Name of the Whisper model to use
-    """
-    openai_api_key = os.getenv("OPENAI_API_KEY")
-    if not openai_api_key:
-        error_msg = "OPENAI_API_KEY environment variable is not set. Cloud transcription requires an OpenAI API key."
-        logger.error(error_msg)
-        await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
-        raise ValueError(error_msg)
-        
-    try:
-        # Verify file exists
-        if not os.path.exists(audio_file_path):
-            error_msg = f"Audio file not found: {audio_file_path}"
-            logger.error(error_msg)
+            # Try to send a final error status via SSE queue
             await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
-            raise FileNotFoundError(error_msg)
-            
-        # Load audio file
-        audio = AudioSegment.from_file(audio_file_path)
-        total_chunks = math.ceil(len(audio) / chunk_duration_ms)
-        segments = []
-        full_text = ""
-         
-        await status_queue.put(json.dumps({
-            "type": "status",
-            "content": f"Starting cloud transcription with Whisper model: {model_name}"
-        }))
-        
-        # Extract video ID for timestamp links
-        video_id = youtube_video_url.split('v=')[1].split('&')[0]
-        
-        async with aiohttp.ClientSession() as session:
-            for i in range(total_chunks):
-                chunk_num = i + 1
-                await status_queue.put(json.dumps({
-                    "type": "status",
-                    "content": f"Processing chunk {chunk_num}/{total_chunks} using cloud API"
-                }))
-                
-                start_ms = i * chunk_duration_ms
-                end_ms = min((i + 1) * chunk_duration_ms, len(audio))
-                chunk = audio[start_ms:end_ms]
-                
-                # Save chunk to temporary file
-                with tempfile.NamedTemporaryFile(suffix='.mp3', delete=False) as temp_file:
-                    chunk_path = temp_file.name
-                    chunk.export(chunk_path, format='mp3')
+            logger.info(f"QUEUE PUT (Critical Error): {error_msg}")
 
-                try:
-                    # Prepare form data
-                    form = aiohttp.FormData()
-                    form.add_field(
-                        'file',
-                        open(chunk_path, 'rb'),
-                        filename='chunk.mp3',
-                        content_type='audio/mp3'
-                    )
-                    form.add_field('model', 'whisper-1')  # OpenAI's Whisper model
-                    form.add_field('response_format', 'verbose_json')
-                    form.add_field('language', 'en')
+            # --- ADDED: Send safe_to_disconnect AFTER error message ---
+            await asyncio.sleep(0.5) # Small delay
+            await status_queue.put(json.dumps({
+                "type": "connection_status",
+                "content": "safe_to_disconnect",
+                "timestamp": datetime.now().isoformat()
+            }))
+            logger.info("Sent final safe_to_disconnect signal (error path)")
+            # --- END ADDED ---
 
-                    # Make API request to OpenAI
-                    headers = {"Authorization": f"Bearer {openai_api_key}"}
-                    async with session.post(
-                        "https://api.openai.com/v1/audio/transcriptions",
-                        data=form,
-                        headers=headers
-                    ) as response:
-                        if response.status != 200:
-                            error_text = await response.text()
-                            error_msg = f"Error in cloud transcription chunk {chunk_num}: {error_text}"
-                            logger.error(error_msg)
-                            await status_queue.put(json.dumps({
-                                "type": "error",
-                                "content": error_msg
-                            }))
-                            continue
-                        
-                        result = await response.json()
-                        
-                        # Process segments from the result
-                        if 'segments' in result:
-                            for segment in result['segments']:
-                                # Adjust timestamps to account for chunk position
-                                segment_start = segment['start'] + (start_ms / 1000)
-                                segment_end = segment['end'] + (start_ms / 1000)
-                                
-                                # Create timestamped YouTube URL
-                                timestamp_seconds = int(segment_start)
-                                watch_url = f"https://www.youtube.com/watch?v={video_id}&t={timestamp_seconds}"
-                                
-                                segment_dict = {
-                                    'watch_url': f'[Link](=HYPERLINK("{watch_url}", "{watch_url}"))',
-                                    'video_id': video_id,
-                                    'id': len(segments),
-                                    'start': format_timestamp(segment_start),
-                                    'end': format_timestamp(segment_end),
-                                    'text': segment['text'].strip()
-                                }
-                                
-                                segments.append(segment_dict)
-                                full_text += segment_dict['text'] + " "
-                                
-                                # Stream each segment immediately
-                                await transcription_queue.put(json.dumps({
-                                    "type": "transcription_segment",
-                                    "content": f"| [{segment_dict['start']}]({watch_url}) | {video_id} | {len(segments)} | {segment_dict['start']} | {segment_dict['end']} | {segment_dict['text']} |"
-                                }))
-                                
-                                logger.info(f"Streamed segment: {segment_dict['text'][:50]}...")
-                        else:
-                            # Fallback if no segments in response
-                            text = result.get('text', '').strip()
-                            if text:
-                                # Create timestamped YouTube URL for the chunk
-                                timestamp_seconds = int(start_ms / 1000)
-                                watch_url = f"https://www.youtube.com/watch?v={video_id}&t={timestamp_seconds}"
-                                
-                                segment_dict = {
-                                    'watch_url': f'[Link](=HYPERLINK("{watch_url}", "{watch_url}"))',
-                                    'video_id': video_id,
-                                    'id': len(segments),
-                                    'start': format_timestamp(start_ms / 1000),
-                                    'end': format_timestamp(end_ms / 1000),
-                                    'text': text
-                                }
-                                segments.append(segment_dict)
-                                full_text += text + " "
-                                
-                                # Stream the text immediately with timestamp and link
-                                await transcription_queue.put(json.dumps({
-                                    "type": "transcription_segment",
-                                    "content": f"| [{segment_dict['start']}]({watch_url}) | {video_id} | {len(segments)} | {segment_dict['start']} | {segment_dict['end']} | {text} |"
-                                }))
-                                
-                                logger.info(f"Streamed text: {text[:50]}...")
-                                
-                except Exception as e:
-                    error_msg = f"Error processing chunk {chunk_num}: {str(e)}"
-                    logger.error(error_msg)
-                    await status_queue.put(json.dumps({
-                        "type": "error", 
-                        "content": error_msg
-                    }))
-                    continue
-                
-                # Clean up chunk file
-                try:
-                    os.remove(chunk_path)
-                except Exception as e:
-                    logger.warning(f"Failed to remove temp file: {e}")
+        except Exception as status_error:
+            # Log if sending the error message itself fails
+            logger.error(f"Failed to send final critical error status/disconnect signal to queue: {str(status_error)}")
 
-                # Add a small delay between chunks to avoid rate limits
-                await asyncio.sleep(1)
-
-        # Create final markdown document
-        title = f"# Transcription for Video: [{video_id}](https://www.youtube.com/watch?v={video_id})\n\n"
-        table_header = "| watch_url | video_id | id | start | end | text |\n"
-        table_separator = "|---|---|---|---|---|\n"
-        
-        # Format segments into markdown table
-        formatted_text = ""
-        for segment in segments:
-            formatted_text += (
-                f"| {segment['watch_url']} | {segment['video_id']} | "
-                f"{segment['id']} | {segment['start']} | {segment['end']} | "
-                f"{segment['text']} |\n"
-            )
-        
-        full_text = title + table_header + table_separator + formatted_text
-
-        # Send final complete message with full text
-        await transcription_queue.put(json.dumps({
-            "type": "transcription_complete",
-            "content": full_text
-        }))
-        
-        await status_queue.put(json.dumps({
-            "type": "status",
-            "content": "Cloud transcription completed successfully"
-        }))
-        
-        logger.info("Successfully combined all transcription chunks")
-        return segments, full_text
-
-    except Exception as e:
-        error_msg = f"Error in cloud transcription: {str(e)}"
-        logger.error(error_msg)
-        await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
-        raise
-
-def get_best_thumbnail(thumbnails):
-    """
-    Get the highest resolution thumbnail from the list of thumbnails.
-    Returns tuple of (url, width, height)
-    """
-    if not thumbnails:
-        return None, None, None
-        
-    # Sort thumbnails by resolution (width * height) in descending order
-    sorted_thumbnails = sorted(
-        [t for t in thumbnails if t.get('width') and t.get('height')],
-        key=lambda x: (x.get('width', 0) * x.get('height', 0)),
-        reverse=True
-    )
-    
-    if sorted_thumbnails:
-        best = sorted_thumbnails[0]
-        return best.get('url'), best.get('width'), best.get('height')
-    
-    # Fallback to first thumbnail if no resolution info
-    return thumbnails[0].get('url'), None, None
-
-async def extract_video_info(youtube_video_url: str):
-    try:
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'extract_flat': False,
-            'writesubtitles': True,  # Enable subtitle extraction
-            'writeautomaticsub': True,  # Enable automatic subtitle extraction
+        # Return error details
+        return {
+            "status": "error",
+            "message": error_msg,
+            "step": "unknown", # Indicate the error was caught at the top level
+            "duration_seconds": total_duration
         }
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            info = await asyncio.get_event_loop().run_in_executor(
-                None, lambda: ydl.extract_info(youtube_video_url, download=False)
-            )
-            
-            # Get best thumbnail
-            thumbnail_url, thumb_width, thumb_height = get_best_thumbnail(info.get('thumbnails', []))
-            
-            # Extract additional metadata
-            video_info = {
-                'id': info.get('id'),
-                'title': info.get('title'),
-                'description': info.get('description'),
-                'duration': info.get('duration'),
-                'view_count': info.get('view_count'),
-                'like_count': info.get('like_count'),
-                'channel': info.get('channel'),
-                'channel_id': info.get('channel_id'),
-                'channel_url': info.get('channel_url'),
-                'channel_follower_count': info.get('channel_follower_count'),
-                'upload_date': info.get('upload_date'),
-                'categories': info.get('categories', []),
-                'tags': info.get('tags', []),
-                'thumbnails': info.get('thumbnails', []),
-                'best_thumbnail': {
-                    'url': thumbnail_url,
-                    'width': thumb_width,
-                    'height': thumb_height
-                },
-                'chapters': info.get('chapters', []),  # Video chapters/timestamps
-                'subtitles': info.get('subtitles', {}),  # Available subtitles
-                'automatic_captions': info.get('automatic_captions', {}),  # Auto-generated captions
-                'live_status': info.get('live_status'),
-                'watch_url': info.get('webpage_url') or youtube_video_url,
-                'age_limit': info.get('age_limit'),
-                'availability': info.get('availability'),
-                'comment_count': info.get('comment_count'),
-                'format': info.get('format'),  # Current video format
-                'formats': info.get('formats', []),  # All available formats
-                'language': info.get('language'),
-                'is_live': info.get('is_live'),
-                'was_live': info.get('was_live'),
-                'playable_in_embed': info.get('playable_in_embed'),
-                'release_timestamp': info.get('release_timestamp'),
-                'release_date': info.get('release_date'),
-            }
-            
-            # Extract chapter information in a more usable format
-            if video_info['chapters']:
-                video_info['formatted_chapters'] = [{
-                    'title': chapter.get('title'),
-                    'start_time': chapter.get('start_time'),
-                    'end_time': chapter.get('end_time'),
-                    'url': f"{video_info['watch_url']}&t={int(chapter.get('start_time'))}s"
-                } for chapter in video_info['chapters']]
-            
-            return video_info
-            
-    except Exception as e:
-        logger.error(f"Error extracting video info: {str(e)}")
-        raise
 
-async def download_video_clip(youtube_url: str, start_time: int, end_time: int, output_path: str):
-    """
-    Download a specific clip from a video using timestamps
-    start_time and end_time should be in seconds
-    """
-    try:
-        ydl_opts = {
-            'quiet': True,
-            'no_warnings': True,
-            'format': 'best',  # You can modify this to get specific quality
-            'download_ranges': lambda info: [[start_time, end_time]],
-            'force_keyframes_at_cuts': True,  # For more precise cuts
-            'outtmpl': output_path,
-            'postprocessor_args': [
-                'ffmpeg', '-ss', str(start_time),
-                '-t', str(end_time - start_time)
-            ],
+# --- Commented out: Unused Audio Chunking Function (Appears OpenAI related) ---
+"""
+async def process_audio_in_chunks(audio_file_path: str, chunk_duration_ms: int = 300000) -> str:
+    # This function seems designed for chunking audio and sending to an API (like OpenAI Whisper API),
+    # potentially with pydub for manipulation. It is not currently called by the main process_video flow
+    # and requires an API key (e.g., openai_api_key) and proper endpoint logic.
+    # Keeping it commented out for reference if needed later.
+    logger.warning(f"Function 'process_audio_in_chunks' is defined but not used in the current workflow.")
+    # ... (Implementation using AudioSegment, tempfile, aiohttp to call an API) ...
+    pass
+"""
+
+# --- Optional: Add functions like download_video_clip, download_chapter if needed ---
+# async def download_video_clip(...): ...
+# async def download_chapter(...): ...
+
+
+# --- Example Usage (if running this script directly) ---
+if __name__ == '__main__':
+    # This block allows testing the functions directly if needed.
+    # Requires setting up dummy queues and potentially hardcoding values.
+    print("Script running in main execution block.")
+
+    async def run_test():
+        # Example: Test video info extraction
+        test_url = "https://www.youtube.com/watch?v=dQw4w9WgXcQ" # Example URL
+        print(f"Testing video info extraction for: {test_url}")
+        try:
+            info = await extract_video_info(test_url)
+            print("Video Info:")
+            # print(json.dumps(info, indent=2)) # Pretty print full info
+            print(f"  Title: {info.get('title')}")
+            print(f"  ID: {info.get('id')}")
+            print(f"  Duration: {info.get('duration_formatted')}")
+            print(f"  Channel: {info.get('channel')}")
+            print(f"  Thumbnail: {info.get('best_thumbnail', {}).get('url')}")
+        except Exception as e:
+            print(f"Error during info extraction test: {e}")
+
+        # Example: Set up dummy queues for process_video test
+        status_q = asyncio.Queue()
+        transcription_q = asyncio.Queue()
+
+        async def queue_reader(q: asyncio.Queue, name: str):
+            """Helper to read messages from a queue for testing."""
+            while True:
+                msg_json = await q.get()
+                try:
+                    msg = json.loads(msg_json)
+                    print(f"<- QUEUE [{name}]: Type='{msg.get('type')}', Content='{str(msg.get('content'))[:100]}...'")
+                except json.JSONDecodeError:
+                     print(f"<- QUEUE [{name}]: Received non-JSON message: {msg_json}")
+                q.task_done() # Mark message as processed
+
+        # Start reader tasks (run in background)
+        status_reader_task = asyncio.create_task(queue_reader(status_q, "Status"))
+        transcription_reader_task = asyncio.create_task(queue_reader(transcription_q, "Transcription"))
+
+        # --- Configure and run process_video test ---
+        test_output = os.path.join(os.getcwd(), "test_output")
+        test_obsidian = os.path.join(os.getcwd(), "test_obsidian")
+        print(f"\nTesting process_video (will download & transcribe)...")
+        print(f"Output will go to: {test_output}")
+        print(f"Obsidian output to: {test_obsidian}")
+
+        # Ensure test directories exist
+        os.makedirs(test_output, exist_ok=True)
+        os.makedirs(test_obsidian, exist_ok=True)
+
+        test_config = {
+            "model": "faster-whisper", # Use local model for test
+            "use_groq": False
         }
-        
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            await asyncio.get_event_loop().run_in_executor(
-                None, lambda: ydl.download([youtube_url])
-            )
-            
-        return output_path
-    except Exception as e:
-        logger.error(f"Error downloading clip: {str(e)}")
-        raise
 
-async def download_chapter(youtube_url: str, chapter_index: int, output_dir: str):
-    """
-    Download a specific chapter from a video
-    """
-    try:
-        # First get video info to get chapter data
-        video_info = await extract_video_info(youtube_url)
-        
-        if not video_info.get('chapters'):
-            raise ValueError("No chapters found in this video")
-            
-        if chapter_index >= len(video_info['chapters']):
-            raise ValueError(f"Chapter index {chapter_index} out of range")
-            
-        chapter = video_info['chapters'][chapter_index]
-        start_time = chapter['start_time']
-        end_time = chapter['end_time']
-        chapter_title = chapter['title']
-        
-        # Create sanitized filename
-        safe_title = clean_filename(chapter_title)
-        output_path = os.path.join(output_dir, f"{safe_title}.mp4")
-        
-        return await download_video_clip(youtube_url, start_time, end_time, output_path)
-        
-    except Exception as e:
-        logger.error(f"Error downloading chapter: {str(e)}")
-        raise
+        try:
+            result = await process_video(
+                youtube_video_url=test_url,
+                obsidian_dir=test_obsidian,
+                status_queue=status_q,
+                transcription_queue=transcription_q,
+                output_folder=test_output,
+                model_config=test_config
+            )
+            print("\n--- process_video Test Result ---")
+            print(json.dumps(result, indent=2))
+            print("--- End process_video Test ---")
+
+        except Exception as e:
+            print(f"Error during process_video test: {e}")
+        finally:
+             # Wait briefly for queues to process final messages (adjust time if needed)
+             await asyncio.sleep(2)
+             # Cancel reader tasks
+             status_reader_task.cancel()
+             transcription_reader_task.cancel()
+             try:
+                 await asyncio.gather(status_reader_task, transcription_reader_task, return_exceptions=True)
+             except asyncio.CancelledError:
+                 print("Queue reader tasks cancelled.")
+
+    # Run the async test function
+    asyncio.run(run_test())
+
+# --- END OF REFACTORED Transcribe1.py ---

@@ -5,6 +5,7 @@ class QueueManager:
     def __init__(self):
         self.status_queue = asyncio.Queue()
         self.transcription_queue = asyncio.Queue()
+        self.active_transcriptions = set()  # Track active transcription processes
         self._running = False
 
     async def start(self):
@@ -40,4 +41,17 @@ class QueueManager:
         """Get a transcription update from the transcription queue"""
         if self._running:
             return await self.transcription_queue.get()
-        return None 
+        return None
+
+    def add_active_transcription(self, video_id: str):
+        """Add a video ID to the active transcriptions set"""
+        self.active_transcriptions.add(video_id)
+
+    def remove_active_transcription(self, video_id: str):
+        """Remove a video ID from the active transcriptions set"""
+        if video_id in self.active_transcriptions:
+            self.active_transcriptions.remove(video_id)
+
+    def has_active_transcriptions(self) -> bool:
+        """Check if there are any active transcriptions"""
+        return len(self.active_transcriptions) > 0

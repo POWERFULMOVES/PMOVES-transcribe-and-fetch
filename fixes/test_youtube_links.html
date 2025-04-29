@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>YouTube Links Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .test-case {
+            border: 1px solid #ddd;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        h1, h2 {
+            color: #333;
+        }
+        a {
+            color: #0066cc;
+            text-decoration: underline;
+        }
+        a:hover {
+            text-decoration: none;
+        }
+        .flex {
+            display: flex;
+            align-items: center;
+        }
+        .mr-1 {
+            margin-right: 0.25rem;
+        }
+        .text-blue-600 {
+            color: #2563eb;
+        }
+    </style>
+</head>
+<body>
+    <h1>YouTube Links Test</h1>
+    
+    <div class="test-case">
+        <h2>Test Case 1: Direct HTML Link</h2>
+        <p>This is a direct HTML link with the timestamp preserved:</p>
+        <a href="https://www.youtube.com/watch?v=iG1Vxj2L_ZE&t=322" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline hover:no-underline flex items-center">
+            <span class="mr-1">🎬</span>Watch Video
+        </a>
+    </div>
+    
+    <div class="test-case">
+        <h2>Test Case 2: Markdown-style Link</h2>
+        <p>This is how our code should convert markdown-style links:</p>
+        <div id="markdown-link">
+            [Watch Here](https://www.youtube.com/watch?v=iG1Vxj2L_ZE&t=322)
+        </div>
+        <p>After processing, it should look like:</p>
+        <a href="https://www.youtube.com/watch?v=iG1Vxj2L_ZE&t=322" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline hover:no-underline flex items-center">
+            <span class="mr-1">🎬</span>Watch Here
+        </a>
+    </div>
+    
+    <div class="test-case">
+        <h2>Test Case 3: Analysis Result Format</h2>
+        <p>This simulates how the link appears in analysis results:</p>
+        <div id="analysis-result">
+            ### Search Results Summary ###<br>
+            Total Results: 1<br>
+            Source: Video Transcriptions<br>
+            Relevance Score: 0.419<br>
+            Detailed Result:<br>
+            - Title: Untitled<br>
+            - Content ID: iG1Vxj2L_ZE<br>
+            - Timestamp: 00:05:22 to 00:05:35<br>
+            - URL: [Watch Here](https://www.youtube.com/watch?v=iG1Vxj2L_ZE&t=322)
+        </div>
+        <p>After processing, the URL line should look like:</p>
+        <div>
+            - URL: <a href="https://www.youtube.com/watch?v=iG1Vxj2L_ZE&t=322" target="_blank" rel="noopener noreferrer" class="text-blue-600 underline hover:no-underline flex items-center">
+                <span class="mr-1">🎬</span>Watch Here
+            </a>
+        </div>
+    </div>
+    
+    <script>
+        // This is just for demonstration purposes
+        // In the real application, the AnalysisFormatter component would process the content
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('Test page loaded. In a real application, the AnalysisFormatter component would process these links.');
+        });
+    </script>
+</body>
+</html>

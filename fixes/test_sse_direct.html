@@ -1,0 +1,390 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SSE Direct Test</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            line-height: 1.6;
+        }
+        h1 {
+            color: #333;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+        .card {
+            border: 1px solid #ddd;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+            border-bottom: 1px solid #eee;
+            padding-bottom: 10px;
+        }
+        .card-title {
+            font-size: 18px;
+            font-weight: bold;
+            margin: 0;
+        }
+        .badge {
+            padding: 4px 8px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: bold;
+        }
+        .badge-success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .badge-warning {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        .badge-danger {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .log-container {
+            height: 300px;
+            overflow-y: auto;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        .segment-container {
+            height: 400px;
+            overflow-y: auto;
+            background-color: #f8f9fa;
+            border-radius: 4px;
+            padding: 10px;
+        }
+        .segment {
+            padding: 10px;
+            margin-bottom: 10px;
+            border-radius: 4px;
+            background-color: #e9ecef;
+            border-left: 4px solid #6c757d;
+        }
+        .segment-header {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            color: #6c757d;
+            margin-bottom: 5px;
+        }
+        .segment-text {
+            font-size: 16px;
+        }
+        .button {
+            padding: 8px 16px;
+            background-color: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        .button:hover {
+            background-color: #0069d9;
+        }
+        .button:disabled {
+            background-color: #6c757d;
+            cursor: not-allowed;
+        }
+        .status-text {
+            font-size: 14px;
+            margin-left: 10px;
+        }
+        .error {
+            color: #dc3545;
+            margin-top: 10px;
+            padding: 10px;
+            background-color: #f8d7da;
+            border-radius: 4px;
+        }
+        .counter {
+            font-size: 12px;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+    </style>
+</head>
+<body>
+    <h1>SSE Direct Test</h1>
+    
+    <div class="card">
+        <div class="card-header">
+            <h2 class="card-title">Connection Status</h2>
+            <span id="connection-status" class="badge badge-warning">Disconnected</span>
+        </div>
+        <div>
+            <button id="connect-button" class="button">Connect to SSE</button>
+            <button id="disconnect-button" class="button" disabled>Disconnect</button>
+            <span id="status-text" class="status-text">Not connected</span>
+        </div>
+        <div id="error-container" class="error" style="display: none;"></div>
+        <div class="counter">
+            <div>Total Messages: <span id="total-count">0</span></div>
+            <div>Segments: <span id="segment-count">0</span></div>
+            <div>Status Updates: <span id="status-count">0</span></div>
+            <div>Errors: <span id="error-count">0</span></div>
+        </div>
+    </div>
+    
+    <div class="container">
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">Log Messages</h2>
+                <button id="clear-log" class="button">Clear</button>
+            </div>
+            <div id="log-container" class="log-container"></div>
+        </div>
+        
+        <div class="card">
+            <div class="card-header">
+                <h2 class="card-title">Transcription Segments</h2>
+                <button id="clear-segments" class="button">Clear</button>
+            </div>
+            <div id="segment-container" class="segment-container"></div>
+        </div>
+    </div>
+    
+    <script>
+        // Configuration
+        const BACKEND_URL = 'http://localhost:8000'; // Update this to match your backend URL
+        const SSE_ENDPOINT = '/combined-updates';
+        
+        // DOM Elements
+        const connectButton = document.getElementById('connect-button');
+        const disconnectButton = document.getElementById('disconnect-button');
+        const connectionStatus = document.getElementById('connection-status');
+        const statusText = document.getElementById('status-text');
+        const errorContainer = document.getElementById('error-container');
+        const logContainer = document.getElementById('log-container');
+        const segmentContainer = document.getElementById('segment-container');
+        const clearLogButton = document.getElementById('clear-log');
+        const clearSegmentsButton = document.getElementById('clear-segments');
+        const totalCountElement = document.getElementById('total-count');
+        const segmentCountElement = document.getElementById('segment-count');
+        const statusCountElement = document.getElementById('status-count');
+        const errorCountElement = document.getElementById('error-count');
+        
+        // State
+        let eventSource = null;
+        let messageCount = 0;
+        let segmentCount = 0;
+        let statusCount = 0;
+        let errorCount = 0;
+        
+        // Helper function to log messages
+        function log(message, isError = false) {
+            const timestamp = new Date().toISOString();
+            const logElement = document.createElement('div');
+            logElement.textContent = `[${timestamp}] ${message}`;
+            if (isError) {
+                logElement.style.color = '#dc3545';
+            }
+            logContainer.appendChild(logElement);
+            logContainer.scrollTop = logContainer.scrollHeight;
+            console.log(`[${timestamp}] ${message}`);
+        }
+        
+        // Helper function to add a segment
+        function addSegment(segment) {
+            const segmentElement = document.createElement('div');
+            segmentElement.className = 'segment';
+            
+            const headerElement = document.createElement('div');
+            headerElement.className = 'segment-header';
+            
+            const timeElement = document.createElement('span');
+            const startTime = segment.start_time || segment.start || 0;
+            const endTime = segment.end_time || segment.end || 0;
+            timeElement.textContent = `${startTime.toFixed(2)}s - ${endTime.toFixed(2)}s`;
+            
+            const idElement = document.createElement('span');
+            idElement.textContent = `ID: ${segment.id || 'N/A'}`;
+            
+            headerElement.appendChild(timeElement);
+            headerElement.appendChild(idElement);
+            
+            const textElement = document.createElement('div');
+            textElement.className = 'segment-text';
+            textElement.textContent = segment.text || 'No text';
+            
+            segmentElement.appendChild(headerElement);
+            segmentElement.appendChild(textElement);
+            
+            segmentContainer.appendChild(segmentElement);
+            segmentContainer.scrollTop = segmentContainer.scrollHeight;
+        }
+        
+        // Connect to SSE endpoint
+        function connectSSE() {
+            if (eventSource) {
+                log('Already connected, disconnecting first...');
+                eventSource.close();
+                eventSource = null;
+            }
+            
+            log(`Connecting to SSE endpoint: ${BACKEND_URL}${SSE_ENDPOINT}`);
+            connectionStatus.textContent = 'Connecting...';
+            connectionStatus.className = 'badge badge-warning';
+            statusText.textContent = 'Connecting...';
+            
+            try {
+                eventSource = new EventSource(`${BACKEND_URL}${SSE_ENDPOINT}`, {
+                    withCredentials: true
+                });
+                
+                // Handle connection open
+                eventSource.onopen = (event) => {
+                    log('SSE connection opened successfully');
+                    connectionStatus.textContent = 'Connected';
+                    connectionStatus.className = 'badge badge-success';
+                    statusText.textContent = 'Connected to SSE endpoint';
+                    connectButton.disabled = true;
+                    disconnectButton.disabled = false;
+                    errorContainer.style.display = 'none';
+                };
+                
+                // Handle messages
+                eventSource.onmessage = (event) => {
+                    messageCount++;
+                    totalCountElement.textContent = messageCount;
+                    
+                    try {
+                        // Try to parse the message data
+                        let data;
+                        try {
+                            // Handle 'data: ' prefix if present
+                            const jsonStr = event.data.startsWith('data: ') ? event.data.slice(6).trim() : event.data.trim();
+                            data = JSON.parse(jsonStr);
+                        } catch (parseError) {
+                            log(`Error parsing message: ${parseError.message}`, true);
+                            log(`Raw message data: ${event.data}`, true);
+                            errorCount++;
+                            errorCountElement.textContent = errorCount;
+                            return;
+                        }
+                        
+                        // Process different message types
+                        if (data.type === 'transcription_segment') {
+                            segmentCount++;
+                            segmentCountElement.textContent = segmentCount;
+                            
+                            const content = data.content || {};
+                            log(`Received transcription segment #${segmentCount}: ${JSON.stringify(content).substring(0, 50)}...`);
+                            
+                            // Validate segment data
+                            if (!content.text) {
+                                log(`WARNING: Segment has no text property: ${JSON.stringify(content)}`, true);
+                            } else {
+                                // Add segment to UI
+                                addSegment(content);
+                            }
+                        } else if (data.type === 'status') {
+                            statusCount++;
+                            statusCountElement.textContent = statusCount;
+                            log(`Received status update: ${JSON.stringify(data.content)}`);
+                        } else if (data.type === 'transcription_complete') {
+                            log(`Received transcription_complete message: ${JSON.stringify(data)}`);
+                        } else {
+                            log(`Received other message type (${data.type}): ${JSON.stringify(data)}`);
+                        }
+                    } catch (error) {
+                        log(`Error processing message: ${error.message}`, true);
+                        errorCount++;
+                        errorCountElement.textContent = errorCount;
+                    }
+                };
+                
+                // Handle errors
+                eventSource.onerror = (error) => {
+                    log(`SSE connection error: ${error.message || 'Unknown error'}`, true);
+                    errorCount++;
+                    errorCountElement.textContent = errorCount;
+                    
+                    connectionStatus.textContent = 'Error';
+                    connectionStatus.className = 'badge badge-danger';
+                    statusText.textContent = 'Connection error';
+                    
+                    errorContainer.textContent = `Connection error: ${error.message || 'Unknown error'}`;
+                    errorContainer.style.display = 'block';
+                    
+                    // Check if the connection is closed
+                    if (eventSource.readyState === 2) { // CLOSED
+                        log('Connection is in CLOSED state', true);
+                        connectButton.disabled = false;
+                        disconnectButton.disabled = true;
+                        eventSource = null;
+                    }
+                };
+            } catch (error) {
+                log(`Error creating EventSource: ${error.message}`, true);
+                errorContainer.textContent = `Error creating EventSource: ${error.message}`;
+                errorContainer.style.display = 'block';
+                connectionStatus.textContent = 'Error';
+                connectionStatus.className = 'badge badge-danger';
+                statusText.textContent = 'Failed to connect';
+                connectButton.disabled = false;
+                disconnectButton.disabled = true;
+            }
+        }
+        
+        // Disconnect from SSE endpoint
+        function disconnectSSE() {
+            if (eventSource) {
+                log('Disconnecting from SSE endpoint');
+                eventSource.close();
+                eventSource = null;
+                
+                connectionStatus.textContent = 'Disconnected';
+                connectionStatus.className = 'badge badge-warning';
+                statusText.textContent = 'Manually disconnected';
+                connectButton.disabled = false;
+                disconnectButton.disabled = true;
+            }
+        }
+        
+        // Clear log
+        function clearLog() {
+            logContainer.innerHTML = '';
+            log('Log cleared');
+        }
+        
+        // Clear segments
+        function clearSegments() {
+            segmentContainer.innerHTML = '';
+            log('Segments cleared');
+        }
+        
+        // Event listeners
+        connectButton.addEventListener('click', connectSSE);
+        disconnectButton.addEventListener('click', disconnectSSE);
+        clearLogButton.addEventListener('click', clearLog);
+        clearSegmentsButton.addEventListener('click', clearSegments);
+        
+        // Initialize
+        log('Test page loaded. Click "Connect to SSE" to start.');
+    </script>
+</body>
+</html>

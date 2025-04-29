@@ -99,7 +99,7 @@ export function SearchResultsTable({ results, onViewDetails }) {
               
               return (
                 <TableRow 
-                  key={`${result.content_id}-${result.segment_id || index}`}
+                  key={`table-row-${result.content_id}-${result.segment_id || index}-${Math.random().toString(36).substr(2, 5)}`}
                   className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} transition-all duration-300 hover:bg-blue-50/30`}
                   style={{ 
                     opacity: animateIn ? 1 : 0,
@@ -234,7 +234,13 @@ export function SearchResultDetail({ result, onClose }) {
         <div className="p-4 overflow-y-auto flex-grow">
           {/* Header info */}
           <div className="mb-4 animate-fadeIn" style={{ animationDelay: '0.1s' }}>
-            <h4 className="font-medium mb-2 text-lg">{result.title || 'Untitled Result'}</h4>
+            <h4 className="font-medium mb-2 text-lg">
+              {result.title || (result.source === 'video_transcriptions' ? 
+                `Video Transcript: ${result.content_id || 'Unknown'}` : 
+                result.source === 'document_embeddings' ? 
+                `Document: ${result.content_id || 'Unknown'}` : 
+                `Result from ${result.content_id || 'unknown source'}`)}
+            </h4>
             <div className="flex flex-wrap gap-2 mb-2">
               <ScoreBadge score={result.similarity} />
               <MethodBadge method={result.search_method} />

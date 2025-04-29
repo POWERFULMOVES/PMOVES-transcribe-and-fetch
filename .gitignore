@@ -61,3 +61,6 @@ package-lock.json
 yarn.lock
 pmoves-v1-ref
 pmoves-v1-ref
+
+# Ignore fixes folder
+fixes/

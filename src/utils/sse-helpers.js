@@ -16,6 +16,13 @@ export function parseSseData(data) {
       return data;
     }
     
+    // Handle SSE format with "data: " prefix
+    if (typeof data === 'string' && data.startsWith('data: ')) {
+      // Extract the JSON part after "data: "
+      const jsonStr = data.substring(6).trim();
+      return JSON.parse(jsonStr);
+    }
+    
     // Try to parse as JSON
     return JSON.parse(data);
   } catch (e) {
@@ -26,29 +33,50 @@ export function parseSseData(data) {
 }
 
 /**
- * Create an EventSource with error handling
+ * Create an EventSource with error handling and reconnection logic
  * @param {string} url - The SSE endpoint URL
  * @param {function} onMessage - Callback for message events
  * @param {function} onError - Callback for error events
  * @returns {EventSource} The configured EventSource object
  */
 export function createSafeEventSource(url, onMessage, onError) {
-  const eventSource = new EventSource(url);
+  console.log('Creating SSE connection to:', url);
   
-  eventSource.onmessage = (event) => {
-    try {
-      const data = parseSseData(event.data);
-      onMessage(data);
-    } catch (e) {
-      console.error('Error handling SSE message:', e);
-      if (onError) onError(e);
-    }
-  };
-  
-  eventSource.onerror = (error) => {
-    console.error('SSE connection error:', error);
+  try {
+    const eventSource = new EventSource(url);
+    
+    eventSource.onmessage = (event) => {
+      try {
+        console.log('Raw SSE message received:', event.data);
+        const data = parseSseData(event.data);
+        onMessage(data);
+      } catch (e) {
+        console.error('Error handling SSE message:', e);
+        if (onError) onError(e);
+      }
+    };
+    
+    eventSource.onerror = (error) => {
+      // Check if the EventSource is closed (readyState === 2)
+      // This is a normal part of the lifecycle when the connection is closed intentionally
+      if (eventSource.readyState === 2) {
+        console.log('SSE connection closed');
+        return; // Don't treat normal closures as errors
+      }
+      
+      // Only log and propagate actual errors
+      console.error('SSE connection error:', error);
+      if (onError) onError(error);
+    };
+    
+    eventSource.onopen = () => {
+      console.log('SSE connection opened successfully');
+    };
+    
+    return eventSource;
+  } catch (error) {
+    console.error('Failed to create EventSource:', error);
     if (onError) onError(error);
-  };
-  
-  return eventSource;
+    return null;
+  }
 }

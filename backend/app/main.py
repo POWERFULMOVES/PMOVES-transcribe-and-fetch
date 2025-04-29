@@ -697,35 +697,56 @@ async def shutdown_event():
 
 # --- SSE Message Formatter ---
 def format_sse_message(message_type: str, content: Any, metadata: Optional[dict] = None) -> str:
-    """Formats a message dictionary into an SSE string."""
+    """Formats a message dictionary into an SSE string, ensuring content is serializable."""
     message = {
         "type": message_type,
-        "content": content,
-        "timestamp": datetime.now().isoformat()
+        "content": None, # Initialize content to None
+        "timestamp": datetime.now().isoformat(),
+        "id": str(time.time())  # Add a unique ID for each message
     }
     if metadata:
         message["metadata"] = metadata
+
+    # Attempt to make content serializable
+    serializable_content = None
+    if isinstance(content, (str, int, float, bool, type(None))):
+        serializable_content = content
+    elif isinstance(content, (dict, list)):
+        # Assume dicts/lists are already serializable (or will raise TypeError below)
+        serializable_content = content
+    elif hasattr(content, 'to_dict') and callable(content.to_dict):
+        try:
+            serializable_content = content.to_dict()
+        except Exception as e:
+            logger.warning(f"Error calling to_dict() for SSE content type {message_type}: {e}. Content: {str(content)[:100]}")
+            serializable_content = f"Error serializing object: {str(content)[:100]}"
+    elif hasattr(content, '__dict__'):
+         # Be cautious with __dict__, might contain non-serializable items
+         try:
+             # Attempt to serialize __dict__, might fail
+             json.dumps(content.__dict__)
+             serializable_content = content.__dict__
+         except TypeError:
+              logger.warning(f"Could not directly serialize __dict__ for SSE content type {message_type}. Sending string representation. Content: {str(content)[:100]}")
+              serializable_content = str(content) # Fallback to string representation
+    else:
+        # Fallback for other types
+        serializable_content = str(content)
+
+    message["content"] = serializable_content
+
     try:
-        # Ensure content is serializable
-        if isinstance(content, dict) or isinstance(content, list):
-            # Already a dict or list, no need to convert
-            pass
-        elif hasattr(content, 'to_dict') and callable(content.to_dict):
-            # Convert objects with to_dict method
-            message["content"] = content.to_dict()
-        elif hasattr(content, '__dict__'):
-            # Convert objects with __dict__ attribute
-            message["content"] = content.__dict__
-            
         json_str = json.dumps(message)
         return f"data: {json_str}\n\n"
     except TypeError as e:
-         logger.error(f"Failed to serialize SSE message content of type {message_type}: {e}. Content snippet: {str(content)[:100]}")
-         # Fallback: send error message or simplified content
+         logger.error(f"FINAL fallback: Failed to serialize SSE message of type {message_type}: {e}. Content: {str(serializable_content)[:100]}")
+         # Fallback: send error message
          error_content = {"error": "Failed to serialize message content", "original_type": message_type}
+         # Ensure the error message itself is serializable
          return f"data: {json.dumps({'type': 'error', 'content': error_content, 'timestamp': datetime.now().isoformat()})}\n\n"
 
 
+# --- Combined SSE Updates Endpoint ---
 # --- Combined SSE Updates Endpoint ---
 @app.get("/combined-updates", tags=["Status"])
 async def get_combined_updates(request: Request):
@@ -735,70 +756,249 @@ async def get_combined_updates(request: Request):
     logger.info(f"SSE connection requested from {client_host} (Origin: {origin}) for /combined-updates.")
 
     async def event_generator():
-        status_q = queue_manager.status_queue
-        transcription_q = queue_manager.transcription_queue
-        last_activity_time = time.time()
-        heartbeat_interval = 15
+        # --- ADD MORE LOGGING HERE ---
+        logger.info(f"SSE (Combined): GENERATOR ENTERED for {client_host}.")
+        try:
+            status_q = queue_manager.status_queue
+            transcription_q = queue_manager.transcription_queue
+            logger.info(f"SSE (Combined): Got queue references. TQ ID: {id(transcription_q)}, SQ ID: {id(status_q)}")
+            last_activity_time = time.time()
+            heartbeat_interval = 2 # Reduced to 2 seconds for more responsive connection
+            connection_timeout = 300 # Increased timeout to 5 minutes
+
+            queues = [transcription_q, status_q]  # Prioritize transcription queue by putting it first
+            logger.debug(f"SSE (Combined): Preparing initial tasks...")
+
+            # Create initial tasks to wait for items from each queue
+
+
+            # Create initial persistent tasks to wait for items from each queue
+            transcription_task = asyncio.create_task(transcription_q.get())
+            setattr(transcription_task, '_queue_name', 'transcription') # Mark task
+            status_task = asyncio.create_task(status_q.get())
+            setattr(status_task, '_queue_name', 'status') # Mark task
+            logger.debug(f"SSE (Combined): Created initial get() task {id(transcription_task)} for transcription queue")
+            logger.debug(f"SSE (Combined): Created initial get() task {id(status_task)} for status queue")
+
+            # Create initial heartbeat task
+            heartbeat_task = asyncio.create_task(asyncio.sleep(heartbeat_interval))
+            setattr(heartbeat_task, '_is_heartbeat', True) # Mark task
+            logger.debug(f"SSE (Combined): Created initial heartbeat task {id(heartbeat_task)}")
+
+            # Maintain a set of all active tasks
+            all_tasks = {transcription_task, status_task, heartbeat_task}
+            logger.info(f"SSE (Combined): Initialized {len(all_tasks)} persistent tasks. Entering main try block.")
+        except Exception as setup_err:
+            logger.error(f"SSE (Combined): ERROR DURING INITIAL SETUP: {setup_err}", exc_info=True)
+            # Try to yield an error message if possible, otherwise just log
+            try:
+                yield format_sse_message('error', f"SSE generator setup failed: {setup_err}")
+            except:
+                pass
+            return # Stop the generator if setup fails
 
         try:
-            yield format_sse_message("status", "SSE connection established")
+            logger.debug(f"SSE (Combined): Attempting to send connection established message...")
+            # Send a more detailed connection established message
+            connection_established_msg = format_sse_message(
+                "status",
+                "SSE connection established",
+                {"connection_id": str(time.time()), "server_time": datetime.now().isoformat()}
+            )
+            yield connection_established_msg
             last_activity_time = time.time()
 
-            while True:
-                update_sent = False
-                now = time.time()
+            # Send an immediate heartbeat to confirm connection is working
+            yield format_sse_message('heartbeat', 'initial_ping')
 
-                # Check queues (non-blocking)
+            # Send another heartbeat after a short delay to ensure the connection is stable
+            await asyncio.sleep(1)
+            yield format_sse_message('heartbeat', 'connection_check')
+
+            # Send a third heartbeat to really make sure the connection is stable
+            await asyncio.sleep(1)
+            yield format_sse_message('heartbeat', 'connection_check_2')
+
+            # --- Main Loop ---
+            while True: # This loop replaces the previous try/except structure
+                logger.debug(f"SSE (Combined): Entering new loop iteration for {client_host}")
+                # pending_tasks = [] # No longer needed here
+                # tasks_to_cancel_in_finally = set() # Use a set for efficient cancellation later - Not used, remove.
                 try:
-                    status_update = status_q.get_nowait()
-                    logger.debug(f"SSE (Combined): Sending status: {str(status_update)[:100]}...")
+                    # --- Wait for Activity ---
+                    # Wait for *any* task in the persistent set to complete
+                    logger.info(f"SSE (Combined): LOOP START - Waiting on {len(all_tasks)} persistent tasks.")
+                    done, pending = await asyncio.wait(
+                        all_tasks, # Wait on the persistent set
+                        return_when=asyncio.FIRST_COMPLETED,
+                        # No timeout here, rely on heartbeat task completion
+                    )
+                    logger.info(f"SSE (Combined): WAIT COMPLETED - Done: {len(done)}, Pending: {len(pending)}")
+                    # tasks_to_cancel_in_finally = pending # Store the actual pending tasks for finally block - Not used, remove.
+
+                    # --- Process ALL Completed Tasks ---
+
+
+                    for task in done:
+                        # --- Handle Heartbeat Task Completion ---
+                        # --- Handle Heartbeat Task Completion ---
+                        # Check if the completed task is the heartbeat task instance
+                        if getattr(task, '_is_heartbeat', False):
+                            logger.debug("SSE (Combined): Heartbeat task completed.")
+                            # Send a heartbeat ping
+                            try:
+                                yield format_sse_message('heartbeat', 'ping_interval')
+                                last_activity_time = time.time()
+                                logger.debug("SSE (Combined): Sent interval heartbeat.")
+                            except Exception as send_err:
+                                logger.error(f"Failed to send interval heartbeat: {send_err}. Closing connection.")
+                                raise # Re-raise to be caught by outer loop handler and break
+                            # Remove the completed heartbeat task
+                            all_tasks.remove(task)
+                            # Create a new heartbeat task and add it to the set
+                            new_heartbeat_task = asyncio.create_task(asyncio.sleep(heartbeat_interval))
+                            setattr(new_heartbeat_task, '_is_heartbeat', True) # Mark the new task
+                            all_tasks.add(new_heartbeat_task)
+                            logger.debug(f"SSE (Combined): Replaced completed heartbeat task with new task {id(new_heartbeat_task)}")
+                            continue # Go to next completed task
+
+                        # --- Handle Queue Task Completion ---
+                        # Determine which queue this task was for using the marked attribute
+                        original_queue = None
+                        queue_name = getattr(task, '_queue_name', None)
+
+                        if queue_name == 'transcription':
+                            original_queue = transcription_q
+                        elif queue_name == 'status':
+                            original_queue = status_q
+
+                        if original_queue is None:
+                            logger.error(f"SSE (Combined): Completed task {id(task)} is not a known queue task (missing _queue_name attribute). This is unexpected.")
+                            continue # Skip processing this task
+
+                        try:
+                            item = task.result() # Get the item from the queue
+                            logger.info(f"SSE (Combined): ITEM RETRIEVED from {queue_name} queue {id(original_queue)}. Type: {type(item).__name__}. Content: {str(item)[:100]}...")
+
+                            sse_msg = None
+                            if isinstance(item, str):
+                                try:
+                                    payload_dict = json.loads(item)
+                                    msg_type = payload_dict.get('type', 'transcription_segment' if original_queue == transcription_q else 'status')
+                                    msg_content = payload_dict.get('content', payload_dict)
+                                    sse_msg = format_sse_message(msg_type, msg_content)
+                                except json.JSONDecodeError:
+                                    logger.error(f"SSE (Combined): Failed to decode JSON from {queue_name} queue {id(original_queue)}: {item[:100]}...")
+                                    sse_msg = format_sse_message('error', f"Invalid data received from backend queue: {item[:100]}...")
+                                except Exception as format_err:
+                                    logger.error(f"SSE (Combined): Error formatting message after JSON decode: {format_err}", exc_info=True)
+                                    sse_msg = format_sse_message('error', f"Internal error formatting SSE message: {format_err}")
+                            else:
+                                logger.error(f"SSE (Combined): Received non-string item type '{type(item).__name__}' from {queue_name} queue {id(original_queue)}. Content: {str(item)[:100]}")
+                                sse_msg = format_sse_message('error', f"Invalid data type received from backend queue: {type(item).__name__}")
+
+                            if sse_msg:
+                                try:
+                                    yield sse_msg
+                                    last_activity_time = time.time()
+                                    logger.info(f"SSE SEND (Combined): {sse_msg.strip()[:150]}...")
+                                except Exception as send_err:
+                                    logger.error(f"Failed to send update to SSE client: {send_err}")
+                                    raise # Re-raise to be caught by outer loop handler and break
+                            else:
+                                logger.warning(f"SSE (Combined): No valid SSE message generated for item from {original_queue} queue.")
+
+                            original_queue.task_done()
+
+                            # Create a new get() task for this specific queue and replace the completed one
+                            # Remove the completed task
+                            all_tasks.remove(task)
+                            # Create a new get() task for this specific queue and add it back
+                            if original_queue == transcription_q:
+                                new_task = asyncio.create_task(transcription_q.get())
+                                setattr(new_task, '_queue_name', 'transcription') # Mark the new task
+                                all_tasks.add(new_task)
+                                logger.debug(f"SSE (Combined): Replaced completed transcription task with new task {id(new_task)}")
+                            elif original_queue == status_q:
+                                new_task = asyncio.create_task(status_q.get())
+                                setattr(new_task, '_queue_name', 'status') # Mark the new task
+                                all_tasks.add(new_task)
+                                logger.debug(f"SSE (Combined): Replaced completed status task with new task {id(new_task)}")
+
+                        except asyncio.CancelledError:
+                            logger.info(f"SSE (Combined): A queue get() task {id(task)} was cancelled.")
+                            # If cancelled, it's likely due to client disconnect, the outer finally will handle cleanup.
+                            # Do NOT recreate the task here if cancelled.
+                        except Exception as e:
+                            logger.error(f"SSE (Combined): Error processing completed task result for task {id(task)}: {e}", exc_info=True)
+                            try:
+                                yield format_sse_message('error', f"Internal SSE error processing task result: {str(e)}")
+                            except Exception as send_err:
+                                logger.error(f"Failed to send task processing error to SSE client: {send_err}")
+                                raise send_err # Re-raise to break the loop if sending error fails
+                            # Continue processing other tasks in 'done' set for this iteration
+
+                    # --- End of Processing Completed Tasks for this iteration ---
+                    # Check elapsed time since last activity - optional timeout independent of heartbeat
+                    # if time.time() - last_activity_time > connection_timeout:
+                    #     logger.warning(f"SSE (Combined): No activity for {connection_timeout}s. Closing connection.")
+                    #     break # Exit while loop
+
+                except asyncio.CancelledError:
+                    # This catches cancellation of the entire event_generator task (client disconnected)
+                    logger.info(f"SSE connection closed by client {client_host} for /combined-updates (Caught CancelledError in loop).")
+                    break # Exit the while loop cleanly
+                except Exception as loop_err:
+                    # Catch unexpected errors within the main while loop logic (e.g., re-raised send errors)
+                    error_message = f"FATAL Error in /combined-updates SSE generator loop: {loop_err}"
+                    logger.error(error_message, exc_info=True)
                     try:
-                        update_data = json.loads(status_update) # Assumes JSON string in queue
-                        if 'type' not in update_data: update_data['type'] = 'status'
-                        yield f"data: {json.dumps(update_data)}\n\n"
-                    except (json.JSONDecodeError, TypeError):
-                        yield format_sse_message('status', status_update) # Send as plain if not JSON
-                    status_q.task_done()
-                    update_sent = True
-                except asyncio.QueueEmpty: pass
+                        # Try to inform the client before breaking
+                        yield format_sse_message('error', f"Fatal SSE generator loop error: {str(loop_err)}")
+                    except Exception:
+                        pass # Might not be possible to yield if connection is broken
+                    break # Exit the while loop on fatal error
 
-                try:
-                    transcription_update = transcription_q.get_nowait()
-                    logger.debug(f"SSE (Combined): Sending transcription: {str(transcription_update)[:100]}...")
-                    try:
-                        update_data = json.loads(transcription_update) # Assumes JSON string
-                        if 'type' not in update_data: update_data['type'] = 'transcription_segment'
-                        yield f"data: {json.dumps(update_data)}\n\n"
-                    except (json.JSONDecodeError, TypeError):
-                        yield format_sse_message('transcription_segment', transcription_update)
-                    transcription_q.task_done()
-                    update_sent = True
-                except asyncio.QueueEmpty: pass
 
-                # Manage heartbeat
-                if update_sent:
-                    last_activity_time = now
-                elif now - last_activity_time > heartbeat_interval:
-                    logger.debug("SSE (Combined): Sending heartbeat.")
-                    yield format_sse_message('heartbeat', 'ping')
-                    last_activity_time = now # Reset timer
 
-                await asyncio.sleep(0.1) # Prevent high CPU usage if queues empty
+            # --- End of While Loop ---
+            logger.info(f"SSE event generator loop exited for {client_host} (/combined-updates).")
 
-        except asyncio.CancelledError:
-            logger.info(f"SSE connection closed by client {client_host} for /combined-updates.")
-        except Exception as e:
-            error_message = f"Error in /combined-updates SSE generator: {e}"
-            logger.error(error_message, exc_info=True)
-            try: yield format_sse_message('error', error_message)
-            except Exception as send_err: logger.error(f"Failed to send error to SSE client: {send_err}")
+
+
         finally:
-            logger.info(f"SSE event generator finished for {client_host} (/combined-updates).")
+            logger.info(f"SSE event generator entering finally block for {client_host} (/combined-updates).")
+            # Cancel all remaining tasks in the set
+            logger.info(f"SSE (Combined): Cancelling {len(all_tasks)} remaining tasks in final cleanup.")
+            for task in list(all_tasks): # Iterate over a copy as we modify the set
+                task.cancel()
+                try:
+                    await task # Await cancellation to complete
+                except asyncio.CancelledError:
+                    pass # Expected exception
+                except Exception as e:
+                    logger.error(f"Error awaiting cancellation of task {id(task)}: {e}")
 
+            logger.info(f"SSE event generator finished final cleanup for {client_host} (/combined-updates).")
+
+    # Create the response with proper settings for stable SSE connections
     response = EventSourceResponse(event_generator(), media_type="text/event-stream")
-    response.headers["Cache-Control"] = "no-cache, no-transform"
+
+    # Set CORS headers - ensure they're permissive enough for development
+    response.headers["Access-Control-Allow-Origin"] = origin if origin != "N/A" else "*"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+
+    # Set critical headers for SSE stability
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     response.headers["Connection"] = "keep-alive"
     response.headers["X-Accel-Buffering"] = "no"
+    response.headers["Transfer-Encoding"] = "chunked"
+
+    logger.info(f"SSE response headers: {response.headers}")
     return response
 
 # --- OPTIONS handler for Combined SSE ---
@@ -861,10 +1061,25 @@ async def get_download_status(request: Request):
         finally:
             logger.info(f"Download SSE event generator finished for {client_host}.")
 
+    # Create the response with proper settings for stable SSE connections
     response = EventSourceResponse(event_generator(), media_type="text/event-stream")
-    response.headers["Cache-Control"] = "no-cache, no-transform"
+
+    # Set CORS headers - ensure they're permissive enough for development
+    origin = request.headers.get("origin", "N/A")
+    response.headers["Access-Control-Allow-Origin"] = origin if origin != "N/A" else "*"
+    response.headers["Access-Control-Allow-Credentials"] = "true"
+    response.headers["Access-Control-Allow-Methods"] = "GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+
+    # Set critical headers for SSE stability
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
     response.headers["Connection"] = "keep-alive"
     response.headers["X-Accel-Buffering"] = "no"
+    response.headers["Transfer-Encoding"] = "chunked"
+
+    logger.info(f"Download SSE response headers: {response.headers}")
     return response
 
 # --- OPTIONS handler for Download Status SSE ---
@@ -892,6 +1107,27 @@ def _handle_options_request(request: Request, allowed_origins_list: List[str]):
         logger.warning(f"OPTIONS request from disallowed origin: {origin}")
         return JSONResponse(content={"detail": "Origin not allowed"}, status_code=400)
 
+
+# --- Transcription Status Endpoint ---
+@app.get("/transcription-status", tags=["Status"])
+async def transcription_status():
+    """Check if there's an active transcription process running."""
+    try:
+        # Check if there are any active transcription processes
+        active = False
+
+        # Check if the queue manager is running and has active transcriptions
+        if queue_manager and queue_manager._running:
+            # Check if the transcription queue has items
+            active = not queue_manager.transcription_queue.empty()
+
+            # Check if there are any active transcriptions
+            active = active or queue_manager.has_active_transcriptions()
+
+        return {"active": active}
+    except Exception as e:
+        logger.error(f"Error checking transcription status: {e}")
+        return {"active": False, "error": str(e)}
 
 # --- Process Video Endpoint ---
 @app.post("/process-video/", tags=["Processing"])
@@ -926,17 +1162,27 @@ async def process_video_endpoint(request: VideoRequest, background_tasks: Backgr
             # "groq_client": groq_client if request.use_groq else None
         }
 
-        # Add processing task to background
+        # Extract video ID for tracking
+        try:
+            from .transcribe1 import extract_video_id
+            video_id = extract_video_id(request.youtube_video_url)
+        except Exception as e:
+            logger.warning(f"Could not extract video ID for tracking: {e}")
+            video_id = request.youtube_video_url  # Use URL as fallback
+
+        # Import the wrapper function
+        from .process_video_wrapper import process_video_with_tracking
+
+        # Add processing task to background using the wrapper
         background_tasks.add_task(
-            process_video, # The async function from transcribe1.py
-            youtube_url=request.youtube_video_url,
+            process_video_with_tracking,
+            youtube_video_url=request.youtube_video_url,
             obsidian_dir=request.obsidian_dir,
             status_queue=queue_manager.status_queue,
             transcription_queue=queue_manager.transcription_queue,
             output_folder=request.output_folder,
             model_config=model_config,
-            # Pass other dependencies if required by process_video
-            logger=logger # Pass logger instance
+            video_id=video_id  # Pass video_id for tracking
         )
 
         logger.info(f"Background task added for processing: {request.youtube_video_url}")
@@ -1289,6 +1535,91 @@ async def get_video_info(request: VideoInfoRequest):
         raise HTTPException(status_code=500, detail=f"Unexpected error fetching video info: {e}")
 
 
+# --- List Downloads Endpoint ---
+@app.get("/api/list-downloads", tags=["Download"])
+async def list_downloads(directory: Optional[str] = Query(None)):
+    """List files in the specified download directory."""
+    logger.info(f"List downloads request for directory: {directory}")
+
+    # Determine the directory to list
+    list_dir = directory
+    if not list_dir:
+        # Use the same logic as get_default_directory for fallback
+        try:
+            user_downloads = str(Path.home() / "Downloads")
+            if Path(user_downloads).is_dir():
+                 list_dir = user_downloads
+            else:
+                 list_dir = os.path.abspath(os.path.join(os.getcwd(), 'downloads'))
+        except Exception:
+             list_dir = os.path.abspath('./downloads') # Safest fallback
+
+    list_dir_path = Path(list_dir).resolve()
+
+    if not list_dir_path.is_dir():
+        logger.warning(f"Attempted to list non-existent or non-directory path: {list_dir_path}")
+        # Return empty list or 404? Frontend expects a list. Empty list is safer.
+        return {"files": []}
+
+    try:
+        # List files in the directory (blocking operation)
+        entries = await asyncio.to_thread(os.listdir, list_dir_path)
+
+        files_list = []
+        for entry_name in entries:
+            entry_path = list_dir_path / entry_name
+            # Only process files, ignore directories
+            if await asyncio.to_thread(os.path.isfile, entry_path):
+                try:
+                    stat = await asyncio.to_thread(os.stat, entry_path)
+                    size_bytes = stat.st_size
+                    mod_time = datetime.fromtimestamp(stat.st_mtime)
+
+                    # Infer file type (basic)
+                    file_extension = entry_path.suffix.lower()
+                    file_type = "Other"
+                    if file_extension in ['.mp4', '.mkv', '.webm', '.avi', '.mov']:
+                        file_type = "Video"
+                    elif file_extension in ['.mp3', '.wav', '.aac', '.m4a', '.opus', '.ogg']:
+                        file_type = "Audio"
+                    elif file_extension in ['.srt', '.vtt', '.ass']:
+                        file_type = "Subtitle"
+
+                    # Format size
+                    size_str = "N/A"
+                    if size_bytes is not None:
+                        if size_bytes < 1024: size_str = f"{size_bytes} B"
+                        elif size_bytes < 1024*1024: size_str = f"{size_bytes/1024:.1f} KB"
+                        elif size_bytes < 1024*1024*1024: size_str = f"{size_bytes/(1024*1024):.1f} MB"
+                        else: size_str = f"{size_bytes/(1024*1024*1024):.2f} GB"
+
+                    files_list.append({
+                        "name": entry_name,
+                        "type": file_type,
+                        "size": size_str,
+                        "modified": mod_time.isoformat(), # Use ISO format for consistency
+                        "path": str(entry_path) # Include full path
+                    })
+                except Exception as file_info_err:
+                    logger.warning(f"Error getting info for file {entry_path}: {file_info_err}")
+                    # Add a minimal entry even if info fails
+                    files_list.append({"name": entry_name, "type": "Unknown", "size": "N/A", "modified": "N/A", "path": str(entry_path)})
+
+
+        # Sort files by modification time, newest first
+        files_list.sort(key=lambda x: x.get('modified', '0'), reverse=True)
+
+        logger.info(f"Listed {len(files_list)} files in {list_dir_path}")
+        return {"files": files_list}
+
+    except Exception as e:
+        logger.error(f"Error listing files in directory {list_dir_path}: {e}", exc_info=True)
+        # Return empty list and log error
+        return {"files": [], "error": f"Failed to list files: {e}"}
+
+
+# --- Get Default Directory Endpoint ---
+
 # --- Get Default Directory Endpoint ---
 @app.get("/api/default-directory", tags=["Utility"])
 async def get_default_directory():
@@ -1320,6 +1651,57 @@ async def get_default_directory():
         return {"path": fallback_dir, "warning": "Could not determine default path, using relative './downloads'."}
 
 
+# --- Fetch Content Endpoint ---
+@app.get("/fetch-content", tags=["Utility"])
+async def fetch_content_endpoint(
+    url: str = Query(..., description="URL to fetch content from"),
+    json_response: bool = Query(False, description="Return raw JSON response"),
+    timeout: int = Query(300, description="Timeout in seconds"),
+    target_selector: Optional[str] = Query(None, description="CSS Selector for target elements"),
+    excluded_selector: Optional[str] = Query(None, description="CSS Selector for excluded elements"),
+    browser_engine: str = Query("playwright", description="Browser engine to use (playwright or selenium)"),
+    token_budget: int = Query(4000, description="Maximum number of tokens to extract"),
+    remove_images: bool = Query(False, description="Remove images from content"),
+    extract_links: bool = Query(True, description="Extract links from content"),
+    image_captioning: bool = Query(False, description="Enable image captioning"),
+    cache_ttl: int = Query(3600, description="Cache time-to-live in seconds"),
+    markdown_flavor: str = Query("github", description="Markdown flavor (github, standard, obsidian)"),
+    browser_viewport: str = Query("1920x1080", description="Browser viewport size"),
+    browser_locale: str = Query("en-US", description="Browser locale"),
+    extract_metadata: bool = Query(True, description="Extract page metadata")
+):
+    """Fetches content from a given URL using fetch_content_from_url."""
+    logger.info(f"Fetch content request for URL: {url}")
+
+    if not PROJECT_MODULES_LOADED or fetch_content_from_url is None:
+         raise HTTPException(status_code=501, detail="Fetch content feature is unavailable due to missing modules.")
+
+    try:
+        # Call the fetch_content_from_url function
+        result = await fetch_content_from_url(
+            url=url,
+            json_response=json_response,
+            timeout=timeout,
+            target_selector=target_selector,
+            excluded_selector=excluded_selector,
+            browser_engine=browser_engine,
+            token_budget=token_budget,
+            remove_images=remove_images,
+            extract_links=extract_links,
+            image_captioning=image_captioning,
+            cache_ttl=cache_ttl,
+            markdown_flavor=markdown_flavor,
+            browser_viewport=browser_viewport,
+            browser_locale=browser_locale,
+            extract_metadata=extract_metadata
+        )
+        logger.info(f"Successfully fetched content from {url}")
+        return result # fetch_content_from_url should return a dict or JSON-serializable object
+
+    except Exception as e:
+        logger.error(f"Error fetching content from {url}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to fetch content: {e}")
+
 # --- Include Other Routers ---
 if PROJECT_MODULES_LOADED:
     if 'content_upserter_router' in locals():
@@ -1333,6 +1715,14 @@ if PROJECT_MODULES_LOADED:
     if 'monitoring_router' in locals() and metrics_router != monitoring_router: # Avoid double inclusion if same
          try: app.include_router(monitoring_router, prefix="/monitoring", tags=["Monitoring"])
          except Exception as e: logger.warning(f"Failed to include monitoring_router: {e}")
+
+# --- Include Debug Endpoints ---
+try:
+    from .debug_endpoints import router as debug_router
+    app.include_router(debug_router)
+    logger.info("Debug endpoints included.")
+except Exception as e:
+    logger.warning(f"Failed to include debug endpoints: {e}")
 
 
 # --- Vector Search Endpoint (Example Structure) ---
@@ -1501,7 +1891,7 @@ async def comprehensive_search_endpoint(
                         formatted_results.append(result_dict)
                     except Exception as item_err:
                         logger.error(f"Error formatting individual result: {item_err}")
-                
+
                 logger.info(f"Manually converted {len(formatted_results)} SearchResult objects to dictionaries")
 
         metadata = {
@@ -1540,6 +1930,8 @@ async def comprehensive_search_endpoint(
 
 
 @app.get("/api/search-sse", tags=["Search"])
+# NOTE: This endpoint was causing automatic search when the server starts.
+# The issue has been fixed by properly commenting out the Uvicorn server runner code.
 async def search_sse_endpoint(
     request: Request,
     query: str = Query(..., min_length=1),
@@ -1576,10 +1968,10 @@ async def search_sse_endpoint(
             # Send initial status
             yield format_sse_message("status", "Starting search operation", {"stage": "start"})
             await asyncio.sleep(0.5)  # Small delay for UI to show initial state
-            
+
             # Update search parameters
             yield format_sse_message("status", "Configuring search parameters", {"stage": "search"})
-            
+
             try:
                 update_successful = global_search_params.update_from_frontend(
                     preset=preset,
@@ -1599,20 +1991,20 @@ async def search_sse_endpoint(
                 if not update_successful:
                     logger.warning("Search parameters updated from frontend might be invalid")
                     yield format_sse_message("status", "Warning: Some search parameters may be invalid", {"stage": "search"})
-                
+
                 logger.debug(f"Effective search params used: {global_search_params.get_all_params()}")
-                
+
             except Exception as param_err:
                 logger.error(f"Error updating search parameters: {param_err}", exc_info=True)
                 yield format_sse_message("error", f"Invalid search parameters: {param_err}")
                 return
-            
+
             # Execute search
             start_time = time.time()
-            
+
             # Update status to filtering
             yield format_sse_message("status", "Executing search query", {"stage": "filter"})
-            
+
             try:
                 # Run blocking search_all in a thread
                 results, openai_analysis, groq_analysis = await asyncio.to_thread(
@@ -1622,14 +2014,14 @@ async def search_sse_endpoint(
                     skip_prompts=True,
                     run_analysis=run_analysis
                 )
-                
+
                 search_duration = time.time() - start_time
                 logger.info(f"Search completed in {search_duration:.2f}s. Found {len(results)} results.")
-                
+
                 # Update status to combining results
                 yield format_sse_message("status", "Combining search results", {"stage": "combine"})
                 await asyncio.sleep(0.5)  # Small delay for UI to show state
-                
+
                 # Format results
                 formatted_results = []
                 if results:
@@ -1664,7 +2056,7 @@ async def search_sse_endpoint(
                                 formatted_results.append(result_dict)
                             except Exception as item_err:
                                 logger.error(f"Error formatting individual result: {item_err}")
-                
+
                 # Prepare metadata
                 metadata = {
                     "query": query,
@@ -1675,7 +2067,7 @@ async def search_sse_endpoint(
                     "search_complete": True,
                     "stage": "complete"
                 }
-                
+
                 # Add token counts if available
                 try:
                     try:
@@ -1686,40 +2078,40 @@ async def search_sse_endpoint(
                         metadata["token_usage"] = token_counter.get_stats()
                 except (NameError, AttributeError) as tk_err:
                     logger.warning(f"Could not get token stats: {tk_err}")
-                
+
                 # If analysis was requested, update status
                 if run_analysis:
                     yield format_sse_message("status", "Analyzing search results", {"stage": "analyze"})
-                    
+
                     # Send OpenAI analysis if available
                     if openai_analysis:
                         yield format_sse_message("analysis", openai_analysis, {"provider": "openai"})
-                    
+
                     # Send Groq analysis if available
                     if groq_analysis:
                         yield format_sse_message("analysis", groq_analysis, {"provider": "groq"})
-                    
+
                     # Update metadata to indicate analysis is complete
                     metadata["analysis_complete"] = bool(openai_analysis or groq_analysis)
-                
+
                 # Send final results
-                yield format_sse_message("results", formatted_results, metadata)
-                
+                yield format_sse_message("results", formatted_results, {**metadata, "stage": "complete"})
+
                 # Send completion message
                 yield format_sse_message("complete", "Search process completed", {"stage": "complete"})
-                
+
             except Exception as e:
                 search_duration = time.time() - start_time
                 error_msg = f"Search execution failed: {e}"
                 logger.error(f"Error during search execution ({search_duration:.2f}s): {e}", exc_info=True)
                 yield format_sse_message("error", error_msg)
-                
+
         except asyncio.CancelledError:
             logger.info(f"SSE connection closed by client {client_host}")
         except Exception as e:
             logger.error(f"Unexpected error in search SSE generator: {e}", exc_info=True)
             yield format_sse_message("error", f"Unexpected error: {e}")
-    
+
     return EventSourceResponse(event_generator())
 # --- Root and Health Check ---
 @app.get("/", tags=["Utility"])
@@ -1752,7 +2144,9 @@ async def health_check():
 
 
 # --- ASGI Server Runner ---
-#if __name__ == "__main__":
+
+# --- ASGI Server Runner ---
+if __name__ == "__main__":
     import uvicorn
     logger.info("Starting Uvicorn server directly...")
 
@@ -1782,3 +2176,4 @@ async def health_check():
         # loop="uvloop",
         # http="httptools", # Use httptools if installed
     )
+
