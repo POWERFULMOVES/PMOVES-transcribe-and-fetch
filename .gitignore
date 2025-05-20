@@ -54,6 +54,7 @@ yarn-error.log*
 backend/downloads/
 backend/fetched_content/
 fetched_content/
+backend/pp/temp_pdfs/
 pmoves_backend.egg-info/
 
 # Package management
