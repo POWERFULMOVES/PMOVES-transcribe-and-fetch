@@ -328,6 +328,66 @@ export const SEARCH_METHOD_STYLES = {
   }
 };
 
+// Styling for different content types
+export const CONTENT_TYPE_STYLES = {
+  'transcript': {
+    'icon': '📜',
+    'bgColor': 'bg-indigo-100',
+    'textColor': 'text-indigo-700',
+    'borderColor': 'border-indigo-300',
+    'title': 'Transcript'
+  },
+  'document': {
+    'icon': '📑',
+    'bgColor': 'bg-pink-100',
+    'textColor': 'text-pink-700',
+    'borderColor': 'border-pink-300',
+    'title': 'Document'
+  },
+  'webpage': {
+    'icon': '🌍',
+    'bgColor': 'bg-teal-100',
+    'textColor': 'text-teal-700',
+    'borderColor': 'border-teal-300',
+    'title': 'Webpage'
+  },
+  'text': {
+    'icon': '✍️',
+    'bgColor': 'bg-orange-100',
+    'textColor': 'text-orange-700',
+    'borderColor': 'border-orange-300',
+    'title': 'Text'
+  },
+  'video': {
+    'icon': '🎞️',
+    'bgColor': 'bg-rose-100',
+    'textColor': 'text-rose-700',
+    'borderColor': 'border-rose-300',
+    'title': 'Video'
+  },
+  'audio': {
+    'icon': '🎧',
+    'bgColor': 'bg-lime-100',
+    'textColor': 'text-lime-700',
+    'borderColor': 'border-lime-300',
+    'title': 'Audio'
+  },
+  'full_transcript': {
+    'icon': '📜',
+    'bgColor': 'bg-sky-100',
+    'textColor': 'text-sky-700',
+    'borderColor': 'border-sky-300',
+    'title': 'Full Transcript'
+  },
+  'default': {
+    'icon': '❓',
+    'bgColor': 'bg-gray-100',
+    'textColor': 'text-gray-700',
+    'borderColor': 'border-gray-300',
+    'title': 'Unknown Type'
+  }
+};
+
 /**
  * Get the appropriate score style based on a similarity score
  * @param {number} score - The similarity score (0.0 to 1.0)
@@ -361,4 +421,13 @@ export function getSourceStyle(source) {
  */
 export function getMethodStyle(method) {
   return SEARCH_METHOD_STYLES[method] || SEARCH_METHOD_STYLES.default;
+}
+
+/**
+ * Get the appropriate content type style based on a content type
+ * @param {string} contentType - The content type
+ * @returns {Object} - The style object for the content type
+ */
+export function getContentTypeStyle(contentType) {
+  return CONTENT_TYPE_STYLES[contentType] || CONTENT_TYPE_STYLES.default;
 }

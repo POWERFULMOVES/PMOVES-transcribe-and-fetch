@@ -1,5 +1,3 @@
-// --- START OF COMPLETE page.js with fixes ---
-
 "use client";
 
 import React, { useEffect, useCallback, useRef, useReducer, useState } from 'react';
@@ -7,6 +5,7 @@ import axios from 'axios';
 import ReactMarkdown from 'react-markdown';
 import Image from 'next/image'; // Assuming you might use this later
 import useSSE from '@/hooks/useSSE'; // Correct path assuming hooks folder at src level
+import useAppConfig from '@/hooks/useAppConfig';
 
 import {
   Tabs,
@@ -55,39 +54,15 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from "@/components/ui/accordion";
+import ProcessingOptionsSelector from '@/components/transcription/ProcessingOptionsSelector'; // Added import
+import TranscriptionJobSummary from '@/components/transcription/TranscriptionJobSummary'; // Added import
+import CompletedTranscriptionView from '@/components/transcription/CompletedTranscriptionView'; // Added import
+import TranscriptionSegment from '@/components/transcription/TranscriptionSegment'; // Added import
 // Assuming fonts are configured elsewhere or remove if not used directly here
 // import { permanentMarker, fZeroFont } from './fonts';
 import {
   BACKEND_URL
 } from '@/lib/constants'; // Assuming lib folder at src level
-
-// Transcription styling constants
-const TRANSCRIPTION_STYLES = {
-  groq: {
-    icon: '☁️',
-    color: 'blue',
-    border: 'blue-200',
-    content_color: 'blue-700',
-    title: 'Groq Cloud Transcription',
-    hover: 'hover:bg-blue-50 dark:hover:bg-blue-900/20'
-  },
-  'faster-whisper': {
-    icon: '💻',
-    color: 'green',
-    border: 'green-200',
-    content_color: 'green-700',
-    title: 'Local Whisper Transcription',
-    hover: 'hover:bg-green-50 dark:hover:bg-green-900/20'
-  },
-  default: {
-    icon: '🎙️',
-    color: 'gray',
-    border: 'gray-200',
-    content_color: 'gray-700',
-    title: 'Transcription',
-    hover: 'hover:bg-gray-50 dark:hover:bg-gray-800/50'
-  }
-};
 
 // --- Helper Functions ---
 // Function to format elapsed time
@@ -95,15 +70,6 @@ const formatElapsedTime = (seconds) => {
   const minutes = Math.floor(seconds / 60);
   const remainingSeconds = seconds % 60;
   return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
-};
-
-// Function to format timestamps (e.g., 00:12.34)
-const formatTimeStamp = (seconds) => {
-  if (isNaN(seconds) || seconds < 0) return '00:00.00';
-  const minutes = Math.floor(seconds / 60);
-  const remainingSeconds = Math.floor(seconds % 60);
-  const milliseconds = Math.floor((seconds % 1) * 100);
-  return `${minutes.toString().padStart(2, '0')}:${remainingSeconds.toString().padStart(2, '0')}.${milliseconds.toString().padStart(2, '0')}`;
 };
 
 // Helper for scrolling
@@ -297,74 +263,13 @@ const StatusUpdates = ({ updates, model }) => {
                         {model === 'groq' ? '☁️' : '💻'}
                     </span>
                     {/* Ensure update content is displayed correctly */}
-                    <span className="flex-1">{typeof update === 'object' ? JSON.stringify(update) : update}</span>
-                </div>
-            ))}
-        </div>
-    );
-};
-
-// Transcription Segment Component
-const TranscriptionSegment = ({ segment, index, isLatest, isTranscribing, model }) => {
-    
-    const style = TRANSCRIPTION_STYLES[model] || TRANSCRIPTION_STYLES.default;
-    const duration = segment.end_time && segment.start_time && !isNaN(segment.end_time) && !isNaN(segment.start_time)
-        ? (segment.end_time - segment.start_time).toFixed(2) + 's'
-        : '';
-
-    return (
-        <div className={
-            `group relative rounded-lg p-3 transition-colors ` +
-            (style.border === 'blue-200' ? 'border-blue-200 hover:bg-blue-50 dark:hover:bg-blue-900/20 ' : '') +
-            (style.border === 'green-200' ? 'border-green-200 hover:bg-green-50 dark:hover:bg-green-900/20 ' : '') +
-            (style.border === 'gray-200' ? 'border-gray-200 hover:bg-gray-50 dark:hover:bg-gray-800/50 ' : '')
-        }>
-            {/* Header with timestamp and watch link */}
-            <div className="flex justify-between items-center mb-1 text-xs text-muted-foreground">
-                <div className="flex items-center gap-2">
-                    <span>{style.icon}</span>
-                    <span>
-                        {/* Use formatTimeStamp for start and end times */}
-                        {formatTimeStamp(segment.start_time)} - {formatTimeStamp(segment.end_time)}
-                        {duration && ` (${duration})`}
+                    <span className="flex-1">
+                      {typeof update === 'object' && update !== null ?
+                        (update.message ? update.message + (update.details ? ` (${update.details})` : '') : JSON.stringify(update))
+                        : update}
                     </span>
                 </div>
-
-                {/* Watch link */}
-                {segment.watch_url && (
-                    <a
-                        href={segment.watch_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className={`opacity-0 group-hover:opacity-100 transition-opacity text-${style.color}-600 hover:underline flex items-center`}
-                        title="Watch segment on YouTube"
-                    >
-                        <span className="mr-1">Watch</span>
-                        {/* External Link Icon */}
-                        <svg xmlns="http://www.w3.org/2000/svg" className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                        </svg>
-                    </a>
-                )}
-            </div>
-
-            {/* Transcription text */}
-            <div className={
-                `text-sm sm:text-base leading-relaxed ` +
-                (style.content_color === 'blue-700' ? 'text-blue-700 dark:text-blue-300 ' : '') +
-                (style.content_color === 'green-700' ? 'text-green-700 dark:text-green-300 ' : '') +
-                (style.content_color === 'gray-700' ? 'text-gray-700 dark:text-gray-300 ' : '')
-            }>
-                {segment.text}
-                {isLatest && isTranscribing && (
-                    <span className={
-                        `inline-block w-1.5 h-4 ml-0.5 animate-pulse-fast align-middle ` +
-                        (style.color === 'blue' ? 'bg-blue-500 ' : '') +
-                        (style.color === 'green' ? 'bg-green-500 ' : '') +
-                        (style.color === 'gray' ? 'bg-gray-500 ' : '')
-                    }></span>
-                )}
-            </div>
+            ))}
         </div>
     );
 };
@@ -372,37 +277,32 @@ const TranscriptionSegment = ({ segment, index, isLatest, isTranscribing, model 
 // --- Main Component ---
 export default function Home() {
   // --- State, Reducer, and Refs Initialization (must come first!) ---
-  // Use state for initial state to trigger reducer initialization after mount
   const [initialStateLoaded, setInitialStateLoaded] = useState(false);
   const [persistedState, setPersistedState] = useState(null);
-  // Load state on mount
   useEffect(() => {
     const savedState = storage.get('transcriptionState');
     if (savedState) {
       setPersistedState(savedState);
     }
-    setInitialStateLoaded(true); // Indicate that loading attempt is complete
+    setInitialStateLoaded(true);
   }, []);
-  // Initialize reducer only after attempting to load persisted state
   const [state, dispatch] = useReducer(
     transcriptionReducer,
     persistedState || transcriptionInitialState
   );
   const messageBuffer = useRef([]);
   const bufferTimeoutRef = useRef(null);
-  const BATCH_DELAY = 150; // Process buffer every 150ms
+  const BATCH_DELAY = 150;
   const initialCheckDoneRef = useRef(false);
-
-  // --- Timer State ---
   const [timerActive, setTimerActive] = useState(false);
   const [elapsedTime, setElapsedTime] = useState(0);
-  const [activeTab, setActiveTab] = useState("transcription"); // Default to transcription tab
+  const [activeTab, setActiveTab] = useState("transcription");
   const [backendStatus, setBackendStatus] = useState("unknown");
-
   const transcriptionBoxRef = useRef(null);
   const statusBoxRef = useRef(null);
   const disconnectTimeoutRef = useRef(null);
-  const scrollAreaRef = useRef(null); // Add ref for ScrollArea
+  const scrollAreaRef = useRef(null);
+  const { config: appConfig, loading: configLoading, error: configError } = useAppConfig();
 
   // --- Timer Effects ---
 
@@ -922,7 +822,9 @@ export default function Home() {
               clearTimeout(bufferTimeoutRef.current); // Clear scheduled timeout
           }
           processBuffer(); // Process remaining segments
-
+ 
+          // Dispatch an action to finalize transcription data (construct fullText, etc.)
+          dispatch({ type: ACTIONS.FINALIZE_TRANSCRIPTION });
           dispatch({ type: ACTIONS.SET_ACTIVE_STEP, payload: 3 }); // Move to final step
           dispatch({ type: ACTIONS.SET_TRANSCRIBING, payload: false });
           dispatch({ type: ACTIONS.SET_LOADING, payload: false });
@@ -947,9 +849,12 @@ export default function Home() {
           // Optional: Update a 'last heartbeat received' state if needed
           break;
         case 'video_metadata':
-           console.log('[onMessage] Received video_metadata:', message.content);
-           dispatch({ type: ACTIONS.ADD_STATUS_UPDATE, payload: `Metadata: ${message.content.title}` });
-           break;
+          console.log('[onMessage] Received video_metadata:', message.content);
+          // Dispatch action to store video metadata in state
+          dispatch({ type: ACTIONS.SET_VIDEO_METADATA, payload: message.content });
+          // Optionally, still add a status update if desired
+          dispatch({ type: ACTIONS.ADD_STATUS_UPDATE, payload: `Video Title: ${message.content.title}` });
+          break;
         case 'connection_status':
           if (message.content === 'safe_to_disconnect') {
             console.log('[onMessage] Received safe_to_disconnect. Setting shouldDisconnect=true.');
@@ -996,9 +901,40 @@ export default function Home() {
     };
   }, [onMessage]); // onMessage dependency is correct here
 
+  // Set initial obsidianDir/outputFolder from config if not set by user
+  useEffect(() => {
+    if (!initialStateLoaded) return;
+    if (!configLoading && appConfig) {
+      if (!state.obsidianDir && appConfig.DEFAULT_OBSIDIAN_DIR) {
+        dispatch({ type: ACTIONS.SET_OBSIDIAN_DIR, payload: appConfig.DEFAULT_OBSIDIAN_DIR });
+      }
+      if (!state.outputFolder && appConfig.DEFAULT_OUTPUT_FOLDER) {
+        dispatch({ type: ACTIONS.SET_OUTPUT_FOLDER, payload: appConfig.DEFAULT_OUTPUT_FOLDER });
+      }
+    }
+  }, [initialStateLoaded, configLoading, appConfig, state.obsidianDir, state.outputFolder]);
    // --- Render Logic ---
   if (!initialStateLoaded) {
-      return <div className="flex justify-center items-center h-screen">Loading...</div>; // Or a spinner
+      return <div className="flex justify-center items-center h-screen">Loading...</div>;
+  }
+
+  const MiniSpinner = () => (
+    <svg className="animate-spin h-4 w-4 text-current" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+      <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+    </svg>
+  );
+
+  // Determine overall job status for TranscriptionJobSummary
+  let jobStatus = 'Idle';
+  if (state.error) {
+    jobStatus = 'Failed';
+  } else if (state.transcribing) {
+    jobStatus = 'In Progress';
+  } else if (!state.transcribing && state.activeStep === 3 && state.transcriptionSegments.length > 0) {
+    jobStatus = 'Completed';
+  } else if (!state.transcribing && state.activeStep === 0 && state.transcriptionSegments.length === 0) {
+    jobStatus = 'Ready';
   }
 
   return (
@@ -1021,19 +957,28 @@ export default function Home() {
                </div>
 
                {/* Step Circles */}
-               {steps.map((step, index) => ( // Use steps here
-                 <div key={index} className="flex flex-col items-center relative z-10">
-                   <div
-                     className={`
-                       rounded-full w-8 h-8 flex items-center justify-center border-2 transition-all duration-300
-                       ${state.activeStep >= index ? 'bg-[hsl(var(--page-accent))] text-[hsl(var(--background))] border-[hsl(var(--page-accent))]' : 'bg-muted text-muted-foreground border-gray-300 dark:border-gray-600'}
-                       ${state.activeStep === index ? 'ring-2 ring-[hsl(var(--page-accent))] ring-offset-2 dark:ring-offset-background' : ''}
-                     `}
-                   >
-                     {state.activeStep > index ? '✓' : index + 1}
-                   </div>
-                   <span
-                     className={`
+               {steps.map((step, index) => { // Use steps here
+                 let stepContent;
+                 if (state.activeStep > index) {
+                   stepContent = '✓';
+                 } else if (state.activeStep === index && (state.loading || (index === 2 && state.transcribing))) { // Step 2 is 'Transcribe Audio'
+                   stepContent = <MiniSpinner />;
+                 } else {
+                   stepContent = index + 1;
+                 }
+                 return (
+                   <div key={index} className="flex flex-col items-center relative z-10">
+                     <div
+                       className={`
+                         rounded-full w-8 h-8 flex items-center justify-center border-2 transition-all duration-300
+                         ${state.activeStep >= index ? 'bg-[hsl(var(--page-accent))] text-[hsl(var(--background))] border-[hsl(var(--page-accent))]' : 'bg-muted text-muted-foreground border-gray-300 dark:border-gray-600'}
+                         ${state.activeStep === index ? 'ring-2 ring-[hsl(var(--page-accent))] ring-offset-2 dark:ring-offset-background' : ''}
+                       `}
+                     >
+                       {stepContent}
+                     </div>
+                     <span
+                       className={`
                        text-xs sm:text-sm mt-2 text-center font-medium
                        transition-colors duration-300
                        ${state.activeStep >= index ? 'text-[hsl(var(--page-accent))]' : 'text-muted-foreground'}
@@ -1042,7 +987,8 @@ export default function Home() {
                      {step}
                    </span>
                  </div>
-               ))}
+                 );
+               })}
              </div>
            </CardContent>
          </Card>
@@ -1065,24 +1011,12 @@ export default function Home() {
                     <CardContent className="space-y-4 pt-6">
                         {/* Model Selection */}
                         <div className="space-y-2">
-                            <Label className="font-semibold">Transcription Model</Label>
-                            <Select
-                                value={state.transcriptionModel}
-                                onValueChange={(value) => dispatch({ type: ACTIONS.SET_TRANSCRIPTION_MODEL, payload: value })}
-                            >
-                                <SelectTrigger className="w-full">
-                                <SelectValue placeholder="Select transcription model" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                <SelectItem value="faster-whisper">Faster Whisper (Local GPU)</SelectItem>
-                                <SelectItem value="groq">Groq API (Cloud)</SelectItem>
-                                </SelectContent>
-                            </Select>
-                            <p className="text-xs text-muted-foreground mt-1">
-                                {state.transcriptionModel === "groq"
-                                ? "Cloud processing via Groq API. Saves local GPU resources. Requires API key in backend."
-                                : "Local processing using Faster Whisper on your GPU."}
-                            </p>
+                            <Label className="font-semibold">Transcription Processing Option</Label>
+                            <ProcessingOptionsSelector
+                                selectedOption={state.transcriptionModel}
+                                onOptionChange={(value) => dispatch({ type: ACTIONS.SET_TRANSCRIPTION_MODEL, payload: value })}
+                            />
+                            {/* The descriptive text is now part of the component cards/tooltips */}
                         </div>
 
                         {/* YouTube URL Input */}
@@ -1107,10 +1041,11 @@ export default function Home() {
                         <Input
                             id="obsidian-dir"
                             type="text"
-                            placeholder="e.g., C:\\Users\\You\\Documents\\Transcripts or /Users/you/transcripts"
+                            placeholder={appConfig?.DEFAULT_OBSIDIAN_DIR || "e.g., C:\\Users\\You\\Documents\\Transcripts or /Users/you/transcripts"}
                             value={state.obsidianDir}
                             onChange={(e) => dispatch({ type: ACTIONS.SET_OBSIDIAN_DIR, payload: e.target.value })}
                             className={!validateObsidianDir(state.obsidianDir) && state.obsidianDir ? 'border-red-500' : ''}
+                            disabled={configLoading}
                         />
                          {!validateObsidianDir(state.obsidianDir) && state.obsidianDir && (
                             <p className="text-xs text-red-600">Save directory cannot be empty.</p>
@@ -1118,17 +1053,22 @@ export default function Home() {
                         <p className="text-xs text-muted-foreground">Enter the full path where transcripts should be saved.</p>
                         </div>
 
-                        {/* Output Folder (Optional - can be relative) */}
-                        {/* <div className="space-y-2">
+                        {/* Output Folder (Optional) */}
+                        <div className="space-y-2">
                         <Label htmlFor="output-folder">Output Subfolder (Optional)</Label>
                         <Input
                             id="output-folder"
                             type="text"
-                            placeholder="e.g., video_outputs (relative to Save Directory)"
+                            placeholder={appConfig?.DEFAULT_OUTPUT_FOLDER || "e.g., output (relative to Save Directory)"}
                             value={state.outputFolder}
                             onChange={(e) => dispatch({ type: ACTIONS.SET_OUTPUT_FOLDER, payload: e.target.value })}
+                            disabled={configLoading}
                         />
-                        </div> */}
+                        </div>
+
+                        {/* Optionally, show loading spinner or message if configLoading */}
+                        {configLoading && <div className="text-center text-muted-foreground">Loading configuration...</div>}
+                        {configError && <div className="text-center text-red-500">Failed to load config. Using defaults.</div>}
 
                         {/* Process Button */}
                         <Button
@@ -1148,6 +1088,16 @@ export default function Home() {
                         </Button>
                     </CardContent>
                 </Card>
+
+                {/* Transcription Job Summary - Displayed when processing */}
+                {state.transcribing && (
+                    <TranscriptionJobSummary
+                        videoTitle={state.videoMetadata?.title || state.youtubeUrl}
+                        selectedApiModel={state.transcriptionModel}
+                        overallStatus={jobStatus}
+                        elapsedTime={formatElapsedTime(elapsedTime)} // Format elapsed time for display
+                    />
+                )}
 
                 {/* Output Area */}
                 <div className="mt-6 grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -1236,9 +1186,17 @@ export default function Home() {
                         </CardContent>
                     </Card>
                 </div>
+
+                {/* Completed Transcription View - Displayed when job is complete */}
+                {jobStatus === 'Completed' && (
+                    <CompletedTranscriptionView
+                        transcriptionData={state.transcriptionData} // This will be populated by the reducer
+                        model={state.transcriptionModel}
+                    />
+                )}
             </TabsContent>
 
-             {/* --- Web Pages Tab --- */}
+            {/* --- Web Pages Tab --- */}
             <TabsContent value="webpages">
                 <Card className="shadow-md backdrop-blur-sm bg-white/80 dark:bg-black/70">
                     <CardHeader><CardTitle>Fetch & Process Web Content</CardTitle></CardHeader>

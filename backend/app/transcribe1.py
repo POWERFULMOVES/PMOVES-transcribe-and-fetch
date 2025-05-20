@@ -12,19 +12,19 @@ from faster_whisper import WhisperModel
 from pydantic import BaseModel
 # Assuming these utils exist and are correctly implemented in '.utils'
 # Make sure they use async file I/O (like aiofiles) if needed for save functions
-from .utils import (
+from .general_utils import (
     clean_filename,
     format_as_hyperlink, # Note: This wasn't used in the final markdown format, but kept import
     ensure_directory_exists,
     # download_audio is defined below for clarity, assuming it was in utils
     save_text_to_markdown,
-    convert_markdown_to_pdf, # Note: PDF conversion wasn't called, but kept import
     save_segments_to_csv,
     save_segments_to_excel,
     format_timestamp # Defined below for clarity, assuming it was in utils
 )
-# Assuming configuration variables are correctly set in '.config'
-from .config import WHISPER_MODEL, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE, GROQ_API_KEY
+# Assuming configuration variables are correctly set in '.config' and LLM registry service is available
+from .app_config import WHISPER_MODEL, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE, GROQ_API_KEY, WORKSPACE_ROOT, SUBFOLDERS
+from .utils.llm_registry_service import get_llm_registry_service # Import the getter function
 import logging
 import json
 import aiohttp # Keep for potential future API integrations
@@ -928,8 +928,13 @@ async def process_video(
     console.print(f"\n🚀 [bold blue]Starting processing for:[/bold blue] {youtube_video_url}")
 
     # Use defaults if not provided
-    if not output_folder: output_folder = os.path.join(os.getcwd(), "output", "transcriptions")
-    if not model_config: model_config = {"model": "faster-whisper", "use_groq": False}
+    # Obtain the LLM registry service instance
+    registry_service = get_llm_registry_service()
+
+    if not output_folder:
+        output_folder = os.path.join(WORKSPACE_ROOT, SUBFOLDERS['transcriptions']['markdown'])
+    if not model_config:
+        model_config = {"model": "faster-whisper", "use_groq": False}
 
     use_groq = model_config.get("use_groq", False)
     transcription_engine = "Groq" if use_groq else "Local Faster-Whisper"
@@ -984,31 +989,28 @@ async def process_video(
 
         # --- 2. Prepare Directories ---
         logger.info("Step 2: Preparing output directories...")
-        # Define subdirs for organization
         # Output Folder Structure
-        mp4_dir = os.path.join(output_folder, 'audio') # Changed mp4 to audio for clarity
-        csv_dir = os.path.join(output_folder, 'csv')
-        excel_dir = os.path.join(output_folder, 'excel')
-        md_dir = os.path.join(output_folder, 'markdown')
-        # pdf_dir = os.path.join(output_folder, 'pdf') # PDF saving not implemented
-
+        audio_dir = os.path.join(WORKSPACE_ROOT, 'transcriptions', SUBFOLDERS['transcriptions']['audio'])
+        csv_dir = os.path.join(WORKSPACE_ROOT, 'transcriptions', 'csv')
+        excel_dir = os.path.join(WORKSPACE_ROOT, 'transcriptions', 'excel')
+        md_dir = os.path.join(WORKSPACE_ROOT, 'transcriptions', SUBFOLDERS['transcriptions']['markdown'])
+        # pdf_dir = os.path.join(output_folder, OUTPUT_SUBFOLDERS["pdf"]) # PDF saving not implemented
         # Obsidian Folder Structure (mirrored)
-        obsidian_md_dir = os.path.join(obsidian_dir, 'markdown')
+        obsidian_md_dir = os.path.join(obsidian_dir, SUBFOLDERS['transcriptions']['markdown'])
         obsidian_csv_dir = os.path.join(obsidian_dir, 'csv')
         obsidian_excel_dir = os.path.join(obsidian_dir, 'excel')
-        # obsidian_pdf_dir = os.path.join(obsidian_dir, 'pdf') # PDF saving not implemented
-
+        # obsidian_pdf_dir = os.path.join(obsidian_dir, OUTPUT_SUBFOLDERS["pdf"]) # PDF saving not implemented
         # Create all needed directories, use ensure_directory_exists from utils
-        dirs_to_create = [mp4_dir, csv_dir, excel_dir, md_dir,
-                          obsidian_md_dir, obsidian_csv_dir, obsidian_excel_dir]
+        dirs_to_create = [audio_dir, csv_dir, excel_dir, md_dir, obsidian_md_dir, obsidian_csv_dir, obsidian_excel_dir]
         for directory in dirs_to_create:
             try:
-                await ensure_directory_exists(directory) # Assumes this handles creation
+                await ensure_directory_exists(directory)
                 logger.debug(f"Ensured directory exists: {directory}")
             except Exception as dir_err:
-                # Log warning but attempt to continue if possible
                 logger.warning(f"Could not create or access directory {directory}: {dir_err}")
         logger.info(f"Output directories prepared in '{output_folder}' and '{obsidian_dir}'")
+        # Place downloaded audio in the 'audio' subdirectory
+        audio_output_template = os.path.join(audio_dir, f"{base_filename}.%(ext)s")
 
         # --- 3. Download Audio ---
         await status_queue.put(json.dumps({"type": "status", "content": "Starting audio download..."}))
@@ -1016,7 +1018,6 @@ async def process_video(
         console.print(f"⬇️ Downloading audio...")
         # Use m4a as preferred format, let yt-dlp determine final extension in template
         # Place downloaded audio in the 'audio' subdirectory
-        audio_output_template = os.path.join(mp4_dir, f"{base_filename}.%(ext)s")
 
         # Define the async progress callback for download_audio
         async def download_progress_callback(progress_percent: float):
@@ -1055,14 +1056,84 @@ async def process_video(
         transcription_start_time = time.time()
 
         try:
-            if use_groq:
-                # Call the placeholder Groq function
-                segments, full_text = await process_audio_with_groq(
-                    actual_audio_path, status_queue, transcription_queue, youtube_video_url
+            transcription_model_id = model_config.get("model", "faster-whisper") # Get model_id from config
+
+            if use_groq or (transcription_model_id and not transcription_model_id == "faster-whisper"):
+                logger.info(f"Using LLM Registry for transcription with model_id: {transcription_model_id}")
+                # Read audio data
+                with open(actual_audio_path, "rb") as audio_file:
+                    audio_data_bytes = audio_file.read()
+                
+                # Call the registry service
+                # The transcribe_audio_from_registry should return a dict like:
+                # {"text": "full transcript", "segments": [{"start": S, "end": E, "text": T, "speaker": S}...]}
+                # or None on failure.
+                registry_response = await registry_service.transcribe_audio( # Call the method on the instance
+                    model_id=transcription_model_id,
+                    audio_data=audio_data_bytes,
+                    # Potentially pass other kwargs like language if supported by LiteLLM endpoint
+                    # For diarization, the registry function or LiteLLM should handle it if model supports
                 )
-            else:
-                # Call the local Faster Whisper transcription function (runs in thread)
-                segments, full_text = await transcribe_audio(
+
+                if registry_response and "segments" in registry_response and "text" in registry_response:
+                    # Process segments from registry_response
+                    segments = []
+                    full_text_parts_temp = []
+                    video_id_for_md = extract_video_id(youtube_video_url) or "UNKNOWN_ID"
+                    base_url_for_md = f"https://www.youtube.com/watch?v={video_id_for_md}"
+
+                    for idx, seg_data in enumerate(registry_response.get("segments", [])):
+                        start_secs = seg_data.get("start", 0.0)
+                        end_secs = seg_data.get("end", 0.0)
+                        text = seg_data.get("text", "").strip()
+                        speaker = seg_data.get("speaker") # Optional speaker info
+
+                        start_fmt = format_timestamp(start_secs)
+                        end_fmt = format_timestamp(end_secs)
+                        watch_url_ts = f"{base_url_for_md}&t={int(start_secs)}s"
+                        
+                        segment_dict = {
+                            'watch_url': watch_url_ts,
+                            'video_id': video_id_for_md,
+                            'id': idx,
+                            'start': start_fmt,
+                            'end': end_fmt,
+                            'text': text,
+                            'start_seconds': start_secs,
+                            'end_seconds': end_secs,
+                        }
+                        if speaker:
+                            segment_dict['speaker'] = speaker
+                        segments.append(segment_dict)
+
+                        md_link = f"[{start_fmt}]({watch_url_ts})"
+                        speaker_md = f" (Speaker {speaker})" if speaker else ""
+                        formatted_text_part = f"| {md_link} | {video_id_for_md} | {idx} | {start_fmt} | {end_fmt} | {text.replace('|', ' ')}{speaker_md} |\n"
+                        full_text_parts_temp.append(formatted_text_part)
+                    
+                    # Assemble full_text for markdown
+                    title_md_header = f"# Transcription for Video: [{video_id_for_md}]({base_url_for_md})\n\n"
+                    table_header_md_content = "| Timestamp Link | Video ID | Seg ID | Start | End | Text |\n"
+                    table_separator_md_content = "|---|---|---|---|---|---|\n"
+                    full_text = title_md_header + table_header_md_content + table_separator_md_content + "".join(full_text_parts_temp)
+                    
+                    logger.info(f"Transcription via registry successful. Segments: {len(segments)}")
+                    # Send segments to queue
+                    for seg_dict_for_q in segments:
+                        seg_q_msg = {
+                            "type": "transcription_segment", 
+                            "content": seg_dict_for_q, 
+                            "timestamp": datetime.now().isoformat(),
+                            "priority": "high"
+                        }
+                        await transcription_queue.put(json.dumps(seg_q_msg))
+
+                else:
+                    logger.error(f"Transcription via registry for model {transcription_model_id} failed or returned invalid data.")
+                    segments = None # Indicate failure
+                    full_text = None
+            else: # Local Faster Whisper
+                segments, full_text = await transcribe_audio( # This is the original local transcribe_audio
                     actual_audio_path, status_queue, transcription_queue, youtube_video_url
                 )
 

@@ -1,0 +1,54 @@
+version: '3.8'
+
+services:
+  # LiteLLM Proxy Service
+  litellm-proxy:
+    # Use the latest official LiteLLM image by default
+    image: ghcr.io/berriai/litellm:main-v1.69.0-stable
+    container_name: litellm-proxy
+    ports:
+      - "4000:4000" # Map the proxy port
+    volumes:
+      - ./litellm_proxy_config/config.yaml:/app/config.yaml # Mount the config file
+    env_file:
+      - ./backend/app/.env # Load environment variables (including API keys)
+    # environment:
+      # Ensure the master key is passed securely if needed for proxy features
+      # LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY} # Example if you add this to your .env
+      # Set the config path explicitly
+      # CONFIG_PATH: /app/config.yaml # We'll use the command directive instead
+    command:
+      - "--config"
+      - "/app/config.yaml"
+      - "--host"
+      - "0.0.0.0"
+      - "--port"
+      - "4000"
+      # You can add "--detailed_debug" here for more verbose logging if needed
+      # e.g., - "--detailed_debug"
+    networks:
+      - pmoves-network
+    # Always pull the latest image unless building custom
+    pull_policy: always
+    # Uncomment the build section below to build from a local Dockerfile (for custom/forked LiteLLM)
+    # build:
+    #   context: .
+    #   dockerfile: Dockerfile
+    #   args:
+    #     - SOME_BUILD_ARG=VALUE
+    #   # Add MCP-specific build args or settings here if needed
+    #   # See MCP docs for best practices
+
+networks:
+  pmoves-network:
+    driver: bridge
+
+# ---
+# Best Practices:
+# - Use 'image: ghcr.io/berriai/litellm:main-latest' for the latest stable LiteLLM proxy.
+# - Use 'pull_policy: always' to ensure the image is always up to date.
+# - For custom builds, uncomment the build section and comment out the image line.
+# - Add MCP-specific build args or settings as needed for advanced use cases.
+# - See https://docs.litellm.ai/docs/proxy/configs and MCP docs for more.
+# - Add MCP-specific build args or settings as needed for advanced use cases.
+# - See https://docs.litellm.ai/docs/proxy/configs and MCP docs for more.

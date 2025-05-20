@@ -8,12 +8,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Button } from "@/components/ui/button";
-import { 
-  MethodBadge, 
-  SourceBadge, 
-  ScoreBadge 
+import {
+  SourceBadge,
+  ScoreBadge
 } from './SearchBadges';
-import { TABLE_STYLES, getSourceStyle, getMethodStyle } from '@/lib/search-styles';
+import { TABLE_STYLES, getSourceStyle } from '@/lib/search-styles';
 
 /**
  * Component for displaying search results in a table format with enhanced styling
@@ -61,27 +60,37 @@ export function SearchResultsTable({ results, onViewDetails }) {
         <Table>
           <TableHeader>
             <TableRow className={`${TABLE_STYLES.header.bgColor} border-b-2 ${TABLE_STYLES.border.style}`}>
-              <TableHead className={`${TABLE_STYLES.header.textColor} ${TABLE_STYLES.header.fontWeight} ${TABLE_STYLES.columns.score.width} ${TABLE_STYLES.columns.score.textAlign}`}>
+              <TableHead className={`${TABLE_STYLES.header.textColor} ${TABLE_STYLES.header.fontWeight} ${TABLE_STYLES.columns.score.width || 'w-20'} ${TABLE_STYLES.columns.score.textAlign || 'text-right'}`}>
                 <span className="flex items-center justify-end">
                   <span className="mr-1">📊</span> Score
                 </span>
               </TableHead>
-              <TableHead className={`${TABLE_STYLES.header.textColor} ${TABLE_STYLES.header.fontWeight} ${TABLE_STYLES.columns.method.width}`}>
+              <TableHead className={`${TABLE_STYLES.header.textColor} ${TABLE_STYLES.header.fontWeight} w-48`}>
                 <span className="flex items-center">
-                  <span className="mr-1">🔍</span> Method
+                  <span className="mr-1">📄</span> Title
                 </span>
               </TableHead>
-              <TableHead className={`${TABLE_STYLES.header.textColor} ${TABLE_STYLES.header.fontWeight} ${TABLE_STYLES.columns.source.width}`}>
+              <TableHead className={`${TABLE_STYLES.header.textColor} ${TABLE_STYLES.header.fontWeight} ${TABLE_STYLES.columns.source.width || 'w-32'}`}>
                 <span className="flex items-center">
                   <span className="mr-1">📂</span> Source
                 </span>
               </TableHead>
-              <TableHead className={`${TABLE_STYLES.header.textColor} ${TABLE_STYLES.header.fontWeight} ${TABLE_STYLES.columns.content.width}`}>
+              <TableHead className={`${TABLE_STYLES.header.textColor} ${TABLE_STYLES.header.fontWeight} w-32`}>
                 <span className="flex items-center">
-                  <span className="mr-1">📝</span> Content
+                  <span className="mr-1">🏷️</span> Content Type
                 </span>
               </TableHead>
-              <TableHead className={`${TABLE_STYLES.header.textColor} ${TABLE_STYLES.header.fontWeight} w-24 text-center`}>
+              <TableHead className={`${TABLE_STYLES.header.textColor} ${TABLE_STYLES.header.fontWeight} ${TABLE_STYLES.columns.content.width || 'w-72'}`}>
+                <span className="flex items-center">
+                  <span className="mr-1">📝</span> Snippet
+                </span>
+              </TableHead>
+              <TableHead className={`${TABLE_STYLES.header.textColor} ${TABLE_STYLES.header.fontWeight} w-40`}>
+                <span className="flex items-center">
+                  <span className="mr-1">⏱️</span> Timestamp/Dur.
+                </span>
+              </TableHead>
+              <TableHead className={`${TABLE_STYLES.header.textColor} ${TABLE_STYLES.header.fontWeight} w-32 text-center`}>
                 <span className="flex items-center justify-center">
                   <span className="mr-1">⚙️</span> Actions
                 </span>
@@ -90,50 +99,57 @@ export function SearchResultsTable({ results, onViewDetails }) {
           </TableHeader>
           <TableBody>
             {results.map((result, index) => {
-              // Get source and method styles
               const sourceStyle = result.source ? getSourceStyle(result.source) : null;
-              const methodStyle = result.search_method ? getMethodStyle(result.search_method) : null;
-              
-              // Calculate animation delay based on index
               const animationDelay = 0.1 + (index * 0.03);
               
+              // Helper to format duration from seconds to HH:MM:SS
+              const formatDuration = (seconds) => {
+                if (typeof seconds !== 'number' || isNaN(seconds) || seconds < 0) return seconds; // Return as is if not a valid number
+                return new Date(seconds * 1000).toISOString().substr(11, 8);
+              };
+
               return (
-                <TableRow 
+                <TableRow
                   key={`table-row-${result.content_id}-${result.segment_id || index}-${Math.random().toString(36).substr(2, 5)}`}
                   className={`${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'} transition-all duration-300 hover:bg-blue-50/30`}
-                  style={{ 
+                  style={{
                     opacity: animateIn ? 1 : 0,
                     transform: animateIn ? 'translateY(0)' : 'translateY(10px)',
                     transitionDelay: `${animationDelay}s`
                   }}
                 >
-                  <TableCell className={`${TABLE_STYLES.columns.score.textAlign} ${TABLE_STYLES.columns.score.width}`}>
+                  <TableCell className={`${TABLE_STYLES.columns.score.textAlign || 'text-right'} ${TABLE_STYLES.columns.score.width || 'w-20'}`}>
                     <ScoreBadge score={result.similarity} />
                   </TableCell>
-                  <TableCell className={TABLE_STYLES.columns.method.width}>
-                    <MethodBadge method={result.search_method} />
+                  <TableCell className="w-48 truncate" title={result.title}>
+                    {result.title || 'N/A'}
                   </TableCell>
-                  <TableCell className={TABLE_STYLES.columns.source.width}>
+                  <TableCell className={`${TABLE_STYLES.columns.source.width || 'w-32'}`}>
                     <SourceBadge source={result.source} />
                   </TableCell>
-                  <TableCell className={`${TABLE_STYLES.columns.content.width} ${TABLE_STYLES.columns.content.overflow}`}>
-                    <div className="max-h-20 overflow-y-auto p-1 rounded-md hover:bg-gray-50">
-                      {result.content?.substring(0, 150)}
-                      {result.content?.length > 150 && '...'}
+                  <TableCell className="w-32 truncate" title={result.content_type}>
+                    {result.content_type || 'N/A'}
+                  </TableCell>
+                  <TableCell className={`${TABLE_STYLES.columns.content.width || 'w-72'} ${TABLE_STYLES.columns.content.overflow || ''}`}>
+                    <div className="max-h-20 overflow-y-auto p-1 rounded-md hover:bg-gray-50 text-sm truncate" title={result.content}>
+                      {result.content ? `${result.content.substring(0, 100)}${result.content.length > 100 ? '...' : ''}` : 'N/A'}
                     </div>
-                    {result.start_time && result.end_time && (
-                      <div className="text-xs text-gray-500 mt-1 flex items-center">
-                        <span className="mr-1">⏱️</span>
-                        {result.start_time} - {result.end_time}
-                      </div>
+                  </TableCell>
+                  <TableCell className="w-40 text-sm">
+                    {result.duration != null ? (
+                      <span>{formatDuration(result.duration)}</span>
+                    ) : result.start_time && result.end_time ? (
+                      <span>{result.start_time} - {result.end_time}</span>
+                    ) : (
+                      'N/A'
                     )}
                   </TableCell>
-                  <TableCell>
-                    <div className="flex space-x-2 justify-center">
-                      <Button 
-                        variant="outline" 
-                        size="sm" 
-                        className={`h-7 text-xs transition-colors ${methodStyle?.textColor || ''} hover:${methodStyle?.bgColor || 'bg-blue-50'}`}
+                  <TableCell className="w-32">
+                    <div className="flex space-x-1 justify-center">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-7 text-xs transition-colors hover:bg-blue-50 hover:text-blue-700" // Generic hover
                         onClick={() => onViewDetails && onViewDetails(result)}
                       >
                         <span className="flex items-center">
@@ -141,19 +157,20 @@ export function SearchResultsTable({ results, onViewDetails }) {
                         </span>
                       </Button>
                       {result.url && (
-                        <Button 
-                          variant="outline" 
-                          size="sm" 
-                          className={`h-7 text-xs transition-colors ${sourceStyle?.textColor || ''} hover:${sourceStyle?.bgColor || 'bg-blue-50'}`}
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className={`h-7 text-xs transition-colors ${sourceStyle?.textColor || ''} hover:${sourceStyle?.bgColor || 'bg-green-50'}`} // Keep source-specific hover for this one
                           asChild
                         >
-                          <a 
-                            href={result.url} 
-                            target="_blank" 
+                          <a
+                            href={result.url}
+                            target="_blank"
                             rel="noopener noreferrer"
+                            title={`Open source: ${result.url}`}
                           >
                             <span className="flex items-center">
-                              <span className="mr-1">🔗</span> Source
+                              <span className="mr-1">🔗</span> Src
                             </span>
                           </a>
                         </Button>

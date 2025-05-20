@@ -1,0 +1,35 @@
+version: '3.8'
+
+services:
+  crawl4ai:
+    build:
+      context: ./docs/crawl4ai # Assuming crawl4ai repo is cloned here
+      dockerfile: Dockerfile
+      args:
+        # You can customize build arguments here, e.g.,
+        # INSTALL_TYPE: all
+        # ENABLE_GPU: true # Only on compatible platforms
+        C4AI_VER: 0.6.0 # Specify the crawl4ai version
+    ports:
+      - "11235:11235" # FastAPI service port
+      # - "6379:6379" # Optional: Expose Redis if needed for external access/monitoring
+    volumes:
+      # Mount config.yml and .llm.env from your project's config directory
+      # Update the paths below to match your project structure
+      - ./deployment/crawl4ai/config.yml:/app/config.yml
+      - ./deployment/crawl4ai/.llm.env:/app/.llm.env
+      # Optional: Mount a volume for crawl4ai cache if you want persistence
+      # - crawl4ai_cache:/home/appuser/.crawl4ai/cache
+    shm_size: '1g' # Recommended for Playwright
+    restart: unless-stopped
+    # Add healthcheck if needed (can copy from Dockerfile)
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11235/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 5s
+      retries: 3
+
+# Optional: Define named volumes
+# volumes:
+#   crawl4ai_cache: 

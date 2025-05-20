@@ -1,7 +1,0 @@
-{
-  "youtube_video_url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "obsidian_dir": "C:/Users/russe/Documents/GitHub/PMOVES-transcribe-and-fetch/test_output/obsidian",
-  "output_folder": "C:/Users/russe/Documents/GitHub/PMOVES-transcribe-and-fetch/test_output/output",
-  "transcription_model": "faster-whisper",
-  "use_groq": false
-}

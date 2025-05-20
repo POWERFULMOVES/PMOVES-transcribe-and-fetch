@@ -22,8 +22,8 @@ from .utils import (
     save_segments_to_excel,
     format_timestamp # Defined below for clarity, assuming it was in utils
 )
-# Assuming configuration variables are correctly set in '.config'
-from .config import WHISPER_MODEL, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE, GROQ_API_KEY
+# Assuming configuration variables are correctly set in '.app_config'
+from .app_config import WHISPER_MODEL, WHISPER_DEVICE, WHISPER_COMPUTE_TYPE, GROQ_API_KEY, WORKSPACE_ROOT, SUBFOLDERS
 import logging
 import json
 import aiohttp # Keep for potential future API integrations
@@ -45,14 +45,14 @@ try:
     # Rely on queue messages for progress reporting
     console = Console()
     RICH_AVAILABLE = True
-    print("Rich console is available.")
+    logger.info("Rich console is available.")
 except ImportError:
     # Basic fallback if rich is not installed
     class Console:
         def print(self, *args, **kwargs): print(*args)
     console = Console()
     RICH_AVAILABLE = False
-    print("Rich console not found, using standard print.")
+    logger.info("Rich console not found, using standard print.")
 
 
 # --- Logging Setup ---
@@ -659,8 +659,10 @@ async def process_video(
     console.print(f"\n🚀 [bold blue]Starting processing for:[/bold blue] {youtube_video_url}")
 
     # Use defaults if not provided
-    if not output_folder: output_folder = os.path.join(os.getcwd(), "output", "transcriptions")
-    if not model_config: model_config = {"model": "faster-whisper", "use_groq": False}
+    if not output_folder:
+        output_folder = os.path.join(WORKSPACE_ROOT, SUBFOLDERS['transcriptions']['markdown'])
+    if not model_config:
+        model_config = {"model": "faster-whisper", "use_groq": False}
 
     use_groq = model_config.get("use_groq", False)
     transcription_engine = "Groq" if use_groq else "Local Faster-Whisper"
@@ -715,31 +717,28 @@ async def process_video(
 
         # --- 2. Prepare Directories ---
         logger.info("Step 2: Preparing output directories...")
-        # Define subdirs for organization
         # Output Folder Structure
-        mp4_dir = os.path.join(output_folder, 'audio') # Changed mp4 to audio for clarity
-        csv_dir = os.path.join(output_folder, 'csv')
-        excel_dir = os.path.join(output_folder, 'excel')
-        md_dir = os.path.join(output_folder, 'markdown')
-        # pdf_dir = os.path.join(output_folder, 'pdf') # PDF saving not implemented
-
+        audio_dir = os.path.join(WORKSPACE_ROOT, 'transcriptions', SUBFOLDERS['transcriptions']['audio'])
+        csv_dir = os.path.join(WORKSPACE_ROOT, 'transcriptions', 'csv')
+        excel_dir = os.path.join(WORKSPACE_ROOT, 'transcriptions', 'excel')
+        md_dir = os.path.join(WORKSPACE_ROOT, 'transcriptions', SUBFOLDERS['transcriptions']['markdown'])
+        # pdf_dir = os.path.join(output_folder, OUTPUT_SUBFOLDERS["pdf"]) # PDF saving not implemented
         # Obsidian Folder Structure (mirrored)
-        obsidian_md_dir = os.path.join(obsidian_dir, 'markdown')
-        obsidian_csv_dir = os.path.join(obsidian_dir, 'csv')
-        obsidian_excel_dir = os.path.join(obsidian_dir, 'excel')
-        # obsidian_pdf_dir = os.path.join(obsidian_dir, 'pdf') # PDF saving not implemented
-
+        obsidian_md_dir = os.path.join(obsidian_dir, SUBFOLDERS['transcriptions']['markdown'])
+        obsidian_csv_dir = os.path.join(obsidian_dir, SUBFOLDERS['transcriptions']['csv'])
+        obsidian_excel_dir = os.path.join(obsidian_dir, SUBFOLDERS['transcriptions']['excel'])
+        # obsidian_pdf_dir = os.path.join(obsidian_dir, OUTPUT_SUBFOLDERS["pdf"]) # PDF saving not implemented
         # Create all needed directories, use ensure_directory_exists from utils
-        dirs_to_create = [mp4_dir, csv_dir, excel_dir, md_dir,
-                          obsidian_md_dir, obsidian_csv_dir, obsidian_excel_dir]
+        dirs_to_create = [audio_dir, csv_dir, excel_dir, md_dir, obsidian_md_dir, obsidian_csv_dir, obsidian_excel_dir]
         for directory in dirs_to_create:
             try:
-                ensure_directory_exists(directory) # Assumes this handles creation
+                ensure_directory_exists(directory)
                 logger.debug(f"Ensured directory exists: {directory}")
             except Exception as dir_err:
-                # Log warning but attempt to continue if possible
                 logger.warning(f"Could not create or access directory {directory}: {dir_err}")
         logger.info(f"Output directories prepared in '{output_folder}' and '{obsidian_dir}'")
+        # Place downloaded audio in the 'audio' subdirectory
+        audio_output_template = os.path.join(audio_dir, f"{base_filename}.%(ext)s")
 
         # --- 3. Download Audio ---
         await status_queue.put(json.dumps({"type": "status", "content": "Starting audio download..."}))
@@ -747,7 +746,6 @@ async def process_video(
         console.print(f"⬇️ Downloading audio...")
         # Use m4a as preferred format, let yt-dlp determine final extension in template
         # Place downloaded audio in the 'audio' subdirectory
-        audio_output_template = os.path.join(mp4_dir, f"{base_filename}.%(ext)s")
 
         # Define the async progress callback for download_audio
         async def download_progress_callback(progress_percent: float):
@@ -962,9 +960,9 @@ if __name__ == '__main__':
                 msg_json = await q.get()
                 try:
                     msg = json.loads(msg_json)
-                    print(f"<- QUEUE [{name}]: Type='{msg.get('type')}', Content='{str(msg.get('content'))[:100]}...'")
+                    logger.info(f"<- QUEUE [{name}]: Type='{msg.get('type')}', Content='{str(msg.get('content'))[:100]}...'")
                 except json.JSONDecodeError:
-                     print(f"<- QUEUE [{name}]: Received non-JSON message: {msg_json}")
+                     logger.warning(f"<- QUEUE [{name}]: Received non-JSON message: {msg_json}")
                 q.task_done() # Mark message as processed
 
         # Start reader tasks (run in background)

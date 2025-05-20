@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+logger = logging.getLogger(__name__) # Define logger at the top
 from typing import List, Dict, Any, Optional, Union, Callable, Set
 from openai import OpenAI
 from groq import Groq
@@ -14,6 +15,27 @@ from rich.syntax import Syntax
 from dotenv import load_dotenv
 from datetime import datetime
 from tiktoken import get_encoding
+import asyncio # Added for async calls to registry
+
+# Attempt to import from llm_registry_service
+LLM_REGISTRY_AVAILABLE = False
+# generate_text_from_registry is removed from here
+DEFAULT_ANALYSIS_MODEL_ID = "openai/gpt-4o-mini" # Default fallback
+
+try:
+    from .app_config import DEFAULT_ANALYSIS_MODEL_ID as _DEFAULT_ANALYSIS_MODEL_ID_imported
+    from .utils.llm_registry_service import get_llm_registry_service # Import the getter function
+    
+    # generate_text_from_registry is not imported directly anymore
+    DEFAULT_ANALYSIS_MODEL_ID = _DEFAULT_ANALYSIS_MODEL_ID_imported
+    LLM_REGISTRY_AVAILABLE = True
+    logger.info("Successfully imported from LLM Registry and app_config for psearchworking.")
+except ImportError as e:
+    logger.error(f"Failed to import from LLM Registry or app_config in psearchworking: {e}. Analysis via registry will be disabled or use fallbacks.")
+    # generate_text_from_registry remains None
+    # LLM_REGISTRY_AVAILABLE remains False
+    # DEFAULT_ANALYSIS_MODEL_ID remains its fallback value
+
 from dataclasses import dataclass
 from collections import defaultdict, Counter
 from rich.progress import Progress
@@ -36,13 +58,6 @@ else:
     print(f"Warning: .env file not found at {ENV_PATH}")
     # Fallback to default load_dotenv behavior
 load_dotenv()
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
 
 # Display Icons
 SEARCH_ICONS = {
@@ -512,29 +527,15 @@ def get_client() -> Client:
 
 # Global search parameters
 class SearchParameters:
-    """Manages adjustable search parameters."""
-    
+    """Manages search parameters and presets."""
+
     def __init__(self, preset_name="default"):
         # Import here to avoid circular imports
-        from .config.search_config import get_preset, DEFAULT_SEARCH_PARAMS
-        import copy
-        import logging
-        
-        self.logger = logging.getLogger("search_params")
-        
-        # Load parameters from config
-        try:
-            self.params = copy.deepcopy(get_preset(preset_name))
-            self.logger.info(f"Loaded search parameters from preset: {preset_name}")
-        except Exception as e:
-            self.logger.error(f"Failed to load preset {preset_name}: {str(e)}, using defaults")
-            self.params = copy.deepcopy(DEFAULT_SEARCH_PARAMS)
-        
-        # Ensure summary_weight is set (backward compatibility)
-        for tier in self.params:
-            if 'summary_weight' not in self.params[tier]:
-                self.params[tier]['summary_weight'] = 1.0 - self.params[tier].get('content_weight', 0.5)
-    
+        from .config.search_config import get_preset
+        self.params = defaultdict(dict) # Stores tier parameters
+        self.load_preset(preset_name)
+        logger.info(f"Loaded search parameters from preset: {preset_name}")
+
     def load_current(self):
         """Load the current search parameters.
         
@@ -702,8 +703,7 @@ class SearchParameters:
             
         return True
 
-# Initialize global search parameters
-search_params = SearchParameters()
+global_search_params = SearchParameters()
 
 class TokenCounter:
     """Counts tokens for embeddings and LLM generation."""
@@ -808,8 +808,25 @@ class ModelSelector:
         return ModelSelector.MODELS[provider]['embedding']
     
     @staticmethod
-    def generate_analysis(text: str, provider: str = 'openai') -> str:
-        """Generate analysis using the specified provider."""
+    def generate_analysis(text: str, provider: str = 'openai', analysis_model_id_override: Optional[str] = None) -> str: # Added analysis_model_id_override
+        """Generate analysis using the specified provider or a specific model_id via LLM Registry."""
+        
+        chosen_model_id = analysis_model_id_override
+        
+        if not chosen_model_id:
+            # Fallback to provider-based selection if no override
+            if provider == 'openai':
+                chosen_model_id = DEFAULT_ANALYSIS_MODEL_ID # Or a specific OpenAI model from config
+            elif provider == 'groq':
+                # Need a default Groq analysis model ID from config or registry
+                # For now, let's assume a default or that this path will be less used.
+                chosen_model_id = os.getenv("DEFAULT_GROQ_ANALYSIS_MODEL_ID", "groq/llama3-70b-8192") # Example
+            else:
+                logger.error(f"Unsupported provider '{provider}' for analysis without a model_id_override.")
+                return f"Error: Unsupported provider '{provider}' for analysis."
+
+        logger.info(f"Attempting analysis with model_id: {chosen_model_id}")
+
         # Enhanced system prompt with formatting instructions
         system_prompt = '''You are an AI system that analyzes search results from a database containing:
 1. video_transcriptions: Individual video segments with timestamps
@@ -878,64 +895,101 @@ Summary of findings and recommendations'''
                 text = text[:text_chars_to_keep] + "\n...[Content truncated due to token limits]"
                 console.print(f"[yellow]Content truncated to fit within token limits. Keeping approximately {text_chars_to_keep} characters.[/yellow]")
             
-            # Count input tokens for stats
+            # Count input tokens for stats (assuming generate_text_from_registry doesn't do this for the counter)
+            # This might need adjustment based on how token counting is centralized.
             token_counter.count_generation_tokens(system_prompt + text)
-            
-            if provider == 'openai':
+
+            if LLM_REGISTRY_AVAILABLE: # Check if registry is available
                 try:
-                    response = openai_client.chat.completions.create(
-                        model=ModelSelector.get_chat_model('openai'),
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": text}
-                        ],
+                    # Get the LLM registry service instance
+                    registry_service = get_llm_registry_service()
+
+                    # Use asyncio.run to call the async function from this sync context
+                    # This is generally not ideal for performance in an async app, but psearchworking is sync.
+                    # If psearchworking becomes async, this can be awaited directly.
+                    output_text = asyncio.run(registry_service.generate_text( # Call method on instance
+                        model_id=chosen_model_id,
+                        prompt=system_prompt + text,
+                        # Pass other kwargs if generate_text supports them (e.g., temperature, max_tokens)
                         temperature=0.3,
-                        max_tokens=2000  # Limit response size
-                    )
-                    output_text = response.choices[0].message.content
-                    # Count output tokens
-                    token_counter.count_generation_tokens("", output_text)
+                        max_tokens=2000 # Example
+                    ))
+
+                    if output_text is None:
+                        logger.error(f"Analysis with model {chosen_model_id} via registry returned None.")
+                        return f"Error: Analysis generation failed with model {chosen_model_id} (returned None)."
+
+                    token_counter.count_generation_tokens("", output_text) # Count output
                     return output_text
                 except Exception as e:
                     error_msg = str(e)
-                    if "maximum context length" in error_msg or "context_length_exceeded" in error_msg:
-                        console.print(f"[red]OpenAI context length exceeded. Try reducing the number of search results.[/red]")
-                        return "Error: The amount of search result data exceeds OpenAI's token limits. Please try a more specific search or reduce the number of results."
+                    logger.error(f"Error during analysis with model {chosen_model_id} via registry: {error_msg}", exc_info=True)
+                    # Check for common error messages related to context length or rate limits
+                    if "context length" in error_msg.lower() or "context_length_exceeded" in error_msg.lower() or "request too large" in error_msg.lower():
+                        console.print(f"[red]Context length/token limit exceeded for model {chosen_model_id}. Try reducing search results.[/red]")
+                        return f"Error: Data exceeds token limits for model {chosen_model_id}. Try a more specific search or fewer results."
+                    elif "rate_limit_exceeded" in error_msg.lower():
+                        console.print(f"[red]Rate limit exceeded for model {chosen_model_id}.[/red]")
+                        return f"Error: Rate limit exceeded for model {chosen_model_id}."
                     else:
-                        console.print(f"[red]OpenAI error: {error_msg}[/red]")
-                        return f"Error generating analysis: {error_msg}"
-                
-            elif provider == 'groq':
-                try:
-                    response = groq_client.chat.completions.create(
-                        model=ModelSelector.get_chat_model('groq'),
-                        messages=[
-                            {"role": "system", "content": system_prompt},
-                            {"role": "user", "content": text}
-                        ],
-                        temperature=0.3,
-                        max_tokens=1000  # Limit response size even more for Groq
-                    )
-                    output_text = response.choices[0].message.content
-                    # Count output tokens
-                    token_counter.count_generation_tokens("", output_text)
-                    return output_text
-                except Exception as e:
-                    error_msg = str(e)
-                    if "Request too large" in error_msg or "rate_limit_exceeded" in error_msg:
-                        console.print(f"[red]Groq token limit exceeded. Try reducing the number of search results.[/red]")
-                        return "Error: The amount of search result data exceeds Groq's token limits. Please try a more specific search or reduce the number of results."
-                    else:
-                        console.print(f"[red]Groq error: {error_msg}[/red]")
-                        return f"Error generating analysis: {error_msg}"
+                        console.print(f"[red]Error generating analysis with {chosen_model_id} via registry: {error_msg}[/red]")
+                        return f"Error generating analysis with {chosen_model_id}: {error_msg}"
             else:
-                return "Error: Unsupported provider"
+                # Fallback to old direct client calls if registry is not available
+                logger.warning("LLM Registry not available, falling back to direct client calls for analysis.")
+                if provider == 'openai':
+                    try:
+                        response = openai_client.chat.completions.create(
+                            model=ModelSelector.get_chat_model('openai'), # Uses old static model
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": text}
+                            ],
+                            temperature=0.3, max_tokens=2000
+                        )
+                        output_text = response.choices[0].message.content
+                        token_counter.count_generation_tokens("", output_text)
+                        return output_text
+                    except Exception as e_openai: # Handle OpenAI specific errors
+                        # (existing OpenAI error handling logic)
+                        error_msg = str(e_openai)
+                        if "maximum context length" in error_msg or "context_length_exceeded" in error_msg:
+                            console.print(f"[red]OpenAI context length exceeded. Try reducing the number of search results.[/red]")
+                            return "Error: The amount of search result data exceeds OpenAI's token limits. Please try a more specific search or reduce the number of results."
+                        else:
+                            console.print(f"[red]OpenAI error: {error_msg}[/red]")
+                            return f"Error generating analysis: {error_msg}"
+
+                elif provider == 'groq':
+                    try:
+                        response = groq_client.chat.completions.create(
+                            model=ModelSelector.get_chat_model('groq'), # Uses old static model
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": text}
+                            ],
+                            temperature=0.3, max_tokens=1000
+                        )
+                        output_text = response.choices[0].message.content
+                        token_counter.count_generation_tokens("", output_text)
+                        return output_text
+                    except Exception as e_groq: # Handle Groq specific errors
+                        # (existing Groq error handling logic)
+                        error_msg = str(e_groq)
+                        if "Request too large" in error_msg or "rate_limit_exceeded" in error_msg:
+                            console.print(f"[red]Groq token limit exceeded. Try reducing the number of search results.[/red]")
+                            return "Error: The amount of search result data exceeds Groq's token limits. Please try a more specific search or reduce the number of results."
+                        else:
+                            console.print(f"[red]Groq error: {error_msg}[/red]")
+                            return f"Error generating analysis: {error_msg}"
+                else:
+                    return f"Error: Unsupported provider '{provider}' (and LLM Registry not available)."
                 
         except Exception as e:
-            console.print(f"[red]Error generating analysis with {provider}: {str(e)}[/]")
+            console.print(f"[red]Error generating analysis with {provider} (model: {chosen_model_id}): {str(e)}[/]")
             return f"Error generating analysis: {str(e)}"
 
-def analyze_search_results(search_results, provider='openai', max_results=20):
+def analyze_search_results(search_results, provider='openai', max_results=20, analysis_model_id: Optional[str] = None): # Added analysis_model_id
     """Generate an analysis of search results using an LLM."""
     if not search_results:
         return "No results to analyze."
@@ -1011,8 +1065,8 @@ def analyze_search_results(search_results, provider='openai', max_results=20):
         text += "\n"
     
     # Generate the analysis
-    console.print("\n[bold magenta]Generating analysis with " + provider + "...[/bold magenta]")
-    return ModelSelector.generate_analysis(text, provider)
+    console.print(f"\n[bold magenta]Generating analysis with {provider} (Model ID: {analysis_model_id or 'default'})...[/bold magenta]")
+    return ModelSelector.generate_analysis(text, provider, analysis_model_id_override=analysis_model_id)
 
 def save_results(results: List[SearchResult], query: str, format_choice: str, openai_analysis: str = None, groq_analysis: str = None):
     """Save search results and analyses to a file."""
@@ -1179,7 +1233,7 @@ def search_all(query, max_results=30, skip_prompts=False, run_analysis=True):
     methods = ["dot_product", "keyword"]
     
     # Display parameters
-    search_params = SearchParameters()
+    search_params = global_search_params
     search_params.load_current()
     all_params = search_params.get_all_params()
     
@@ -1576,7 +1630,7 @@ def display_tier_results(results: List[SearchResult], tier_name: str):
     
     console.print(table)
     console.print(f"\nParameters used for {tier_name} tier:")
-    params = search_params.get_params(tier_name.lower())
+    params = global_search_params.get_params(tier_name.lower())
     for key, value in params.items():
         console.print(f"  {key}: {value}")
 
@@ -1990,7 +2044,7 @@ def display_results_pandas(results: List[SearchResult], title: str):
 
 def main():
     """Main function for the terminal interface"""
-    search_params.load_current()
+    global_search_params.load_current()
     
     # Whether to run analysis by default
     run_analysis = True
@@ -2005,7 +2059,7 @@ def main():
         console.print("4. [bold]Exit[/bold] - Exit program")
         
         # Show current settings
-        params = search_params.get_all_params()
+        params = global_search_params.get_all_params()
         console.print("\n[bold cyan]Current Settings:[/bold cyan]")
         console.print(f"📊 Search tiers: Fine-grained, Contextual, Overview")
         console.print(f"🔍 Total max results: {sum(params[tier]['max_results'] for tier in params)}")
@@ -2087,7 +2141,7 @@ def main():
 
 def adjust_tier_params(tier):
     """Helper function to adjust parameters for a specific search tier"""
-    params = search_params.get_params(tier)
+    params = global_search_params.get_params(tier)
     
     console.print(f"\n[bold cyan]Adjusting {tier.title()} Parameters[/bold cyan]")
     for param_name, value in params.items():
@@ -2121,7 +2175,7 @@ def adjust_tier_params(tier):
             try:
                 new_value = float(input().strip() or str(current_value))
                 if 0.0 <= new_value <= 1.0:
-                    search_params.update_params(tier, **{param_name: new_value})
+                    global_search_params.update_params(tier, **{param_name: new_value})
                     console.print(f"[green]Updated {param_name} to {new_value}[/green]")
                 else:
                     console.print("[yellow]Value must be between 0.0 and 1.0. No changes made.[/yellow]")
@@ -2134,7 +2188,7 @@ def adjust_tier_params(tier):
             try:
                 new_value = float(input().strip() or str(current_value))
                 if 0.0 <= new_value <= 1.0:
-                    search_params.update_params(tier, **{param_name: new_value})
+                    global_search_params.update_params(tier, **{param_name: new_value})
                     console.print(f"[green]Updated {param_name} to {new_value}[/green]")
                 else:
                     console.print("[yellow]Value must be between 0.0 and 1.0. No changes made.[/yellow]")
@@ -2147,7 +2201,7 @@ def adjust_tier_params(tier):
             try:
                 new_value = int(input().strip() or str(current_value))
                 if 1 <= new_value <= 100:
-                    search_params.update_params(tier, **{param_name: new_value})
+                    global_search_params.update_params(tier, **{param_name: new_value})
                     console.print(f"[green]Updated {param_name} to {new_value}[/green]")
                 else:
                     console.print("[yellow]Value must be between 1 and 100. No changes made.[/yellow]")
@@ -2165,7 +2219,7 @@ def adjust_tier_params(tier):
                     new_value = value_type(new_value_str)
                 
                 # Update parameter
-                search_params.update_params(tier, **{param_name: new_value})
+                global_search_params.update_params(tier, **{param_name: new_value})
                 console.print(f"[green]Updated {param_name} to {new_value}[/green]")
             except ValueError:
                 console.print("[yellow]Invalid value. No changes made.[/yellow]")
@@ -2176,7 +2230,7 @@ def adjust_tier_params(tier):
 def load_preset_menu():
     """Helper function to load a preset"""
     console.print("\n[bold cyan]Available Presets[/bold cyan]")
-    presets = search_params.list_presets()
+    presets = global_search_params.list_presets()
     
     if not presets:
         console.print("[yellow]No saved presets found.[/yellow]")
@@ -2198,7 +2252,7 @@ def load_preset_menu():
         preset_name = choice
     
     if preset_name:
-        search_params.load_preset(preset_name)
+        global_search_params.load_preset(preset_name)
         console.print(f"[green]Loaded preset '{preset_name}'[/green]")
     else:
         console.print("[yellow]Invalid preset. Please try again.[/yellow]")
@@ -2214,14 +2268,14 @@ def save_preset_menu():
         return
     
     # Confirm if preset exists
-    if preset_name in search_params.list_presets():
+    if preset_name in global_search_params.list_presets():
         confirm = input(f"Preset '{preset_name}' already exists. Overwrite? (y/n): ").strip().lower()
         if confirm != 'y':
             console.print("[yellow]Save cancelled.[/yellow]")
             return
     
     # Save preset
-    search_params.save_preset(preset_name)
+    global_search_params.save_preset(preset_name)
     console.print(f"[green]Saved preset '{preset_name}'[/green]")
 
 if __name__ == "__main__":

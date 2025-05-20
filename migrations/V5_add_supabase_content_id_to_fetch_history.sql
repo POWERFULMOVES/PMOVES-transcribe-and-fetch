@@ -1,0 +1,1 @@
+ALTER TABLE fetch_history ADD COLUMN supabase_content_id UUID NULL;

@@ -64,3 +64,8 @@ pmoves-v1-ref
 
 # Ignore fixes folder
 fixes/
+# embedded git repos
+docs/crawl4ai 
+docs/litellm
+docs/pipecat
+docs/pmoves-pipecat

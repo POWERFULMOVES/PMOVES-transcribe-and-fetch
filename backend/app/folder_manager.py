@@ -1,6 +1,7 @@
 import json
 import os
 from typing import Dict
+from .app_config import WORKSPACE_ROOT, SUBFOLDERS
 
 class FolderManager:
     def __init__(self, config_file: str = 'folder_config.json'):
@@ -12,12 +13,15 @@ class FolderManager:
         if os.path.exists(self.config_file):
             with open(self.config_file, 'r') as f:
                 return json.load(f)
+        # Use centralized config for defaults
         return {
-            'main': 'output',
-            'mp4': 'output/mp4',
-            'csv': 'output/csv',
-            'xlsx': 'output/xlsx',
-            'obsidian': 'output/obsidian'
+            'main': WORKSPACE_ROOT,
+            'audio': os.path.join(WORKSPACE_ROOT, 'transcriptions', SUBFOLDERS['transcriptions']['audio']),
+            'markdown': os.path.join(WORKSPACE_ROOT, 'transcriptions', SUBFOLDERS['transcriptions']['markdown']),
+            'pdf': os.path.join(WORKSPACE_ROOT, 'transcriptions', SUBFOLDERS['transcriptions']['pdf']),
+            'downloads': os.path.join(WORKSPACE_ROOT, 'downloads'),
+            'fetches': os.path.join(WORKSPACE_ROOT, 'fetches'),
+            'uploads': os.path.join(WORKSPACE_ROOT, 'uploads')
         }
 
     # Save the current folder configuration to the JSON file

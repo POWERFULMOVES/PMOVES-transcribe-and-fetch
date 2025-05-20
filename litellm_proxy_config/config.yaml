@@ -1,0 +1,290 @@
+# LiteLLM Proxy Configuration
+
+# Model List: Define the models the proxy should make available.
+# API keys and other sensitive information should be passed as environment variables.
+# Example: api_key: os.environ/OPENAI_API_KEY
+model_list:
+  # Anthropic
+  - model_name: anthropic-claude-3.5-sonnet-proxy
+    litellm_params:
+      model: anthropic/claude-3.5-sonnet-20240620
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  - model_name: anthropic-claude-3.5-chat
+    litellm_params:
+      model: anthropic/claude-3.5-sonnet-20240620
+      api_key: os.environ/ANTHROPIC_API_KEY
+
+  # Deepseek
+  - model_name: deepseek-chat-proxy
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  - model_name: deepseek-chat
+    litellm_params:
+      model: deepseek/deepseek-chat
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  - model_name: deepseek-coder
+    litellm_params:
+      model: deepseek/deepseek-coder
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  - model_name: deepseek-reasoner
+    litellm_params:
+      model: deepseek/deepseek-reasoner
+      api_key: os.environ/DEEPSEEK_API_KEY
+
+  # Google Gemini
+  - model_name: gemini-1.5-pro-proxy
+    litellm_params:
+      model: gemini/gemini-1.5-pro-latest
+      api_key: os.environ/GOOGLE_API_KEY
+      # You might need to specify a region or other params for Vertex AI / Google AI Studio
+      # Refer to LiteLLM documentation for Google provider specifics.
+
+  # Google Gemini (Added 2.5 Flash based on test script requirement)
+  - model_name: gemini/gemini-2.5-flash-preview-04-17 # Alias matching the test script
+    litellm_params:
+      model: gemini/gemini-2.5-flash-preview-04-17 # Actual model name for the provider
+      api_key: os.environ/GEMINI_API_KEY # Use GEMINI_API_KEY as per backend .env
+
+  # Groq
+  - model_name: groq/llama3-70b-8192 # This is the ID you'll use in your backend
+    litellm_params:
+      model: groq/llama3-70b-8192 # This is the model name as expected by the Groq API
+      api_key: os.environ/GROQ_API_KEY # Reference the environment variable
+      api_base: https://api.groq.com/openai/v1 # Groq's OpenAI-compatible base URL
+      provider: groq # Explicitly specify the provider
+
+  # You might also want to add an alias for simplicity
+  - model_name: groq-llama3-70b # A simpler alias
+    litellm_params:
+      model: groq/llama3-70b-8192
+      api_key: os.environ/GROQ_API_KEY
+      api_base: https://api.groq.com/openai/v1
+      provider: groq
+
+  # Add other Groq models if needed (e.g., llama3-8b-8192)
+  - model_name: groq/llama3-8b-8192
+    litellm_params:
+      model: groq/llama3-8b-8192
+      api_key: os.environ/GROQ_API_KEY
+      api_base: https://api.groq.com/openai/v1
+      provider: groq
+
+  - model_name: groq-llama3-8b # Alias
+    litellm_params:
+      model: groq/llama3-8b-8192
+      api_key: os.environ/GROQ_API_KEY
+      api_base: https://api.groq.com/openai/v1
+      provider: groq
+
+  # Hugging Face (Serverless via Together AI)
+  - model_name: hf-mistral-7b-instruct-proxy
+    litellm_params:
+      model: huggingface/together/mistralai/Mistral-7B-Instruct-v0.1
+      api_key: os.environ/HF_TOKEN
+
+  - model_name: hf-mistral-7b-instruct-chat
+    litellm_params:
+      model: huggingface/together/mistralai/Mistral-7B-Instruct-v0.1
+      api_key: os.environ/HF_TOKEN
+
+  - model_name: hf-llama3-vision
+    litellm_params:
+      model: huggingface/sambanova/meta-llama/Llama-3.2-11B-Vision-Instruct
+      api_key: os.environ/HF_TOKEN
+
+  - model_name: hf-mistral-embed
+    litellm_params:
+      model: huggingface/together/mistralai/Mistral-Embed
+      api_key: os.environ/HF_TOKEN
+
+  - model_name: hf-whisper-audio
+    litellm_params:
+      model: huggingface/openai/whisper-large
+      api_key: os.environ/HF_TOKEN
+
+  - model_name: hf-stable-diffusion-image
+    litellm_params:
+      model: huggingface/stabilityai/stable-diffusion-xl-base-1.0
+      api_key: os.environ/HF_TOKEN
+
+  # LM Studio
+  - model_name: lmstudio-llama3-8b-proxy
+    litellm_params:
+      model: lm_studio/llama-3-8b-instruct
+      api_base: os.environ/LM_STUDIO_API_BASE
+      # api_key: os.environ/LM_STUDIO_API_KEY # Optional
+
+  - model_name: lmstudio-llama3-8b-chat
+    litellm_params:
+      model: lm_studio/llama-3-8b-instruct
+      api_base: os.environ/LM_STUDIO_API_BASE
+
+  # Nvidia NIM
+  - model_name: nvidia-nim-llama3-8b-proxy
+    litellm_params:
+      model: nvidia_nim/meta/llama3-8b-instruct
+      api_key: os.environ/NVIDIA_NIM_API_KEY
+
+  - model_name: nvidia-nim-llama3-8b-chat
+    litellm_params:
+      model: nvidia_nim/meta/llama3-8b-instruct
+      api_key: os.environ/NVIDIA_NIM_API_KEY
+
+  - model_name: nvidia-nim-embedqa
+    litellm_params:
+      model: nvidia_nim/nvidia/nv-embedqa-e5-v5
+      api_key: os.environ/NVIDIA_NIM_API_KEY
+
+  # Ollama
+  - model_name: ollama-model-proxy
+    litellm_params:
+      model: ollama/gemma3 # Replace 'your-ollama-model' with the actual model name (e.g., llama2, mistral)
+      api_base: os.environ/OLLAMA_API_BASE # e.g., http://localhost:11434
+
+  # OpenAI
+  - model_name: gpt-4.1-mini-proxy # This is the name you will use to call the model via the proxy
+    litellm_params:
+      model: openai/gpt-4.1-mini-2025-04-14 # This is the actual model name for the provider
+      api_key: os.environ/OPENAI_API_KEY
+      # api_base: "https://api.openai.com/v1" # Optional: if not using default
+
+  - model_name: openai-gpt-4o-chat
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: openai-gpt-4o-vision
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: openai-text-embedding-ada-002
+    litellm_params:
+      model: openai/text-embedding-ada-002
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: openai-whisper-1
+    litellm_params:
+      model: openai/whisper-1
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: openai-tts-1
+    litellm_params:
+      model: openai/tts-1
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: openai-dall-e-3
+    litellm_params:
+      model: openai/dall-e-3
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: openai-response-api
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  # General/Endpoint Aliases (for OpenAI and compatible providers)
+  - model_name: openai-chat
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: openai-vision
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: openai-embedding
+    litellm_params:
+      model: openai/text-embedding-ada-002
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: openai-audio-transcription
+    litellm_params:
+      model: openai/whisper-1
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: openai-audio-tts
+    litellm_params:
+      model: openai/tts-1
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: openai-image
+    litellm_params:
+      model: openai/dall-e-3
+      api_key: os.environ/OPENAI_API_KEY
+
+  - model_name: openai-response
+    litellm_params:
+      model: openai/gpt-4o
+      api_key: os.environ/OPENAI_API_KEY
+
+  # Perplexity AI
+  - model_name: perplexity-sonar-small-proxy
+    litellm_params:
+      model: perplexity/sonar-small-chat
+      api_key: os.environ/PERPLEXITYAI_API_KEY
+
+  - model_name: perplexity-sonar-pro
+    litellm_params:
+      model: perplexity/sonar-pro
+      api_key: os.environ/PERPLEXITYAI_API_KEY
+
+  - model_name: perplexity-sonar-reasoning
+    litellm_params:
+      model: perplexity/sonar-reasoning
+      api_key: os.environ/PERPLEXITYAI_API_KEY
+
+  - model_name: perplexity-sonar-deep-research
+    litellm_params:
+      model: perplexity/sonar-deep-research
+      api_key: os.environ/PERPLEXITYAI_API_KEY
+
+
+# LiteLLM Settings: General settings for LiteLLM.
+litellm_settings:
+  # Enable model discovery - the proxy will call the provider's /models endpoint
+  # to get a list of available models. This is key for our dynamic model registry.
+  check_provider_endpoint: true
+  # You can add other litellm settings here, e.g., fallbacks, retries, logging
+  # fallbacks: [{"openai/gpt-3.5-turbo": ["ollama/your-ollama-model"]}]
+  # num_retries: 3
+  log_raw_request_response: true # Enable raw request/response logging
+  callbacks: ["otel"] # Enable OpenTelemetry callback
+
+# General Settings for the Proxy Server
+general_settings:
+  # Master Key for proxy administration (e.g., generating virtual keys).
+  # Should be set via LITELLM_MASTER_KEY environment variable for security.
+  # master_key: "sk-1234567890abcdefghijklmnop" # Example, DO NOT commit real keys
+
+  # Database URL for storing virtual keys, spend, etc.
+  # Required for features like virtual keys, user management, spend tracking.
+  # Should be set via DATABASE_URL environment variable.
+  # database_url: "postgresql://user:password@host:port/dbname"
+
+  # Enable detailed debugging (can be verbose, use for development)
+  # detailed_debug: true
+
+# Router Settings (Optional, for more advanced routing, caching, etc.)
+# router_settings:
+  # enable_redis: true
+  # redis_host: "localhost"
+  # redis_port: 6379
+  # cache_responses: true
+  # cache_ttl: 3600 # Cache responses for 1 hour
+
+  # You can use the 'include' directive to load parts of the config from other files
+  # include:
+  #  - more_models.yaml
+  #  - advanced_settings.yaml
+
+mcp_servers:
+  # Example MCP Server configuration
+  my_mcp_server:
+    url: "http://localhost:8000/sse" # Replace with the actual URL of your MCP server

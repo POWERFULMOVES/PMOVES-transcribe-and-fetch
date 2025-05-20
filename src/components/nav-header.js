@@ -4,6 +4,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { ThemeToggle } from "@/components/theme-toggle";
 import { permanentMarker } from '@/app/fonts';
+import AuthButton from './auth/AuthButton';
 
 export function NavHeader() {
   return (
@@ -15,8 +16,8 @@ export function NavHeader() {
               <Image
                 src="/images/pmoves.svg"
                 alt="PMOVES Logo"
-                width={92}
-                height={32}
+                width={400}
+                height={139}
                 className="logo-glow logo-text"
                 priority
                 style={{
@@ -64,7 +65,10 @@ export function NavHeader() {
               Vector Search
             </Link>
           </nav>
-          <ThemeToggle />
+          <div className="flex items-center space-x-4">
+            <AuthButton />
+            <ThemeToggle />
+          </div>
         </div>
       </div>
     </header>

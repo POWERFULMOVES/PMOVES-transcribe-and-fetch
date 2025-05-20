@@ -1,0 +1,34 @@
+version: '3.8'
+
+services:
+  litellm-proxy:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm-proxy
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./litellm_proxy_config/config.yaml:/app/config.yaml
+    env_file:
+      - ./.env
+    environment:
+      CONFIG_PATH: /app/config.yaml
+    networks:
+      - pmoves-pipecat-net
+
+  pipecat-agent:
+    build:
+      context: ./pmoves-pipecat-agent
+    container_name: pipecat-agent
+    environment:
+      - SUPABASE_ID=${SUPABASE_ID}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - CHAT_CHANNEL=main-room
+      - CALL_WORD=@SupabaseAgent
+    ports:
+      - "8001:8000"
+    networks:
+      - pmoves-pipecat-net
+
+networks:
+  pmoves-pipecat-net:
+    driver: bridge 

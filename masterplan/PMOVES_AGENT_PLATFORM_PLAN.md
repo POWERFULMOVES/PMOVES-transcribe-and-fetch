@@ -1,0 +1,478 @@
+# PMOVES Agent Platform: Registry, Orchestrator, and Communication Planning
+
+## Overview
+This document serves as the planning and coordination hub for the next-generation PMOVES agent platform. It tracks all design, research, and implementation tasks related to:
+- Agent Registry (inspired by the LLM registry in LiteLLM)
+- Orchestrator (Achon-inspired, dynamic agent creation and workflow management)
+- Agent Communication Layer (Pipecat, Supabase Realtime, etc.)
+- Documentation and blueprinting
+- Task tracking and cross-referencing with relevant repositories and documentation
+
+---
+
+## Key References
+- [LiteLLM Registry & agent_llm_plan.md](./agent_llm_plan.md)
+- [Achon repo (for orchestrator patterns)](https://github.com/achon/achon) *(replace with actual URL if private/local)*
+- [Pipecat repo (for communication layer)](https://github.com/pipecat-ai/pipecat) *(replace with actual URL if private/local)*
+- [Supabase Realtime Docs](https://supabase.com/docs/guides/realtime)
+- [PMOVES.AI.TEAM Architecture](./PMOVES_AI_TEAM.md)
+
+---
+
+## Agent Registry (inspired by the LLM registry in LiteLLM)
+
+This section details the design and implementation plan for the Agent Registry, a central service for dynamic discovery, registration, and management of all agents.
+
+### Agent Metadata Schema
+- **Agent ID:** Unique identifier for each agent.
+- **Name:** Human-readable name of the agent.
+- **Description:** Brief description of the agent's capabilities and purpose.
+- **Capabilities:** JSONB field to store agent capabilities (e.g., text, vision, function calling).
+- **Status:** Current operational status of the agent.
+- **Endpoint:** URL or connection string for the agent's communication interface.
+- **Dependencies:** JSONB field to store any external dependencies or resources the agent needs.
+- **Version:** Version number of the agent's software.
+- **Tags:** JSONB field to store any additional metadata or tags for the agent.
+- **Last Heartbeat:** Timestamp of the last heartbeat signal received from the agent.
+- **Config:** JSONB field to store any configuration settings for the agent.
+
+### Registry Service Responsibilities
+- **Registration:** Allow agents to register themselves with the registry.
+- **Heartbeat:** Receive and process heartbeat signals from agents to verify their health and availability.
+- **Retrieval:** Provide metadata about available agents to the orchestrator and UI.
+- **Deletion:** Remove agents from the registry when they are no longer available or need to be decommissioned.
+
+### API Endpoint Design
+- **POST /agents:** Endpoint for agents to register themselves with the registry.
+- **GET /agents:** Endpoint for retrieving metadata about available agents.
+- **PUT /agents/{agent_id}/heartbeat:** Endpoint for agents to send heartbeat signals.
+- **DELETE /agents/{agent_id}:** Endpoint for removing an agent from the registry.
+
+### Implementation Notes
+- **Asynchronous Database Calls:** The registry service will use asynchronous database calls to interact with the PostgreSQL database.
+- **Data Integrity:** Constraints and indices will be added to ensure data integrity and efficient querying.
+- **Scaling Strategies:** The FastAPI application serving the registry API can be scaled horizontally by running multiple instances behind a load balancer.
+- **High Availability and Reliability:** Leverage Supabase's built-in backup and point-in-time recovery features.
+- **Migration:** Plan for a migration process to move any data from the prototype storage (if applicable) into the new PostgreSQL database.
+
+### Persistent Storage and Scaling Plan for Agent Registry
+
+To move beyond the initial in-memory or file-based prototype, the Agent Registry requires a robust persistent storage solution and a plan for scaling to handle a growing number of agents and requests.
+
+*   **Database Choice:** Given the project's existing reliance on Supabase and the advantages of PostgreSQL for structured data and potential future-proofing (e.g., PostGIS for location data, `pg_vector` for embedding-related agent metadata), **Supabase (PostgreSQL)** is the recommended choice for the Agent Registry's persistent storage.
+
+*   **Schema Implementation:** The Agent Metadata Schema defined in `docs/masterplan/PMOVES_AGENT_REGISTRY_SCHEMA.md` will be translated into a corresponding PostgreSQL table structure. This will involve creating a table with columns for each metadata field (agent_id, name, description, capabilities (using JSONB), status, endpoint, dependencies (JSONB), version, tags (JSONB), last_heartbeat, config (JSONB)). Constraints and indices will be added to ensure data integrity and efficient querying.
+
+*   **Database Interaction:** The current in-memory/file-based data handling in the registry service will be replaced with asynchronous database calls using a suitable PostgreSQL driver (e.g., `asyncpg` or integrating with a higher-level ORM like SQLAlchemy if already in use elsewhere in the backend). Endpoints for registration, heartbeat, retrieval, and deletion will interact directly with the database.
+
+*   **Scaling Strategies:**
+    *   **Registry Service:** The FastAPI application serving the registry API can be scaled horizontally by running multiple instances behind a load balancer. This is a standard approach for handling increased request volume.
+    *   **Database:** Supabase provides options for scaling the PostgreSQL database instance as data volume and query load increase. This might involve upgrading the database tier or exploring read replicas for read-heavy workloads.
+
+*   **High Availability and Reliability:**
+    *   Leverage Supabase's built-in backup and point-in-time recovery features.
+    *   Consider database replication for failover if high availability is critical.
+    *   Implement health checks for the registry service instances to allow load balancers to route traffic away from unhealthy instances.
+
+*   **Migration:** Plan for a migration process to move any data from the prototype storage (if applicable) into the new PostgreSQL database.
+
+---
+
+## Supabase UI, Realtime Chat, and Agent Avatars: Integration Plan
+
+This section documents the integration of Supabase UI features, agent avatars, realtime chat, and their orchestration with the PMOVES agent platform. It synthesizes current capabilities and outlines how these components will work together:
+
+### Supabase UI Features
+- **Infinite Query:** Already used for efficient paginated data fetching (e.g., video transcriptions, embeddings).
+- **Realtime Chat:** Supabase Realtime enables live chat channels. Each agent or user can be a participant.
+- **Avatars:** Agents and users can have avatars (image URLs or generated), displayed in chat UIs and agent directories.
+- **Auth & Presence:** Supabase UI provides authentication components and user context, supporting presence and avatar assignment.
+
+### Agent-as-Avatar in Realtime Chat
+- Orchestrator can spin up agents as chat participants, each with a unique persona and avatar.
+- Agents register with the registry and are assigned to chat rooms, subscribing to Supabase Realtime channels.
+- Agents can communicate via text, voice, or images (using Pipecat for multimodal responses), appearing as avatars in the chat UI.
+
+### Pipecat Multimodal Communication
+- Pipecat powers real-time voice, text, and image communication for agents.
+- Agents can listen/respond to chat messages in real time, using Supabase Realtime channels.
+- Multimodal responses are rendered in the chat UI using Supabase UI components.
+
+### UI/UX Implementation Notes
+- Supabase UI (React) provides ready-to-use components for chat, avatars, buttons, icons, and typography.
+- Storybook can be used to explore and prototype UI components.
+- Tailwind CSS is used for styling and layout.
+
+### Next Steps (for this integration)
+1. Prototype or enhance chat UI with avatars and agent presence using Supabase UI components.
+2. Integrate orchestrator logic for dynamic agent spawning and registration in chat rooms.
+3. Connect Pipecat for multimodal agent communication in chat.
+4. Use Context7 and other MCP tools to further enhance UI and agent features as needed.
+
+---
+
+## Supabase Agent: Search & Upsert Integration Plan (Refined)
+
+The Supabase Agent will combine advanced search, upsert, table management, and backend function orchestration. In addition to previously discussed upsert and management features, the agent will leverage `psearchworking.py` for comprehensive, parameterized, and interactive search.
+
+### Integration with `psearchworking.py`
+- **Comprehensive Search:**
+  - Supports dot product (vector), keyword, and hybrid search across all major Supabase tables (video transcriptions, document embeddings, full transcripts, web/text/media content).
+  - Can stream results into chat, supporting infinite query and live updates.
+- **Parameter Management:**
+  - Users can adjust search parameters (similarity thresholds, content/summary weights, result percentages, max results) via chat commands.
+  - Presets and live parameter updates are supported.
+- **Result Analysis:**
+  - The agent can trigger LLM-based analysis of search results and return summaries or insights in chat.
+- **Result Formatting:**
+  - Results are formatted for chat display, including content snippet, source/type, similarity score, timestamps/URLs, and links to full content.
+
+### Sample Command Mapping Table
+
+| Command/Intent                        | Example User Message                                      | Agent Action/Response                                 |
+|----------------------------------------|-----------------------------------------------------------|-------------------------------------------------------|
+| Search                                | `@SupabaseAgent search for "climate change"`             | Runs `search_all`, streams results in chat            |
+| Adjust search parameter                | `@SupabaseAgent set fine-grained similarity threshold to 0.9` | Updates parameter, confirms in chat                  |
+| Use preset                            | `@SupabaseAgent use preset broad`                         | Loads preset, confirms in chat                        |
+| Show more results                     | `@SupabaseAgent show more results`                        | Streams next batch of results                         |
+| Analyze results                       | `@SupabaseAgent analyze results`                          | Runs LLM analysis, returns summary                    |
+| Upsert from shared folder              | `@SupabaseAgent upsert new files`                         | Processes and upserts new content, reports status     |
+| Table management                      | `@SupabaseAgent create table my_table ...`                | Creates/updates table, confirms in chat               |
+| Run backend function                  | `@SupabaseAgent run deduplication on video_transcriptions`| Triggers function, reports status/result              |
+| Help                                  | `@SupabaseAgent help`                                     | Lists available commands                              |
+
+These search and parameter management abilities are in addition to upsert, table management, and backend function orchestration previously discussed. The agent will provide a unified, chat-driven interface for all these capabilities.
+
+#### Source Reference Mapping
+
+The following table maps each major Supabase Agent capability to its primary implementation file(s) or module(s) in the codebase:
+
+- **Comprehensive Search (vector, keyword, hybrid, streaming, analysis):**
+  - `backend/app/psearchworking.py` (core search logic, parameter management, result formatting, LLM analysis)
+- **Upsert from Shared Folder / Content Management:**
+  - `backend/app/pmoves_upserter.py` (markdown, HTML, media, video/audio upsert, duplicate checking, Supabase RPC calls)
+  - `backend/app/routes/content_upserter.py` (API routes for upsert/content management)
+- **Table Management & Backend Function Orchestration:**
+  - `backend/app/pmoves_upserter.py` (table creation/alteration, orchestration helpers)
+  - `backend/app/main.py` (API endpoints for table management, backend orchestration)
+- **Parameter Management (search tuning, presets):**
+  - `backend/app/psearchworking.py` (SearchParameters class, preset loading, live updates)
+  - `backend/app/config/search_config.py` (parameter presets, validation)
+- **Result Streaming & Infinite Query:**
+  - `backend/app/psearchworking.py` (search result streaming, batch/pagination logic)
+  - Chat UI (infinite query display, not shown here)
+- **LLM-based Result Analysis:**
+  - `backend/app/psearchworking.py` (analysis functions, OpenAI/Groq integration, registry fallback)
+
+These references ensure that each agent feature is directly traceable to its implementation, supporting maintainability and onboarding.
+
+---
+
+## Pipecat: Architecture, Data Model, and Integration Plan
+
+Pipecat is the core multimodal communication layer for the PMOVES agent platform. This section summarizes its architecture, data model, and how it integrates with the orchestrator, registry, and chat UI.
+
+### Architecture Overview
+- **Frames:** Core data structure representing discrete chunks of data (text, audio, image) or control signals (start, stop, error, etc.). Specialized frames for audio, images, text, LLM messages, system/control, metrics, and function calls.
+- **FrameProcessors:** Components that operate on frames, transforming or routing them (e.g., LLM completion, TTS, aggregation).
+- **Pipelines:** Chains of frame processors, forming the agent's processing logic (e.g., LLM → TTS → Transport).
+- **Transports:** Interfaces for input/output, such as WebRTC (Daily), WebSocket, or custom endpoints.
+
+### Example Agent Flow (Frame Lifecycle)
+1. User input (e.g., speech) is transcribed and placed in the pipeline as a TranscriptionFrame.
+2. Frame processors aggregate, update context, and generate LLM messages.
+3. LLM responses are streamed as TextFrames, then converted to audio by TTS processors.
+4. Audio frames are sent to the output transport for playback or transmission.
+5. Control and system frames manage flow, errors, and task boundaries.
+
+### Example Projects (from pmoves-pipecat/examples)
+- **Simple Chatbot:** Basic voice-driven conversational bot (Deepgram, ElevenLabs, OpenAI, Daily).
+- **Storytelling Chatbot:** Multimodal, collaborative storytime agent (adds vision, custom UI).
+- **Translation Chatbot:** Real-time speech translation and response.
+- **Moondream Chatbot:** Adds vision capabilities to GPT-4 (requires GPU).
+- **WebSocket Chatbot Server:** Real-time audio streaming and bot interaction via WebSocket.
+- **Patient Intake, Phone/Twilio Chatbot, StudyPal, etc.:** Specialized agents for function calling, phone integration, and document conversation.
+
+### Integration with PMOVES Platform
+- **Orchestrator:**
+  - Spawns and manages Pipecat-based agents as needed (e.g., for chat rooms or tasks).
+  - Assigns each agent a unique persona and avatar, and registers it in the agent registry.
+  - Connects agents to Supabase Realtime chat channels as participants.
+- **Agent Registry:**
+  - Stores metadata for each Pipecat agent (capabilities, endpoint, status, etc.).
+  - Enables orchestrator and UI to discover and interact with available agents.
+- **Chat UI:**
+  - Renders agent avatars and messages in real time using Supabase UI components.
+  - Receives multimodal responses (text, voice, images) from Pipecat agents via Supabase Realtime.
+  - Supports user-to-agent and agent-to-agent communication.
+- **Multimodal Communication:**
+  - Pipecat agents process and respond to chat messages using pipelines (LLM, TTS, STT, vision, etc.).
+  - Responses are sent as frames, which are rendered in the chat UI (text, audio, image, etc.).
+
+#### Detailed Integration Points & Architecture Diagram
+
+**Integration Points:**
+
+- **Orchestrator → Pipecat Agent:**
+  - Orchestrator dynamically spawns Pipecat agent instances for each chat room or task.
+  - Passes configuration (persona, avatar, capabilities) and registers the agent in the registry.
+  - Assigns the agent to a Supabase Realtime channel (chat room).
+
+- **Registry ↔ Orchestrator & UI:**
+  - Registry stores and updates metadata for each agent (status, endpoint, capabilities, avatar, etc.).
+  - Orchestrator queries registry to discover available agents and their capabilities.
+  - Chat UI queries registry to display agent directory, status, and avatars.
+
+- **Chat UI ↔ Supabase Realtime:**
+  - Chat UI subscribes to Supabase Realtime channels for live chat updates.
+  - Renders messages and avatars for both users and agents.
+  - Sends user messages to the channel, which are received by agents.
+
+- **Pipecat Agent ↔ Supabase Realtime:**
+  - Pipecat agent subscribes to the same chat channel as the user.
+  - Receives user messages, processes them through its pipeline (LLM, TTS, etc.), and sends responses (text, audio, images) back to the channel.
+  - Can update its status or avatar in real time.
+
+- **Multimodal Flow:**
+  - Text, audio, and image frames are sent as messages or media links in the chat channel.
+  - Chat UI renders these using Supabase UI components.
+
+**Architecture Diagram:**
+
+```mermaid
+flowchart TD
+    User((User))
+    ChatUI["Chat UI<br/>(Supabase UI)"]
+    Orchestrator["Orchestrator<br/>(Archon-inspired)"]
+    Registry["Agent Registry"]
+    PipecatAgent["Pipecat Agent<br/>(Multimodal)"]
+    Supabase["Supabase Realtime<br/>+ DB"]
+
+    User -- interacts --> ChatUI
+    ChatUI -- subscribes/publishes --> Supabase
+    ChatUI -- queries --> Registry
+    Orchestrator -- spawns/configures --> PipecatAgent
+    Orchestrator -- registers/updates --> Registry
+    Registry -- provides metadata --> Orchestrator
+    Registry -- provides metadata --> ChatUI
+    PipecatAgent -- subscribes/publishes --> Supabase
+    Supabase -- delivers messages --> PipecatAgent
+    Supabase -- delivers messages --> ChatUI
+```
+
+This diagram shows the flow of data and control between the user, chat UI, orchestrator, registry, Pipecat agent, and Supabase Realtime. Each component interacts via well-defined interfaces, enabling dynamic, multimodal, and real-time agent communication.
+
+### Production & Scalability Notes
+- For production, plan for scalable agent orchestration (worker pools, on-demand instances) and secure transport (SSL for custom UIs).
+- Reference Pipecat docs for API and service integration details.
+
+---
+
+## Agent Communication Protocol
+
+To ensure standardized and traceable interactions between agents, a formal communication protocol is defined.
+
+- **Standardized Command Structure:** Agents communicate using a standardized `AgentCommand` structure, transmitted primarily via Pipecat `TextFrame`s. This structure includes a `command_type`, optional `task_id` for correlation, and an `args` dictionary for parameters.
+- **Protocol Documentation:** Detailed specification of the `AgentCommand` structure and its usage within Pipecat is available in [./AGENT_COMMAND_PROTOCOL.md](./AGENT_COMMAND_PROTOCOL.md).
+- **Multiple Communication Methods:** Leveraging Pipecat's diverse `Transport`s (WebSocket, custom, etc.) and integration capabilities (HTTP via FrameProcessors), agents can be powerful and reachable through various methods, enabling flexibility in deployment and interaction patterns.
+
+---
+
+## Observability Plan
+
+To ensure the reliability, performance, and maintainability of the PMOVES Agent Platform, a comprehensive observability strategy will be implemented across all components (Agent Registry, Orchestrator, Pipecat Agents, and supporting services like the Crawl4AI Docker service and LiteLLM Proxy).
+
+### Key Areas:
+
+*   **Standardized Logging:**
+    *   Implement structured logging (e.g., JSON format) in all services and agents.
+    *   Define standard log levels (DEBUG, INFO, WARNING, ERROR, CRITICAL).
+    *   Include correlation IDs (e.g., request ID, conversation ID, task ID) in logs to trace requests across components.
+    *   Establish a centralized logging collection system (e.g., using filebeat, fluentd, or cloud provider services).
+
+*   **Metrics Collection:**
+    *   Identify key metrics for each component:
+        *   **Registry:** Agent registration count, heartbeat frequency/latency, query rate, error rate.
+        *   **Orchestrator:** Task processing rate, agent spawning/teardown rate, workflow latency, agent selection metrics.
+        *   **Agents (Pipecat, etc.):** Message processing rate, pipeline latency, external service call latency (LLM, DB, etc.), error rate.
+        *   **Services (Crawl4AI, LiteLLM Proxy):** Request rate, latency, error rate, resource usage (CPU, memory).
+    *   Use a standard metrics library/framework (e.g., Prometheus client libraries).
+    *   Set up a metrics storage and visualization system (e.g., Prometheus, Grafana).
+
+*   **Distributed Tracing:**
+    *   Implement distributed tracing to visualize the flow of requests and tasks across services.
+    *   Propagate context (trace IDs, span IDs) between components using standard protocols (e.g., OpenTelemetry).
+    *   Integrate tracing into key operations (e.g., a user request hitting the Orchestrator, which calls the Registry, selects an Agent, and the Agent interacts with an LLM).
+    *   **Integrate Langfuse** for comprehensive tracing of LLM calls and agent workflows, leveraging its capabilities alongside the existing Grafana/Prometheus/Supabase stack.
+    *   **Tracing Context Propagation:** Define and implement mechanisms to pass trace and span IDs between services (Orchestrator to Agent, Agent to LiteLLM, etc.) using headers, message metadata, or function call parameters. This ensures that all related operations fall under a single end-to-end trace in Langfuse.
+
+*   **Health Checks:**
+    *   Implement standard `/health` or `/ready` endpoints for REST services (Registry, Orchestrator).
+    *   Agents should implement a mechanism to report their health status via heartbeats or a dedicated status endpoint.
+    *   Use orchestration tools (like Docker Swarm or Kubernetes) to monitor health endpoints and restart unhealthy instances.
+
+*   **Alerting:**
+    *   Configure alerting rules based on critical metrics and error rates (e.g., high error rate for a specific agent, registry downtime, increased LLM latency).
+    *   Integrate with a notification system (e.g., Slack, PagerDuty).
+
+### Implementation Steps:
+1.  Define a standardized logging format and implement it across core components.
+2.  Instrument key code paths for metrics collection.
+3.  Implement basic distributed tracing for core workflows.
+4.  Add health check endpoints to services and health reporting to agents.
+5.  Set up basic dashboards and alerts based on collected data.
+6.  Iteratively refine observability based on operational needs.
+7.  **Implement Secure Configuration Management:** Transition from environment variables to a secure secrets management solution (e.g., cloud secrets manager, HashiCorp Vault, or a `.env` alternative with encryption/access control) for sensitive information like API keys. This will facilitate easier and more secure integration of new LLM providers via LiteLLM.
+
+---
+
+## Project Goals
+- Design a robust, extensible agent registry and discovery system
+- Blueprint an orchestrator capable of dynamic agent management and workflow chaining
+- Evaluate and prototype a real-time agent communication layer
+- Document all schemas, APIs, and protocols for smooth implementation
+- Track all tasks, dependencies, and research for transparency and coordination
+
+---
+
+## Progress
+- [x] Minimal FastAPI-based agent registry service scaffolded
+  - All core files (`main.py`, `schemas.py`, `models.py`, `registry.py`), Dockerfile, and requirements are implemented in `pmoves-agent-registry/`.
+  - REST API endpoints for agent registration, listing, heartbeat, and deregistration are live.
+  - Service is Docker-ready and ready for integration with orchestrator and agents.
+- [x] Prototype agent self-registration and heartbeat
+- [ ] Document registry API usage for orchestrator and UI
+- [ ] Plan for persistent storage and scaling as needed
+- [x] Integrate LiteLLMPipecatService into a minimal Pipecat agent example (`docs/pipecat/examples/word-wrangler-gemini-live/server/bot.py`)
+- [x] Develop tests for the LiteLLMPipecatService streaming responses (`tests/test_litellm_service.py`)
+- [x] Refine LiteLLMPipecatService: Implement basic error handling and tool call detection
+- [x] Integrate LiteLLMPipecatService with dynamic LLM registry service (`pmoves-pipecat/src/pipecat/services/litellm_service.py`)
+- [x] Integrate crawl4ai Docker fetcher: Review parameter flow from `main.py` and update `crawl4ai_docker_fetcher.py` based on `crawl4ai` documentation.
+
+---
+
+## Next Steps
+1. **Complete Documentation:** Finish documenting the registry API usage for the orchestrator and UI.
+2. **Refine LiteLLMPipecatService:** Improve tool call handling to accumulate arguments before pushing a single `FunctionCallInProgressFrame`. Add more specific error handling.
+3. **LLM Registry Service Refinement:** Clarify how the `LLMRegistryService` provides the LiteLLM router instance and refine the integration in `LiteLLMPipecatService` based on the actual registry structure.
+4. **Implement Agent Self-Registration and Heartbeat:** Complete the prototype for agents to register themselves and send heartbeats to the registry.
+5. **Plan for Persistent Storage and Scaling:** Develop a plan for persistent storage for the registry and scaling strategies.
+6. **Integrate LLM Registry with Orchestrator:** Modify the orchestrator to use the registry for discovering and selecting LLMs for agents.
+7. **Further Testing:** Add more comprehensive tests for `LiteLLMPipecatService`, including error scenarios and full tool call processing.
+8. **Refine crawl4ai Docker Fetcher Integration:** Further refine handling for `crawl4ai_markdown_generator` and `extraction_config` parameters in `crawl4ai_docker_fetcher.py` based on specific requirements and crawl4ai API capabilities. Address potential mismatch in `target_selector` vs `target_elements` usage if necessary.
+
+---
+
+## Implementation Progress & Iteration Tracker
+
+This section tracks the step-by-step implementation of the Supabase Agent and related platform features. After each iteration, this checklist and plan will be updated to reflect progress and define the next focus area.
+
+### Supabase Agent Fundamentals: Iterative Checklist
+
+- [x] Catalog existing agent patterns and document adaptation strategy
+- [x] Update master plan with agent catalog and integration plan
+- [x] Scaffold minimal Pipecat agent:
+    - [x] Connect to Supabase Realtime chat channel
+    - [x] Process incoming messages through a text-only Pipecat pipeline
+    - [x] Send responses to chat with assigned avatar
+    - [ ] Register agent with orchestrator/registry (optional for first iteration)
+- [ ] CLI/loop for agent (manual test)
+- [ ] Add parameter adjustment handler
+- [ ] Add upsert handler
+- [ ] Add table management handler
+- [ ] Add result streaming/infinite query
+- [ ] Integrate with orchestrator/registry
+- [ ] Integrate with chat UI
+- [ ] Document and review after each step
+
+**Current Status:**
+- Planning and cataloging of agent patterns is complete.
+- A minimal Pipecat agent example has been updated to use the `LiteLLMPipecatService` with dynamic LLM registry integration.
+- Basic testing for streaming responses and initial error/tool call handling have been added to the `LiteLLMPipecatService`.
+- The integration of the `crawl4ai_docker_fetcher.py` has been reviewed, and initial parameter mapping improvements have been made based on the `crawl4ai` documentation.
+- The next focus is on further refining the `LiteLLMPipecatService`'s tool call handling and clarifying the integration with the `LLMRegistryService`, as well as addressing the remaining areas for refinement in the `crawl4ai_docker_fetcher.py` integration.
+- [x] Plan for persistent storage and scaling for the Agent Registry (Supabase/PostgreSQL).
+- [x] Integrate LLM Registry with Orchestrator.
+- [x] Further Testing: Added comprehensive tests for `LiteLLMPipecatService`, including foundational tests (frame passthrough, specific error handling) and an advanced test for streaming tool call argument accumulation.
+
+*This doc will be updated as the project progresses. See individual task breakdowns for detailed status and references.*
+
+---
+
+## Pipecat-Based Agent Summoning & Collaboration (Refinement)
+
+- Agents (e.g., SupabaseAgent, TranscribeAgent) can be summoned in chat using a call word (e.g., `@SupabaseAgent`).
+- When called, the agent joins the chat channel (via Supabase Realtime), introduces itself, and is ready to accept further commands.
+- Agents parse and execute chat commands (e.g., create table, search, fetch info) and respond in chat.
+- Agents can call each other for collaborative tasks (e.g., SupabaseAgent can summon TranscribeAgent for web search or transcription).
+- Pipecat serves as the communication and routing layer, handling message listening, agent activation, and multimodal responses.
+- The orchestrator/registry tracks active agents, their avatars, and capabilities.
+
+**Technical Flow:**
+1. Pipecat agent listens to chat for call words.
+2. On trigger, the corresponding agent is spawned/activated and joins the chat.
+3. Agent parses and executes commands, responding in chat.
+4. Agents can mention each other to trigger collaborative workflows.
+
+**Next Milestone:**
+- Finish the SupabaseAgent implementation so it can be summoned in chat, execute Supabase commands (create/search), and respond interactively.
+- After SupabaseAgent is working, extend to other agents (e.g., TranscribeAgent) and enable agent-to-agent collaboration.
+
+---
+
+## Model-Aware, Registry-Connected Agents (Refinement)
+
+- On startup, each agent registers with the orchestrator/registry, providing metadata: name, avatar, endpoint, and supported features.
+- Agents use Litellm to detect the current model's capabilities (e.g., text, vision, function calling) and update their registry entry and command parser accordingly.
+- This enables agents to dynamically adjust their powers and chat features based on the underlying model/provider (Ollama, Groq, etc.).
+- This flexibility is a key differentiator for the platform, allowing agents to leverage the full power of the current LLM and adapt as new models/providers are introduced.
+
+**Checklist Update:**
+- [x] Implement agent registration with orchestrator/registry (with model-aware metadata) - *Initial integration in LiteLLMPipecatService complete, further refinement needed based on registry structure.*
+- [ ] Integrate Litellm-powered model capability detection and dynamic feature adjustment
+- [ ] Integrate with Supabase Realtime chat for live command execution
+
+*Both registration and model-awareness are next, before full chat integration. This ensures agents are discoverable, manageable, and always operating at their maximum capability based on the current model.*
+
+---
+
+## Existing Agent Implementations & Adaptation Strategy
+
+This section catalogs the key agent implementations available in the codebase, summarizes their main features, and outlines how their patterns can be adapted or combined for the Supabase Agent and broader PMOVES platform.
+
+### Key Agents & Patterns
+
+- **mem0-agent** (`pmoves-ottomator-agents/mem0-agent/`)
+  - *Pattern:* Memory-augmented conversational agent using OpenAI and Supabase for vector storage.
+  - *Features:* Long-term memory, persistent vector DB, modular config, CLI/Streamlit interface.
+  - *Adaptation:* Use as a template for agents needing persistent memory, vector search, and chat-driven workflows. Good base for Supabase Agent's search/upsert loop.
+
+- **google-a2a-agent** (`pmoves-ottomator-agents/google-a2a-agent/`)
+  - *Pattern:* Implements Google's Agent-to-Agent (A2A) protocol for agent discovery and inter-agent tasking.
+  - *Features:* Agent metadata endpoint, task API, standardized message format, web search via MCP.
+  - *Adaptation:* Use A2A protocol for agent registry/discovery and inter-agent messaging. Adapt for orchestrator-to-agent or agent-to-agent workflows.
+
+- **crawl4AI-agent-v2** (`pmoves-ottomator-agents/crawl4AI-agent-v2/`)
+  - *Pattern:* Retrieval-augmented generation (RAG) agent for crawling, chunking, and vectorizing documentation.
+  - *Features:* Flexible crawling, smart chunking, vector storage, Streamlit RAG interface, modular scripts.
+  - *Adaptation:* Use as a fetch/search agent for documentation or web content. Adapt crawling and chunking logic for Supabase Agent's upsert/content ingestion.
+
+### Documentation & Further References
+- `docs/masterplan/PMOVES_AGENT_PLATFORM_PLAN.md` (this plan)
+- `docs/masterplan/agent_llm_plan.md` (centralized LLM agent plan)
+- `docs/masterplan/PMOVES_AI_TEAM.md` (per-page helper teams and agent roles)
+- `pmoves-ottomator-agents/~voiceflow-dialog-api-integration~/README.md` (Voiceflow agent integration example)
+- `pmoves-pipecat/src/pipecat/services/litellm_service.py` (LiteLLMPipecatService implementation)
+- `tests/test_litellm_service.py` (LiteLLMPipecatService tests)
+- `backend/app/utils/llm_registry_service.py` (LLM Registry Service - reference for structure)
+- LiteLLM documentation on types and streaming: `docs/litellm/litellm/types/llms/openai.py`, `docs/litellm/litellm/types/utils.py`
+- Pipecat documentation on frames (specifically function call related): `docs/pipecat/src/pipecat/frames/frames.py`
+
+### Adaptation Strategy
+- Use `mem0-agent` as a base for Supabase Agent (memory, search, upsert).
+- Use `google-a2a-agent` for agent registry/discovery and inter-agent protocols.
+- Use `crawl4AI-agent-v2` for fetch/search agent and content ingestion.
+- Combine patterns as needed (e.g., memory + A2A + fetch) for advanced agents.
+- Ensure all new agents are registered and discoverable via the orchestrator/registry.
+
+*This catalog will be updated as new agents and patterns are added or adapted for the platform.* 

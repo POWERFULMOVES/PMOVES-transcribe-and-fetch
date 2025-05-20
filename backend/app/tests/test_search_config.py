@@ -1,13 +1,15 @@
 import pytest
 import json
-from fastapi.testclient import TestClient
-from ..main import app
+# TestClient will be provided by the conftest.py fixture
+# from fastapi.testclient import TestClient
+# app will be provided by the conftest.py fixture
+# from ..main import app
 from ..psearchworking import SearchParameters
 from ..config.search_config import DEFAULT_SEARCH_PARAMS, SEARCH_PRESETS
 
-client = TestClient(app)
+# client fixture will be injected by pytest
 
-def test_get_search_config():
+def test_get_search_config(client): # Added client fixture
     """Test retrieving the current search configuration."""
     response = client.get("/api/search-config")
     assert response.status_code == 200
@@ -24,7 +26,7 @@ def test_get_search_config():
         assert "result_percentage" in data[tier]
         assert "max_results" in data[tier]
 
-def test_update_search_config():
+def test_update_search_config(client): # Added client fixture
     """Test updating the search configuration."""
     # First get the current config
     response = client.get("/api/search-config")
@@ -54,7 +56,7 @@ def test_update_search_config():
     # Reset to default
     client.post("/api/search-config/preset", json={"preset_name": "default"})
 
-def test_get_presets():
+def test_get_presets(client): # Added client fixture
     """Test retrieving the list of available presets."""
     response = client.get("/api/search-config/presets")
     assert response.status_code == 200
@@ -66,7 +68,7 @@ def test_get_presets():
     assert "conceptual" in data["presets"]
     assert "balanced" in data["presets"]
 
-def test_get_preset_config():
+def test_get_preset_config(client): # Added client fixture
     """Test retrieving a specific preset configuration."""
     # Test valid preset
     response = client.get("/api/search-config/preset/technical")
@@ -82,7 +84,7 @@ def test_get_preset_config():
     response = client.get("/api/search-config/preset/nonexistent")
     assert response.status_code == 404
 
-def test_load_preset():
+def test_load_preset(client): # Added client fixture
     """Test loading a preset configuration."""
     # Test valid preset
     response = client.post("/api/search-config/preset", json={"preset_name": "conceptual"})
@@ -102,7 +104,7 @@ def test_load_preset():
     response = client.post("/api/search-config/preset", json={"preset_name": "nonexistent"})
     assert response.status_code == 404
 
-def test_vector_search_stream_with_params():
+def test_vector_search_stream_with_params(client): # Added client fixture
     """Test the search stream endpoint with custom parameters."""
     # This is an integration test that ensures the endpoint accepts the new parameters
     params = {
@@ -134,7 +136,7 @@ def test_vector_search_stream_with_params():
                 if data.get("type") == "error":
                     pytest.fail(f"Error in search stream: {data.get('message')}")
 
-def test_vector_search_stream_with_preset():
+def test_vector_search_stream_with_preset(client): # Added client fixture
     """Test the search stream endpoint with a preset parameter."""
     params = {
         "query": "test query",

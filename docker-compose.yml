@@ -1,0 +1,100 @@
+version: '3.8'
+
+services:
+  # LiteLLM Proxy Service
+  litellm-proxy:
+    image: ghcr.io/berriai/litellm:main-latest # Use the official LiteLLM image from GitHub Container Registry
+    container_name: litellm-proxy
+    ports:
+      - "4000:4000" # Map the proxy port
+    volumes:
+      - ./litellm_proxy_config/config.yaml:/app/config.yaml # Mount the config file
+    env_file:
+      - ./backend/app/.env # Load environment variables (including API keys)
+      - ./.env # Load API keys from the root .env for the proxy
+    environment:
+      # Ensure the master key is passed securely if needed for proxy features
+      # LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY} # Example if you add this to your .env
+      # Set the config path explicitly
+      CONFIG_PATH: /app/config.yaml
+    networks:
+      - pmoves-network
+
+  # Backend Application Service
+  backend:
+    build: ./backend # Build from the Dockerfile in the backend directory
+    container_name: pmoves-backend
+    ports:
+      - "8000:8000" # Map the backend application port
+    env_file:
+      - ./backend/app/.env # Load environment variables
+    volumes:
+      - ./backend/app:/usr/src/app # Mount the backend application code (for development)
+    depends_on:
+      litellm-proxy:
+        condition: service_healthy # Ensure LiteLLM proxy is healthy before starting backend
+      minio:
+        condition: service_started # Backend depends on MinIO
+    networks:
+      - pmoves-network
+    # Command to run the FastAPI application
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+
+  # MinIO Service (S3 Compatible Storage)
+  minio:
+    image: minio/minio:latest
+    container_name: pmoves-minio
+    ports:
+      - "9000:9000" # MinIO API port
+      - "9001:9001" # MinIO Console port
+    environment:
+      MINIO_ROOT_USER: ${MINIO_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
+      MINIO_BROWSER: "on" # Enable the MinIO browser UI
+    volumes:
+      - minio_data:/data # Persistent data volume
+    command: server /data --console-address ":9001"
+    networks:
+      - pmoves-network
+
+  main-app:
+    build:
+      context: ./backend
+    container_name: main-app
+    environment:
+      - SUPABASE_ID=${SUPABASE_ID}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      # Add other env vars as needed
+    ports:
+      - "8000:8000"
+    networks:
+      - pmoves-net
+
+  pipecat-agent:
+    build:
+      context: ./pmoves-pipecat-agent
+    container_name: pipecat-agent
+    environment:
+      - SUPABASE_ID=${SUPABASE_ID}
+      - SUPABASE_KEY=${SUPABASE_KEY}
+      - CHAT_CHANNEL=main-room
+      - CALL_WORD=@SupabaseAgent
+      # Add other env vars as needed
+    ports:
+      - "8001:8000"
+    networks:
+      - pmoves-net
+
+volumes:
+  supabase_db_data:
+  minio_data:
+
+networks:
+  pmoves-network:
+    driver: bridge
+  pmoves-net:
+    driver: bridge
+
+environment:
+  SUPABASE_ID: yourprojectref
+  SUPABASE_KEY: yourkey

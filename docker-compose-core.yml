@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  litellm:
+    # Replace with your LiteLLM service definition
+    image: litellm/proxy:latest
+    ports:
+      - "4000:4000"
+    volumes:
+      # Mount your LiteLLM proxy config
+      - ./litellm_proxy_config/config.yaml:/app/config.yaml
+      # Mount your LiteLLM environment file for API keys
+      - ./.env.litellm:/app/.env
+    restart: unless-stopped
+
+  crawl4ai:
+    # Use pre-built image from Docker Hub
+    image: unclecode/crawl4ai:latest # Or a specific version tag
+    ports:
+      - "11235:11235"
+    volumes:
+      # Mount config.yml from your project's config directory
+      # Update the path below to match your project structure
+      - ./deployment/crawl4ai/config.yml:/app/config.yml
+      # The .llm.env volume mount is generally not needed if routing via LiteLLM
+      # - ./deployment/crawl4ai/.llm.env:/app/.llm.env
+      # Optional: Mount a volume for crawl4ai cache if you want persistence
+      # - crawl4ai_cache:/home/appuser/.crawl4ai/cache
+    shm_size: '1g' # Recommended for Playwright
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11235/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 5s
+      retries: 3
+
+  pipecat:
+    # Replace with your Pipecat service definition
+    build:
+      context: ./pmoves-pipecat
+      dockerfile: Dockerfile
+    # Define ports, volumes, environment variables as needed
+    # ports:
+    #   - "your_pipecat_port:your_pipecat_port"
+    # volumes:
+    #   - ./your_pipecat_config:/app/config
+    restart: unless-stopped
+    depends_on:
+      - litellm
+      - crawl4ai
+    # Add healthcheck if needed
+
+  supabase-agent:
+    # Replace with your Supabase agent service definition
+    build:
+      context: ./pmoves-pipecat-agent
+      dockerfile: Dockerfile
+    # Define ports, volumes, environment variables as needed
+    # ports:
+    #   - "your_agent_port:your_agent_port"
+    # volumes:
+    #   - ./your_agent_config:/app/config
+    restart: unless-stopped
+    depends_on:
+      - litellm
+      - crawl4ai
+      - pipecat
+      # Add Supabase dependency here
+      # - supabase
+    # Add healthcheck if needed
+
+# Optional: Define named volumes
+# volumes:
+#   crawl4ai_cache: 

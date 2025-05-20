@@ -1,8 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  getMethodStyle, 
-  getSourceStyle, 
-  getScoreStyle 
+  getMethodStyle,
+  getSourceStyle,
+  getScoreStyle,
+  getContentTypeStyle
 } from '@/lib/search-styles';
 
 /**
@@ -228,6 +229,44 @@ export function WordCountBadge({ count, animate = false, delay = 0 }) {
       <span className="mr-1">{sizeIcon}</span>
       {count} words
       <span className="ml-1 text-xs opacity-75">({sizeCategory})</span>
+    </span>
+  );
+}
+
+/**
+ * Badge component for displaying content type with enhanced styling and animations
+ */
+export function ContentTypeBadge({ contentType, animate = false, delay = 0 }) {
+  const [animateIn, setAnimateIn] = useState(!animate);
+  const style = getContentTypeStyle(contentType);
+  
+  useEffect(() => {
+    if (animate) {
+      const timer = setTimeout(() => {
+        setAnimateIn(true);
+      }, delay);
+      
+      return () => clearTimeout(timer);
+    }
+  }, [animate, delay]);
+  
+  if (!contentType) return null;
+  
+  return (
+    <span
+      className={`
+        inline-flex items-center px-2.5 py-0.5 rounded-full text-xs
+        ${style.bgColor} ${style.textColor} border ${style.borderColor || 'border-transparent'}
+        shadow-sm transition-all duration-300 hover:shadow
+      `}
+      style={{
+        opacity: animateIn ? 1 : 0,
+        transform: animateIn ? 'scale(1)' : 'scale(0.9)',
+        transitionDelay: `${delay}ms`
+      }}
+    >
+      <span className="mr-1">{style.icon}</span>
+      {style.title}
     </span>
   );
 }

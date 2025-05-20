@@ -3,11 +3,78 @@ Debug endpoints for troubleshooting the transcription service.
 """
 import asyncio
 import json
+import logging # Added for potential logging
+from typing import Optional # Added Optional for type hinting
 from datetime import datetime
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, HTTPException
 from sse_starlette.sse import EventSourceResponse
 
+logger = logging.getLogger(__name__) # Added logger
+
+# Attempt to import llm_registry_service
+try:
+    from .utils import llm_registry_service # Corrected relative import
+    LLM_REGISTRY_SERVICE_AVAILABLE_DEBUG = True
+except ImportError as e:
+    logger.warning(f"Could not import llm_registry_service in debug_endpoints: {e}. LLM registry debug endpoint will be disabled.")
+    llm_registry_service = None
+    LLM_REGISTRY_SERVICE_AVAILABLE_DEBUG = False
+
+
 router = APIRouter(tags=["Debug"])
+
+@router.get("/debug/llm-registry-status")
+async def get_llm_registry_status_endpoint():
+    if not LLM_REGISTRY_SERVICE_AVAILABLE_DEBUG or not llm_registry_service:
+        raise HTTPException(status_code=503, detail="LLM Registry Service not available in this environment.")
+    
+    try:
+        cache_status = llm_registry_service.get_cache_status()
+        available_models_objects = llm_registry_service.get_available_models()
+        
+        # Convert StandardizedLLM objects to dicts for JSON response
+        # Using model_dump() as per Pydantic v2
+        models_as_dicts = [model.model_dump(mode='json') for model in available_models_objects]
+        
+        return {
+            "cache_status": cache_status,
+            "available_models_count": len(models_as_dicts),
+            "available_models": models_as_dicts
+        }
+    except Exception as e:
+        logger.error(f"Error in /debug/llm-registry-status: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error fetching LLM registry status: {str(e)}")
+
+@router.get("/debug/test-llm-via-registry")
+async def test_llm_via_registry_endpoint(model_id: Optional[str] = None, prompt: Optional[str] = None):
+    if not LLM_REGISTRY_SERVICE_AVAILABLE_DEBUG or not llm_registry_service:
+        raise HTTPException(status_code=503, detail="LLM Registry Service not available.")
+
+    test_model_id = model_id or "openai/gpt-4.1-mini-2025-04-14" # Default to one of the proxy models
+    test_prompt = prompt or "Hello, world! Tell me a short joke."
+    
+    logger.info(f"Debug: Testing LLM call via registry. Model: {test_model_id}, Prompt: '{test_prompt}'")
+    
+    try:
+        # The generate_text function in llm_registry_service is async
+        response_content = await llm_registry_service.generate_text(
+            model_id=test_model_id,
+            prompt=test_prompt
+            # kwargs like temperature can be added if needed for testing
+        )
+        
+        if response_content is None:
+            logger.error(f"Debug: LLM call via registry for model {test_model_id} returned None.")
+            raise HTTPException(status_code=500, detail=f"LLM call via registry returned None for model {test_model_id}.")
+            
+        return {
+            "model_used": test_model_id,
+            "prompt": test_prompt,
+            "response": response_content
+        }
+    except Exception as e:
+        logger.error(f"Error in /debug/test-llm-via-registry for model {test_model_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error during LLM test call via registry: {str(e)}")
 
 @router.get("/debug/test-sse")
 async def test_sse(request: Request):

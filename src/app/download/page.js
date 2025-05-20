@@ -44,47 +44,45 @@ import { downloadReducer, initialState as downloadInitialState, ACTIONS } from '
 import { BACKEND_URL } from '@/lib/constants';
 import { useToast } from "@/components/hooks/use-toast"
 import { Checkbox } from '@/components/ui/checkbox';
+import useAppConfig from '@/hooks/useAppConfig';
 
 export default function Download() {
   const [url, setUrl] = useState('');
   const [videoInfo, setVideoInfo] = useState(null);
   const [downloadFolder, setDownloadFolder] = useState('');
   const [state, dispatch] = useReducer(downloadReducer, downloadInitialState);
-  const [formatOptions, setFormatOptions] = useState({
-    extract_audio: false,
-    audio_format: 'mp3',
-    audio_quality: '192',
-    write_subtitles: false,
-    subtitle_lang: 'en',
-  });
   const [options, setOptions] = useState({
-    download_dir: '',
+    download_dir: '',          // Existing
+    playlistStart: '1',        // Existing
+    extractAudio: false,       // Merged from formatOptions.extract_audio
+    audioFormat: 'mp3',        // Merged from formatOptions.audio_format
+    audioQuality: '192',       // Merged from formatOptions.audio_quality
+    subtitles: false,          // Merged from formatOptions.write_subtitles
+    subtitleLanguage: 'en',    // Merged from formatOptions.subtitle_lang
+    format: 'best',            // Default for UI video format
+    keepVideo: false,          // Default for UI keep video
+    downloadPlaylist: false,   // Default for UI download playlist
+    playlistEnd: '',           // Default for UI playlist end
+    autoSubtitles: false,      // Default for UI auto subtitles
+    embedThumbnail: false,     // Default for UI embed thumbnail
+    embedMetadata: false,      // Default for UI embed metadata
   });
   const [downloadedFiles, setDownloadedFiles] = useState([]);
   const [fileLoading, setFileLoading] = useState(false);
   const statusBoxRef = useRef(null);
   const { addToast } = useToast();
   const toast = addToast;
+  const { config: appConfig, loading: configLoading, error: configError } = useAppConfig();
 
+  // Set initial downloadFolder from config if not set by user
   useEffect(() => {
-    // Get default download directory from backend on mount
-    const getDefaultDownloadDir = async () => {
-      try {
-        const response = await axios.get(`${BACKEND_URL}/api/default-directory`);
-        if (response.data && response.data.path) {
-          setDownloadFolder(response.data.path);
-          setOptions(prev => ({ ...prev, download_dir: response.data.path }));
-        }
-      } catch (error) {
-        console.error('Error fetching default download directory:', error);
-        // Set fallback path if fetch fails
-        setDownloadFolder('downloads');
-        setOptions(prev => ({ ...prev, download_dir: 'downloads' }));
+    if (!configLoading && appConfig) {
+      if (!downloadFolder && appConfig.DEFAULT_DOWNLOADS_DIR) {
+        setDownloadFolder(appConfig.DEFAULT_DOWNLOADS_DIR);
+        setOptions(prev => ({ ...prev, download_dir: appConfig.DEFAULT_DOWNLOADS_DIR }));
       }
-    };
-    
-    getDefaultDownloadDir();
-  }, []);
+    }
+  }, [configLoading, appConfig]);
 
   const handleOptionChange = (key, value) => {
     setOptions(prev => ({ ...prev, [key]: value }));
@@ -526,8 +524,9 @@ export default function Download() {
                   id="download_dir"
                   value={downloadFolder}
                   onChange={(e) => setDownloadFolder(e.target.value)}
-                  placeholder="Select or enter download folder path"
+                  placeholder={appConfig?.DEFAULT_DOWNLOADS_DIR || "Select or enter download folder path"}
                   className="flex-1"
+                  disabled={configLoading}
                 />
                 <Button 
                   type="button" 
@@ -543,6 +542,10 @@ export default function Download() {
                 </p>
               )}
             </div>
+
+            {/* Optionally, show loading spinner or message if configLoading */}
+            {configLoading && <div className="text-center text-muted-foreground">Loading configuration...</div>}
+            {configError && <div className="text-center text-red-500">Failed to load config. Using defaults.</div>}
 
             {/* Download Options */}
             <Accordion type="single" collapsible defaultValue="options">

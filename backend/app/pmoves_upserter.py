@@ -932,19 +932,19 @@ if __name__ == "__main__":
         error_count = sum(1 for r in results if r.get('status') == 'error')
         skipped_count = sum(1 for r in results if r.get('status') == 'skipped')
         
-        print(f"\nProcessing Summary:")
-        print(f"Total files: {len(results)}")
-        print(f"Successfully processed: {success_count}")
-        print(f"Errors: {error_count}")
-        print(f"Skipped: {skipped_count}")
+        logger.info(f"\nProcessing Summary:")
+        logger.info(f"Total files: {len(results)}")
+        logger.info(f"Successfully processed: {success_count}")
+        logger.info(f"Errors: {error_count}")
+        logger.info(f"Skipped: {skipped_count}")
         
         # Print errors if any
         if error_count > 0:
-            print("\nErrors:")
+            logger.error("\nErrors:")
             for result in results:
                 if result.get('status') == 'error':
-                    print(f"{result['filename']}: {result['error']}")
+                    logger.error(f"{result['filename']}: {result['error']}")
                     
     except Exception as e:
-        print(f"Error processing directory: {str(e)}")
+        logger.error(f"Error processing directory: {str(e)}")
         raise

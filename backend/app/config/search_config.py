@@ -7,6 +7,9 @@ to ensure consistency.
 """
 
 import logging
+from fastapi import APIRouter, HTTPException
+
+router = APIRouter()
 
 # Default search parameters
 DEFAULT_SEARCH_PARAMS = {
@@ -182,4 +185,32 @@ def get_preset(preset_name: str = "default") -> dict:
     Returns:
         dict: Preset configuration or default if not found
     """
-    return SEARCH_PRESETS.get(preset_name, DEFAULT_SEARCH_PARAMS) 
+    return SEARCH_PRESETS.get(preset_name, DEFAULT_SEARCH_PARAMS)
+
+@router.get("/", summary="Get Default Search Configuration")
+async def get_default_search_config_route(): # Renamed to avoid conflict if imported directly
+    """
+    Retrieve the default search parameters.
+    This endpoint is tested by `test_get_search_config`.
+    """
+    return DEFAULT_SEARCH_PARAMS
+
+@router.get("/presets", summary="Get All Search Presets")
+async def get_all_search_presets_route(): # Renamed
+    """
+    Retrieve all available search preset configurations.
+    This endpoint is tested by `test_get_presets`.
+    The test expects the response in the format: {"presets": {"default": ..., ...}}
+    """
+    return {"presets": SEARCH_PRESETS}
+
+@router.get("/presets/{preset_name}", summary="Get Specific Search Preset")
+async def get_specific_search_preset_route(preset_name: str): # Renamed
+    """
+    Retrieve a specific search preset configuration by name.
+    This endpoint is tested by `test_get_preset_config`.
+    """
+    preset = SEARCH_PRESETS.get(preset_name)
+    if not preset:
+        raise HTTPException(status_code=404, detail=f"Preset '{preset_name}' not found.")
+    return preset

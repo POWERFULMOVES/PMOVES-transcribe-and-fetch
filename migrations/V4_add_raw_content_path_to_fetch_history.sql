@@ -1,0 +1,1 @@
+ALTER TABLE fetch_history ADD COLUMN raw_content_path TEXT NULL;

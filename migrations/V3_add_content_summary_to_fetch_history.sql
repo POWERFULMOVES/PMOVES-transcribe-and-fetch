@@ -1,0 +1,1 @@
+ALTER TABLE fetch_history ADD COLUMN content_summary TEXT NULL;
