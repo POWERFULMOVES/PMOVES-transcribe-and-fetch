@@ -7,6 +7,18 @@
 import asyncio
 import os
 import litellm
+from litellm.exceptions import (
+    APIConnectionError,
+    BadRequestError,
+    ContextWindowExceededError,
+    NotFoundError,
+    PermissionDeniedError,
+    ServiceUnavailableError,
+    Timeout,
+    AuthenticationError, # Already used, ensure it's part of this block or imported
+    RateLimitError,     # Already used
+    APIError            # Already used
+)
 import logging
 import httpx
 
@@ -160,7 +172,8 @@ class LiteLLMPipecatService(LLMService):
                             await self.push_frame(FunctionCallInProgressFrame(
                                 function_name=current_name,
                                 tool_call_id=tool_call_id,
-                                arguments=current_args
+                                arguments=current_args,
+                                is_final=False # Explicitly mark as not final during streaming
                             ))
                 # TODO: Handle tool calls completion (e.g., when a tool_call_id is no longer in delta)
 
@@ -168,36 +181,80 @@ class LiteLLMPipecatService(LLMService):
             for tool_call_id, calls_by_index in self._accumulated_tool_args.items():
                  for tool_call_index, call_data in calls_by_index.items():
                      # Push a final frame with the complete accumulated arguments
+                     # This frame indicates the tool call is complete and all arguments are sent.
+                     logger.debug(f"Pushing final FunctionCallInProgressFrame for tool_call_id: {tool_call_id}, index: {tool_call_index}")
                      await self.push_frame(FunctionCallInProgressFrame(
                          function_name=call_data.get('name'),
                          tool_call_id=tool_call_id,
                          arguments=call_data.get('arguments'),
-                         is_final=True # Mark as final if needed, depending on Pipecat frame definition
-                         # Note: Pipecat FunctionCallInProgressFrame doesn't have is_final. Need to clarify final tool call frame type.
-                         # Assuming for now FunctionCallFrame is for the final parsed call, InProgress is for streaming.
-                         # We'll push the final accumulated state as InProgress for now.
+                         is_final=True # Mark as final
                      ))
             self._accumulated_tool_args = {} # Clear accumulated arguments after processing
 
             # Signal the end of the LLM response
             await self.push_frame(LLMFullResponseEndFrame())
 
-        except litellm.exceptions.AuthenticationError as e:
-            logger.error(f"Authentication error during LiteLLM streaming call: {e}", exc_info=True)
-            await self.push_frame(ErrorFrame(f"Authentication Error: {e}"))
-        except litellm.exceptions.RateLimitError as e:
-            logger.error(f"Rate limit error during LiteLLM streaming call: {e}", exc_info=True)
-            await self.push_frame(ErrorFrame(f"Rate Limit Error: {e}"))
-        except litellm.exceptions.APIError as e:
-            logger.error(f"LiteLLM API error during streaming call: {e}", exc_info=True)
-            await self.push_frame(ErrorFrame(f"API Error: {e}"))
-        except httpx.RequestError as e:
-            logger.error(f"HTTP request error during LiteLLM streaming call: {e}", exc_info=True)
-            await self.push_frame(ErrorFrame(f"Network Request Error: {e}"))
-        except Exception as e:
-            logger.error(f"Unexpected error during LiteLLM streaming call: {e}", exc_info=True) # Log exception details
-            # Push an ErrorFrame downstream
-            await self.push_frame(ErrorFrame(f"Unexpected Error during LLM streaming: {e}"))
+        except Timeout as e:
+            logger.error(f"LiteLLM Timeout error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            await self.push_frame(ErrorFrame(
+                f"LLM Request Timed Out: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+            ))
+        except APIConnectionError as e:
+            logger.error(f"LiteLLM API Connection error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            await self.push_frame(ErrorFrame(
+                f"LLM API Connection Error: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+            ))
+        except NotFoundError as e:
+            logger.error(f"LiteLLM Not Found error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            await self.push_frame(ErrorFrame(
+                f"LLM Not Found Error (e.g., Invalid Model ID): Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+            ))
+        except PermissionDeniedError as e:
+            logger.error(f"LiteLLM Permission Denied error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            await self.push_frame(ErrorFrame(
+                f"LLM Permission Denied Error: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+            ))
+        except ServiceUnavailableError as e:
+            logger.error(f"LiteLLM Service Unavailable error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            await self.push_frame(ErrorFrame(
+                f"LLM Service Unavailable: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+            ))
+        except ContextWindowExceededError as e: # Specific BadRequestError
+            logger.error(f"LiteLLM Context Window Exceeded error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            await self.push_frame(ErrorFrame(
+                f"LLM Context Window Exceeded: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+            ))
+        except BadRequestError as e: # More general BadRequestError
+            logger.error(f"LiteLLM Bad Request error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            await self.push_frame(ErrorFrame(
+                f"LLM Bad Request Error: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+            ))
+        except AuthenticationError as e: # Existing, now with more details
+            logger.error(f"LiteLLM Authentication error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            await self.push_frame(ErrorFrame(
+                f"LLM Authentication Error: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+            ))
+        except RateLimitError as e: # Existing, now with more details
+            logger.error(f"LiteLLM Rate Limit error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            await self.push_frame(ErrorFrame(
+                f"LLM Rate Limit Error: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+            ))
+        except APIError as e: # Existing, more general LiteLLM error, with details
+            logger.error(f"LiteLLM API error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            await self.push_frame(ErrorFrame(
+                f"LLM API Error: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+            ))
+        except httpx.RequestError as e: # Network errors
+            # httpx errors might not have llm_provider or status_code in the same way
+            logger.error(f"HTTP request error during LiteLLM streaming call for model {self._model_id}: {e}", exc_info=True)
+            await self.push_frame(ErrorFrame(
+                f"Network Request Error for LLM: Model {self._model_id}. Details: {e}"
+            ))
+        except Exception as e: # Most generic handler
+            logger.error(f"Unexpected error during LiteLLM streaming call for model {self._model_id}: {e}", exc_info=True)
+            await self.push_frame(ErrorFrame(
+                f"Unexpected Error during LLM streaming: Model {self._model_id}. Details: {e}"
+            ))
 
 # Example Usage (Conceptual):
 # Assuming you have your LiteLLM router initialized elsewhere
