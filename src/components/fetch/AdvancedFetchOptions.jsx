@@ -27,7 +27,7 @@ import {
 import { InfoCircledIcon } from '@radix-ui/react-icons'; // Or any other suitable icon
 import ExtractionStrategyConfigurator from './ExtractionStrategyConfigurator';
 import DeepCrawlStrategyConfigurator from './DeepCrawlStrategyConfigurator';
-import useLLMModels from '@/hooks/useLLMModels'; // Added import
+import LlmModelSelect from '@/components/llm/LlmModelSelect'; // Import the dedicated LLM model select component
 
 const AdvancedFetchOptions = ({
   fetchingEngine, // New prop
@@ -162,8 +162,8 @@ const AdvancedFetchOptions = ({
   setCrawl4aiLlmApiToken,
   crawl4aiLlmBaseUrl,
   setCrawl4aiLlmBaseUrl,
-  crawl4aiMarkdownGenerator, // Added prop
-  setCrawl4aiMarkdownGenerator, // Added prop
+  crawl4aiMarkdownGenerator,
+  setCrawl4aiMarkdownGenerator,
   // New crawl4ai Expert Options props
   crawl4aiBrowserCookies,
   setCrawl4aiBrowserCookies,
@@ -182,7 +182,6 @@ const AdvancedFetchOptions = ({
   onCrawl4aiDeepCrawlConfigChange,
 }) => {
   console.log('[AdvancedFetchOptions] Rendering. Engine:', fetchingEngine);
-  const { models: llmModels, isLoading: llmModelsLoading, error: llmModelsError } = useLLMModels(); // Instantiate hook
 
   const accordionDefaultValues = useMemo(() => [
     "content-extraction", "formatting", "browser-performance",
@@ -1562,123 +1561,52 @@ const AdvancedFetchOptions = ({
           <AccordionItem value="crawl4ai-llm-config" key={`c4ai-llm-config-${fetchingEngine}`}>
             <AccordionTrigger>crawl4ai - LLM Configuration</AccordionTrigger>
             <AccordionContent className="space-y-4 p-2">
-              <div>
-                <Label htmlFor="crawl4ai-llm-model-select">
-                  Select LLM Model (from Registry)
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <InfoCircledIcon className="inline-block ml-1 h-4 w-4 text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Select a registered LLM model. This will set the LLM Provider/Model field below.</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </Label>
-                {llmModelsLoading && <p className="text-sm text-muted-foreground">Loading LLM models...</p>}
-                {llmModelsError && <p className="text-sm text-destructive">Error loading models: {llmModelsError}</p>}
-                {!llmModelsLoading && !llmModelsError && (
-                  <Select
-                    value={crawl4aiLlmProviderModel}
-                    onValueChange={setCrawl4aiLlmProviderModel}
-                  >
-                    <SelectTrigger id="crawl4ai-llm-model-select">
-                      <SelectValue placeholder={llmModelsLoading ? "Loading models..." : "Select a model"} />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {llmModelsError && (
-                        <SelectItem value="error" disabled>
-                          Error: {llmModelsError}
-                        </SelectItem>
-                      )}
-                      {!llmModelsError && llmModels.length === 0 && !llmModelsLoading && (
-                        <SelectItem value="no-models" disabled>
-                          No models available
-                        </SelectItem>
-                      )}
-                      {console.log("[AdvancedFetchOptions] Models for Select:", JSON.stringify(llmModels))}
-                      {llmModels.map((model) => {
-                        const itemValue = model.model_id;
-                        const itemKey = model.model_id;
-                        const itemDisplay = model.display_name || model.model_id;
-
-                        if (!itemValue || itemValue.trim() === "") {
-                          console.warn("[AdvancedFetchOptions] Skipping model due to empty/invalid model_id:", model);
-                          return null;
-                        }
-
-                        return (
-                          <SelectItem
-                            key={itemKey}
-                            value={itemValue}
-                          >
-                            {itemDisplay}
-                          </SelectItem>
-                        );
-                      })}
-                    </SelectContent>
-                  </Select>
-                )}
-              </div>
+              <LlmModelSelect
+                value={crawl4aiLlmProviderModel}
+                onModelChange={setCrawl4aiLlmProviderModel}
+                label="LLM Provider/Model"
+                tooltipContent="Select the LLM model to be used for crawl4ai features like LLM extraction or image captioning."
+                required
+              />
 
               <div>
-                <Label htmlFor="crawl4ai-llm-provider-model">
-                  LLM Provider/Model (Manual Input)
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <InfoCircledIcon className="inline-block ml-1 h-4 w-4 text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>{'Specify the LLM provider and model name (e.g., ollama/llama3, openai/gpt-4o).'}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </Label>
-                <Input
-                  id="crawl4ai-llm-provider-model"
-                  placeholder="e.g., ollama/llama3"
-                  value={crawl4aiLlmProviderModel}
-                  onChange={(e) => setCrawl4aiLlmProviderModel(e.target.value)}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="crawl4ai-llm-api-token">
-                  LLM API Token
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <InfoCircledIcon className="inline-block ml-1 h-4 w-4 text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>{'API token for the selected LLM provider. Can be read from env vars (e.g., `env:OPENAI_API_KEY`).'}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </Label>
+                <Label htmlFor="crawl4ai-llm-api-token">LLM API Token (Optional)</Label>
                 <Input
                   id="crawl4ai-llm-api-token"
                   type="password"
-                  placeholder="Enter API Token (or use ENV variable)"
+                  placeholder="Enter API Token"
                   value={crawl4aiLlmApiToken}
                   onChange={(e) => setCrawl4aiLlmApiToken(e.target.value)}
                 />
               </div>
 
               <div>
-                <Label htmlFor="crawl4ai-llm-base-url">
-                  LLM Base URL (Custom Endpoint)
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <InfoCircledIcon className="inline-block ml-1 h-4 w-4 text-muted-foreground" />
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>{'Custom base URL for self-hosted or alternative LLM API endpoints.'}</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </Label>
+                <Label htmlFor="crawl4ai-llm-base-url">LLM Base URL (Optional)</Label>
                 <Input
                   id="crawl4ai-llm-base-url"
-                  placeholder="e.g., http://localhost:11434/v1"
+                  type="text"
+                  placeholder="Enter Base URL (e.g., http://localhost:11434)"
                   value={crawl4aiLlmBaseUrl}
                   onChange={(e) => setCrawl4aiLlmBaseUrl(e.target.value)}
                 />
+              </div>
+
+              <div>
+                <Label htmlFor="crawl4ai-markdown-generator">Markdown Generator</Label>
+                <Select
+                  id="crawl4ai-markdown-generator"
+                  value={crawl4aiMarkdownGenerator}
+                  onValueChange={setCrawl4aiMarkdownGenerator}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select Markdown Generator" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="Default">Default (cleaned_html)</SelectItem>
+                    <SelectItem value="Raw HTML">Raw HTML</SelectItem>
+                    <SelectItem value="Fit HTML">Fit HTML</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
             </AccordionContent>
           </AccordionItem>

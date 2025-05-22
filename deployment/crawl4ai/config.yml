@@ -76,7 +76,7 @@ crawler:
       # - "--single-process"
       - "--no-sandbox"
       - "--disable-dev-shm-usage"
-      - "--disable-gpu"
+      # "--disable-gpu"
       - "--disable-software-rasterizer"
       - "--disable-web-security"
       - "--allow-insecure-localhost"

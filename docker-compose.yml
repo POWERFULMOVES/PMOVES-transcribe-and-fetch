@@ -57,23 +57,54 @@ services:
     networks:
       - pmoves-network
 
-  main-app:
-    build:
-      context: ./backend
-    container_name: main-app
-    environment:
-      - SUPABASE_ID=${SUPABASE_ID}
-      - SUPABASE_KEY=${SUPABASE_KEY}
-      # Add other env vars as needed
+  # Crawl4AI Service
+  crawl4ai:
+    image: unclecode/crawl4ai:latest # Use pre-built image from Docker Hub
+    container_name: pmoves-crawl4ai
     ports:
-      - "8000:8000"
+      - "11235:11235" # FastAPI service port
+    volumes:
+      - ./deployment/crawl4ai/config.yml:/app/config.yml # Mount config.yml
+      # The .llm.env volume mount is generally not needed if routing via LiteLLM
+      # - ./deployment/crawl4ai/.llm.env:/app/.llm.env
+      # Optional: Mount a volume for crawl4ai cache if you want persistence
+      # - crawl4ai_cache:/home/appuser/.crawl4ai/cache
+    shm_size: '1g' # Recommended for Playwright
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11235/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 5s
+      retries: 3
     networks:
-      - pmoves-net
+      - pmoves-network
+    depends_on:
+      - litellm-proxy # Crawl4AI depends on LiteLLM
 
+  # Pipecat Core Service
+  pipecat:
+    build:
+      context: ./pmoves-pipecat # Build from the Dockerfile in the pmoves-pipecat directory
+    container_name: pmoves-pipecat
+    # Define ports, volumes, environment variables as needed for the core pipecat service
+    # ports:
+    #   - "your_pipecat_port:your_pipecat_port"
+    # volumes:
+    #   - ./your_pipecat_config:/app/config"
+    restart: unless-stopped
+    depends_on:
+      - litellm-proxy # Pipecat depends on LiteLLM
+      # Add other dependencies like Supabase or other agents if needed for the core service
+    networks:
+      - pmoves-network
+    # Add healthcheck if needed
+
+  # Pipecat Agent Service (Example: Supabase Agent)
   pipecat-agent:
     build:
-      context: ./pmoves-pipecat-agent
-    container_name: pipecat-agent
+      context: ./pmoves-pipecat-agent # Build from the Dockerfile in the pmoves-pipecat-agent directory
+    container_name: pmoves-pipecat-agent
     environment:
       - SUPABASE_ID=${SUPABASE_ID}
       - SUPABASE_KEY=${SUPABASE_KEY}
@@ -81,9 +112,15 @@ services:
       - CALL_WORD=@SupabaseAgent
       # Add other env vars as needed
     ports:
-      - "8001:8000"
+      - "8001:8000" # Example port mapping for the agent if it exposes an API/interface
     networks:
-      - pmoves-net
+      - pmoves-network
+    restart: unless-stopped
+    depends_on:
+      - litellm-proxy # Agent depends on LiteLLM
+      - pipecat # Agent depends on the core Pipecat service
+      # Add other dependencies like Supabase or other agents if needed
+    # Add healthcheck if needed
 
 volumes:
   supabase_db_data:
@@ -91,8 +128,6 @@ volumes:
 
 networks:
   pmoves-network:
-    driver: bridge
-  pmoves-net:
     driver: bridge
 
 environment:

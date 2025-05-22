@@ -660,6 +660,13 @@ async def log_requests(request: Request, call_next):
     status_code = response.status_code
     logger.info(f"<-- {method} {path} - Status={status_code} ({process_time:.3f}s)")
     return response
+# --- Include Routers ---
+# Include routers for different parts of the API
+app.include_router(llm_router, prefix="/llm", tags=["LLM"]) # LLM related endpoints
+app.include_router(fetch_history_router, prefix="/api/fetch-history", tags=["Fetch History"]) # Fetch History endpoints
+app.include_router(content_upserter_router, prefix="/api/content-upserter", tags=["Content Upserter"]) # Content Upserter endpoints
+app.include_router(metrics_router, prefix="/api/metrics", tags=["Metrics"]) # Monitoring metrics endpoints
+app.include_router(monitoring_router, prefix="/api/monitoring", tags=["Monitoring"]) # General monitoring endpoints
 
 
 # --- App Lifecycle Events ---

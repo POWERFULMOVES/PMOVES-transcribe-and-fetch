@@ -56,6 +56,7 @@ backend/fetched_content/
 fetched_content/
 backend/pp/temp_pdfs/
 pmoves_backend.egg-info/
+backend/temp_pdfs/
 
 # Package management
 package-lock.json
