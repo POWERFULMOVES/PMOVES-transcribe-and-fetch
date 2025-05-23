@@ -11,8 +11,48 @@ import httpx # Added for making HTTP requests
 from ..utils.llm_registry_service import get_llm_registry_service, LLMRegistryService
 from ..app_config import LITELLM_PROXY_URL, LITELLM_PROXY_API_KEY # Import LiteLLM config
 
+# Imports for Tool Calling API Endpoints
+from ..services.tool_calling.tool_schema_manager import ToolSchemaManager
+from ..services.tool_calling.tool_call_state_store import ToolCallStateStore
+from ..services.tool_calling.validation_service import ValidationService
+from ..services.tool_calling.argument_accumulator_service import ArgumentAccumulatorService
+from ..models.tool_calling_models import InitiateToolCallRequest, SubmitArgumentChunkRequest
+import asyncio # For starting cleanup worker
+
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+# --- Service Instantiation and Dependency Injection for Tool Calling ---
+
+_tool_schema_manager_instance = ToolSchemaManager()
+_validation_service_instance = ValidationService()
+_tool_call_state_store_instance = ToolCallStateStore()
+
+_argument_accumulator_service_instance = ArgumentAccumulatorService(
+    state_store=_tool_call_state_store_instance,
+    schema_manager=_tool_schema_manager_instance,
+    validation_service=_validation_service_instance
+)
+
+# Dependency provider functions
+def get_tool_schema_manager() -> ToolSchemaManager:
+    return _tool_schema_manager_instance
+
+def get_validation_service() -> ValidationService:
+    return _validation_service_instance
+
+async def get_tool_call_state_store() -> ToolCallStateStore:
+    # Ensure cleanup worker is started (idempotently)
+    # The ToolCallStateStore's start_cleanup_worker method is designed to be idempotent.
+    if not _tool_call_state_store_instance._cleanup_task or _tool_call_state_store_instance._cleanup_task.done():
+        await _tool_call_state_store_instance.start_cleanup_worker()
+        logger.info("ToolCallStateStore cleanup worker ensured running via dependency.")
+    return _tool_call_state_store_instance
+
+async def get_argument_accumulator_service() -> ArgumentAccumulatorService:
+    # Ensure store is ready (which in turn ensures its worker is running)
+    await get_tool_call_state_store() 
+    return _argument_accumulator_service_instance
 
 # --- Pydantic Models for LLM Capabilities ---
 
@@ -912,3 +952,43 @@ async def create_vision_analysis(
 
 # TODO: Add documentation for these endpoints.
 
+# --- Tool Calling API Endpoints ---
+
+@router.post("/tools/initiate", response_model=Dict[str, str], tags=["Tool Calling"])
+async def initiate_tool_call_api(
+    request: InitiateToolCallRequest,
+    accumulator_service: ArgumentAccumulatorService = Depends(get_argument_accumulator_service)
+):
+    try:
+        tool_call_id = await accumulator_service.initiate_tool_call(request)
+        return {"tool_call_id": tool_call_id}
+    except ValueError as e:
+        logger.error(f"Failed to initiate tool call: {e}", exc_info=True)
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Unexpected error initiating tool call: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail="Failed to initiate tool call")
+
+@router.post("/tools/submit_chunk", response_model=Dict[str, str], tags=["Tool Calling"])
+async def submit_tool_argument_chunk_api(
+    request: SubmitArgumentChunkRequest,
+    accumulator_service: ArgumentAccumulatorService = Depends(get_argument_accumulator_service)
+):
+    try:
+        success, message = await accumulator_service.submit_argument_chunk(request)
+        if success:
+            return {"status": "success", "message": message}
+        else:
+            # Determine appropriate status code based on message if possible
+            status_code = 400 # Default for client error
+            if "not found" in (message or "").lower():
+                status_code = 404
+            elif "terminal state" in (message or "").lower():
+                status_code = 409 # Conflict / already done
+            logger.warning(f"Failed to submit chunk for {request.tool_call_id}: {message}")
+            raise HTTPException(status_code=status_code, detail=message)
+    except HTTPException:
+        raise # Re-raise HTTPExceptions directly
+    except Exception as e:
+        logger.error(f"Unexpected error submitting chunk for {request.tool_call_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to submit argument chunk: {str(e)}")

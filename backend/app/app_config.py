@@ -579,6 +579,16 @@ logger.info(f"DEFAULT_ANALYSIS_MODEL_ID: {DEFAULT_ANALYSIS_MODEL_ID}")
 logger.info(f"DEFAULT_TRANSCRIPTION_MODEL_ID: {DEFAULT_TRANSCRIPTION_MODEL_ID}")
 
 
+# Tool Call State Store Timeouts
+TOOL_CALL_IDLE_TIMEOUT_SECONDS = int(os.getenv('TOOL_CALL_IDLE_TIMEOUT_SECONDS', '300'))  # 5 minutes
+TOOL_CALL_TOTAL_TIMEOUT_SECONDS = int(os.getenv('TOOL_CALL_TOTAL_TIMEOUT_SECONDS', '3600')) # 1 hour
+TOOL_CALL_CLEANUP_INTERVAL_SECONDS = int(os.getenv('TOOL_CALL_CLEANUP_INTERVAL_SECONDS', '60')) # 1 minute
+
+logger.info(f"TOOL_CALL_IDLE_TIMEOUT_SECONDS: {TOOL_CALL_IDLE_TIMEOUT_SECONDS}")
+logger.info(f"TOOL_CALL_TOTAL_TIMEOUT_SECONDS: {TOOL_CALL_TOTAL_TIMEOUT_SECONDS}")
+logger.info(f"TOOL_CALL_CLEANUP_INTERVAL_SECONDS: {TOOL_CALL_CLEANUP_INTERVAL_SECONDS}")
+
+
 # It's good practice to ensure API keys are set if a model requiring one is selected by the application.
 # However, crawl4ai handles API key loading from env vars internally if not passed.
 # This config primarily serves to inform the frontend/user and provide defaults.
