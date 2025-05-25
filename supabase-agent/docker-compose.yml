@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  supabase-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pmoves-supabase-agent
+    ports:
+      - "8002:8002"
+    env_file:
+      - .env
+    environment:
+      # Override container-specific settings
+      - AGENT_ENDPOINT_URL=http://supabase-agent:8002
+      - LITELLM_PROXY_URL=http://litellm-proxy:4000
+      - AGENT_REGISTRY_URL=http://backend:8000/agents
+    networks:
+      - pmoves-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      litellm-proxy:
+        condition: service_healthy
+    volumes:
+      # Optional: Mount for development
+      - ./app:/app/app
+
+  # Add LiteLLM proxy service for standalone operation
+  litellm-proxy:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm-proxy-supabase
+    ports:
+      - "4000:4000"
+    volumes:
+      - ../litellm_proxy_config/config.yaml:/app/config.yaml
+    env_file:
+      - ../.env
+      - ../backend/app/.env
+    environment:
+      CONFIG_PATH: /app/config.yaml
+    networks:
+      - pmoves-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 15s
+
+networks:
+  pmoves-network:
+    external: true 

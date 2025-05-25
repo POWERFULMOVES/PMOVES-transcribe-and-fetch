@@ -1,0 +1,28 @@
+# Platform integration override for PMOVES Pipecat Agent
+# Use this when running as part of the full PMOVES platform
+# Run with: docker-compose -f docker-compose.yml -f docker-compose.platform.yml up
+
+services:
+  pmoves-pipecat-agent:
+    # Override to use platform services on the same bridge network
+    environment:
+      # Use correct service names from main platform docker-compose.yml
+      - LITELLM_PROXY_URL=http://litellm-proxy:4000
+      - AGENT_REGISTRY_URL=http://backend:8000
+      - SUPABASE_BACKEND_URL=http://backend:8000
+      
+      # Platform-specific configuration
+      - PLATFORM_MODE=true
+      - SERVICE_DISCOVERY=true
+    
+    # Remove all dependencies since platform services are managed by main compose
+    depends_on: []
+
+  # Completely disable the standalone litellm-proxy service
+  litellm-proxy:
+    deploy:
+      replicas: 0
+
+networks:
+  pmoves-network:
+    driver: bridge

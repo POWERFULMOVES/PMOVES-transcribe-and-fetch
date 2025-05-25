@@ -1,0 +1,192 @@
+groups:
+  - name: pmoves-platform-alerts
+    rules:
+      # High-level service availability
+      - alert: ServiceDown
+        expr: up == 0
+        for: 1m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "Service {{ $labels.job }} on {{ $labels.instance }} has been down for more than 1 minute."
+
+      # Backend API alerts
+      - alert: BackendHighErrorRate
+        expr: rate(http_requests_total{job="pmoves-backend",status=~"5.."}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High error rate in PMOVES Backend"
+          description: "Backend API error rate is {{ $value }} errors per second over the last 5 minutes."
+
+      - alert: BackendHighLatency
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket{job="pmoves-backend"}[5m])) > 2
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High latency in PMOVES Backend"
+          description: "95th percentile latency is {{ $value }}s over the last 5 minutes."
+
+      # Agent alerts
+      - alert: AgentUnresponsive
+        expr: up{job="pmoves-agents"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PMOVES Agent {{ $labels.instance }} is unresponsive"
+          description: "Agent {{ $labels.instance }} has been unresponsive for more than 2 minutes."
+
+      - alert: AgentHighMemoryUsage
+        expr: (container_memory_usage_bytes{name=~".*agent.*"} / container_spec_memory_limit_bytes{name=~".*agent.*"}) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage in agent {{ $labels.name }}"
+          description: "Agent {{ $labels.name }} memory usage is {{ $value }}% of limit."
+
+      # LLM and AI service alerts
+      - alert: LLMHighErrorRate
+        expr: rate(llm_requests_total{status="error"}[5m]) > 0.05
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High LLM error rate"
+          description: "LLM error rate is {{ $value }} errors per second over the last 5 minutes."
+
+      - alert: LLMHighLatency
+        expr: histogram_quantile(0.95, rate(llm_request_duration_seconds_bucket[5m])) > 30
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High LLM latency"
+          description: "95th percentile LLM latency is {{ $value }}s over the last 5 minutes."
+
+      # Database and storage alerts
+      - alert: DatabaseConnectionsHigh
+        expr: supabase_active_connections / supabase_max_connections > 0.8
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High database connection usage"
+          description: "Database connection usage is {{ $value }}% of maximum."
+
+      - alert: RedisMemoryHigh
+        expr: (redis_memory_used_bytes / redis_memory_max_bytes) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High Redis memory usage"
+          description: "Redis memory usage is {{ $value }}% of maximum."
+
+      # System resource alerts
+      - alert: HighCPUUsage
+        expr: 100 - (avg by(instance) (irate(node_cpu_seconds_total{mode="idle"}[5m])) * 100) > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage on {{ $labels.instance }}"
+          description: "CPU usage is {{ $value }}% on {{ $labels.instance }}."
+
+      - alert: HighMemoryUsage
+        expr: (1 - (node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage on {{ $labels.instance }}"
+          description: "Memory usage is {{ $value }}% on {{ $labels.instance }}."
+
+      - alert: DiskSpaceLow
+        expr: (1 - (node_filesystem_avail_bytes{fstype!="tmpfs"} / node_filesystem_size_bytes{fstype!="tmpfs"})) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Low disk space on {{ $labels.instance }}"
+          description: "Disk usage is {{ $value }}% on {{ $labels.instance }} {{ $labels.mountpoint }}."
+
+      # Container alerts
+      - alert: ContainerHighCPU
+        expr: rate(container_cpu_usage_seconds_total{name!=""}[5m]) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High CPU usage in container {{ $labels.name }}"
+          description: "Container {{ $labels.name }} CPU usage is {{ $value }}%."
+
+      - alert: ContainerHighMemory
+        expr: (container_memory_usage_bytes{name!=""} / container_spec_memory_limit_bytes{name!=""}) * 100 > 80
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High memory usage in container {{ $labels.name }}"
+          description: "Container {{ $labels.name }} memory usage is {{ $value }}% of limit."
+
+      - alert: ContainerRestarting
+        expr: rate(container_last_seen{name!=""}[5m]) > 0
+        for: 1m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Container {{ $labels.name }} is restarting"
+          description: "Container {{ $labels.name }} has restarted {{ $value }} times in the last 5 minutes."
+
+      # Rate limiting alerts
+      - alert: RateLimitHit
+        expr: rate(rate_limit_exceeded_total[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High rate limit violations"
+          description: "Rate limit violations are occurring at {{ $value }} per second."
+
+      # Search and content processing alerts
+      - alert: SearchLatencyHigh
+        expr: histogram_quantile(0.95, rate(search_duration_seconds_bucket[5m])) > 5
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High search latency"
+          description: "95th percentile search latency is {{ $value }}s."
+
+      - alert: ContentProcessingBacklog
+        expr: content_processing_queue_size > 100
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Content processing backlog"
+          description: "Content processing queue has {{ $value }} items pending."
+
+      # Multimodal processing alerts
+      - alert: ImageProcessingFailures
+        expr: rate(image_processing_failures_total[5m]) > 0.05
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High image processing failure rate"
+          description: "Image processing failure rate is {{ $value }} per second."
+
+      - alert: TranscriptionFailures
+        expr: rate(transcription_failures_total[5m]) > 0.05
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary: "High transcription failure rate"
+          description: "Transcription failure rate is {{ $value }} per second." 

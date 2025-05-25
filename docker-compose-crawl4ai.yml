@@ -35,7 +35,8 @@ services:
 
 networks:
   pmoves-network:
-    external: true
+    driver: bridge
+
 
 # Optional: Define named volumes
 # volumes:

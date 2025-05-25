@@ -1,0 +1,13 @@
+# Core dependencies
+pyyaml
+fastapi
+uvicorn
+supabase
+realtime
+
+# Install pipecat-ai with multiple extras in one go (more reliable than individual installs)
+pipecat-ai[anthropic,assemblyai,aws,azure,cartesia,cerebras,deepseek,daily,deepgram,elevenlabs,fal,fireworks,fish,gladia,google,grok,groq,koala,lmnt,local,nim,noisereduce,openai,qwen,remote-smart-turn,silero,simli,soundfile,tavus,together,websocket,whisper]
+
+# MCP tools and A2A protocol dependencies
+mcp-tools
+a2a-sdk 

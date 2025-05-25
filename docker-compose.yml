@@ -11,7 +11,6 @@ services:
       - ./litellm_proxy_config/config.yaml:/app/config.yaml # Mount the config file
     env_file:
       - ./backend/app/.env # Load environment variables (including API keys)
-      - ./.env # Load API keys from the root .env for the proxy
     environment:
       # Ensure the master key is passed securely if needed for proxy features
       # LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY} # Example if you add this to your .env
@@ -32,7 +31,7 @@ services:
       - ./backend/app:/usr/src/app # Mount the backend application code (for development)
     depends_on:
       litellm-proxy:
-        condition: service_healthy # Ensure LiteLLM proxy is healthy before starting backend
+        condition: service_started # Ensure LiteLLM proxy is started before starting backend
       minio:
         condition: service_started # Backend depends on MinIO
     networks:
@@ -47,6 +46,8 @@ services:
     ports:
       - "9000:9000" # MinIO API port
       - "9001:9001" # MinIO Console port
+    env_file:
+      - ./backend/app/.env # Load environment variables including MinIO credentials
     environment:
       MINIO_ROOT_USER: ${MINIO_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
@@ -82,45 +83,114 @@ services:
     depends_on:
       - litellm-proxy # Crawl4AI depends on LiteLLM
 
-  # Pipecat Core Service
+  # Pipecat Core Service (Communication Layer & Orchestrator)
   pipecat:
     build:
       context: ./pmoves-pipecat # Build from the Dockerfile in the pmoves-pipecat directory
     container_name: pmoves-pipecat
-    # Define ports, volumes, environment variables as needed for the core pipecat service
-    # ports:
-    #   - "your_pipecat_port:your_pipecat_port"
-    # volumes:
-    #   - ./your_pipecat_config:/app/config"
-    restart: unless-stopped
-    depends_on:
-      - litellm-proxy # Pipecat depends on LiteLLM
-      # Add other dependencies like Supabase or other agents if needed for the core service
+    ports:
+      - "8080:8080" # Core service API port
+      - "8081:8081" # WebSocket port for agent communication
+    env_file:
+      - ./backend/app/.env # Load environment variables
+    environment:
+      # Core service configuration
+      - PIPECAT_SERVICE_PORT=8080
+      - PIPECAT_WEBSOCKET_PORT=8081
+      - LITELLM_PROXY_URL=http://litellm-proxy:4000
+      - AGENT_REGISTRY_URL=http://backend:8000/agents
+      - MAX_AGENTS=10
+      # Multimodal capabilities (add these to your .env file)
+      - DAILY_API_KEY=${DAILY_API_KEY:-}
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
+      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      # Supabase integration
+      - SUPABASE_URL=${SUPABASE_URL:-}
+      - SUPABASE_KEY=${SUPABASE_KEY:-}
     networks:
       - pmoves-network
-    # Add healthcheck if needed
+    restart: unless-stopped
+    depends_on:
+      litellm-proxy:
+        condition: service_started # Pipecat depends on LiteLLM
+      backend:
+        condition: service_started # For agent registry
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
 
-  # Pipecat Agent Service (Example: Supabase Agent)
+  # Pipecat Agent Service (Supabase Agent Instance)
   pipecat-agent:
     build:
       context: ./pmoves-pipecat-agent # Build from the Dockerfile in the pmoves-pipecat-agent directory
     container_name: pmoves-pipecat-agent
+    env_file:
+      - ./backend/app/.env # Load environment variables from backend
     environment:
-      - SUPABASE_ID=${SUPABASE_ID}
-      - SUPABASE_KEY=${SUPABASE_KEY}
-      - CHAT_CHANNEL=main-room
+      # Agent-specific configuration
+      - AGENT_TYPE=supabase
+      - AGENT_NAME=SupabaseAgent
       - CALL_WORD=@SupabaseAgent
-      # Add other env vars as needed
+      - CHAT_CHANNEL=main-room
+      - AVATAR_URL=https://example.com/supabase-agent-avatar.png
+      - PIPECAT_SERVICE_URL=http://pipecat:8080
+      - PIPECAT_WS_URL=ws://pipecat:8081
+      - PORT=8000
     ports:
-      - "8001:8000" # Example port mapping for the agent if it exposes an API/interface
+      - "8001:8000" # Map the agent port
     networks:
       - pmoves-network
     restart: unless-stopped
     depends_on:
-      - litellm-proxy # Agent depends on LiteLLM
-      - pipecat # Agent depends on the core Pipecat service
-      # Add other dependencies like Supabase or other agents if needed
-    # Add healthcheck if needed
+      pipecat:
+        condition: service_started # Agent depends on core pipecat service
+      backend:
+        condition: service_started # For environment variables
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+
+  # Supabase Agent Service (Database Management Agent)
+  supabase-agent:
+    build:
+      context: ./supabase-agent # Build from the Dockerfile in the supabase-agent directory
+    container_name: pmoves-supabase-agent
+    ports:
+      - "8002:8002" # FastAPI service port
+    env_file:
+      - ./backend/app/.env # Use the same environment file as other services
+    environment:
+      # Container-specific overrides
+      - AGENT_ENDPOINT_URL=http://supabase-agent:8002
+      - LITELLM_PROXY_URL=http://litellm-proxy:4000
+      - AGENT_REGISTRY_URL=http://backend:8000/agents
+      # Supabase specific settings
+      - AGENT_PORT=8002
+    volumes:
+      # Optional: Mount for development
+      - ./supabase-agent/app:/app/app
+    networks:
+      - pmoves-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      litellm-proxy:
+        condition: service_started # Ensure LiteLLM proxy is started
+      backend:
+        condition: service_started # For agent registration
+      # Add other dependencies as needed
 
 volumes:
   supabase_db_data:
@@ -129,7 +199,3 @@ volumes:
 networks:
   pmoves-network:
     driver: bridge
-
-environment:
-  SUPABASE_ID: yourprojectref
-  SUPABASE_KEY: yourkey

@@ -52,23 +52,36 @@ services:
     # Add healthcheck if needed
 
   supabase-agent:
-    # Replace with your Supabase agent service definition
+    # Fixed build context to point to the correct supabase-agent directory
     build:
-      context: ./pmoves-pipecat-agent
+      context: ./supabase-agent
       dockerfile: Dockerfile
-    # Define ports, volumes, environment variables as needed
-    # ports:
-    #   - "your_agent_port:your_agent_port"
-    # volumes:
-    #   - ./your_agent_config:/app/config
+    container_name: pmoves-supabase-agent
+    ports:
+      - "8002:8002"
+    env_file:
+      - ./supabase-agent/.env
+    environment:
+      # Container-specific overrides
+      - AGENT_ENDPOINT_URL=http://supabase-agent:8002
+      - LITELLM_PROXY_URL=http://litellm:4000
+      - AGENT_REGISTRY_URL=http://backend:8000/agents
+    volumes:
+      # Optional: Mount for development
+      - ./supabase-agent/app:/app/app
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
     depends_on:
       - litellm
       - crawl4ai
       - pipecat
-      # Add Supabase dependency here
+      # Add Supabase dependency here if running Supabase as a service
       # - supabase
-    # Add healthcheck if needed
 
 # Optional: Define named volumes
 # volumes:

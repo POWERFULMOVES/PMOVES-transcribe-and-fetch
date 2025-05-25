@@ -1,0 +1,56 @@
+version: '3.8'
+
+# This file is for integrating the Supabase Agent with the full PMOVES platform
+# Use with: docker-compose -f docker-compose.platform.yml up
+
+services:
+  supabase-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pmoves-supabase-agent
+    ports:
+      - "8002:8002"
+    env_file:
+      - .env
+    environment:
+      # Platform integration overrides
+      - AGENT_ENDPOINT_URL=http://supabase-agent:8002
+      - LITELLM_PROXY_URL=http://litellm-proxy:4000
+      - AGENT_REGISTRY_URL=http://backend:8000/agents
+      - NETWORK_NAME=pmoves-network
+    networks:
+      - pmoves-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    depends_on:
+      # External services from the main platform
+      litellm-proxy:
+        condition: service_healthy
+      backend:
+        condition: service_started
+    volumes:
+      # Optional: Mount for development
+      - ./app:/app/app
+    labels:
+      - "pmoves.service=supabase-agent"
+      - "pmoves.type=agent"
+      - "pmoves.capabilities=database,supabase,query"
+
+networks:
+  pmoves-network:
+    driver: bridge
+
+# Note: This compose file expects the following services to be running from the main platform:
+# - litellm-proxy (port 4000)
+# - backend (port 8000)
+# - pmoves-network (external network)
+#
+# To use this with the full platform:
+# 1. Start the main platform: docker-compose -f ../docker-compose.yml up -d
+# 2. Start this agent: docker-compose -f docker-compose.platform.yml up 

@@ -1,0 +1,87 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - "rules/*.yml"
+
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+          - alertmanager:9093
+
+scrape_configs:
+  # Prometheus itself
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']
+
+  # Node Exporter for system metrics
+  - job_name: 'node-exporter'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  # cAdvisor for container metrics (disabled on Windows)
+  # - job_name: 'cadvisor'
+  #   static_configs:
+  #     - targets: ['cadvisor:8080']
+
+  # PMOVES Backend API
+  - job_name: 'pmoves-backend'
+    static_configs:
+      - targets: ['pmoves-backend:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # PMOVES Pipecat Core Service
+  - job_name: 'pmoves-pipecat'
+    static_configs:
+      - targets: ['pipecat:8080']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # PMOVES Agent Registry
+  - job_name: 'pmoves-agent-registry'
+    static_configs:
+      - targets: ['agent-registry:8000']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # PMOVES Agents
+  - job_name: 'pmoves-agents'
+    static_configs:
+      - targets: 
+        - 'supabase-agent:8000'
+        - 'transcribe-agent:8001'
+        - 'multimodal-agent:8002'
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # LiteLLM Proxy
+  - job_name: 'litellm-proxy'
+    static_configs:
+      - targets: ['litellm-proxy:4000']
+    metrics_path: '/metrics'
+    scrape_interval: 30s
+
+  # Redis metrics (if redis_exporter is added)
+  - job_name: 'redis'
+    static_configs:
+      - targets: ['redis-exporter:9121']
+    scrape_interval: 30s
+
+  # Crawl4AI service
+  - job_name: 'crawl4ai'
+    static_configs:
+      - targets: ['crawl4ai:11235']
+    metrics_path: '/metrics'
+    scrape_interval: 60s
+
+  # Supabase metrics (if available)
+  - job_name: 'supabase'
+    static_configs:
+      - targets: ['supabase:3000']
+    metrics_path: '/metrics'
+    scrape_interval: 60s
+    scrape_timeout: 30s 

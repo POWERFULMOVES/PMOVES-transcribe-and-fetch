@@ -1,0 +1,89 @@
+global:
+  smtp_smarthost: 'localhost:587'
+  smtp_from: 'pmoves-alerts@example.com'
+  smtp_auth_username: 'pmoves-alerts@example.com'
+  smtp_auth_password: 'your-email-password'
+
+route:
+  group_by: ['alertname']
+  group_wait: 10s
+  group_interval: 10s
+  repeat_interval: 1h
+  receiver: 'web.hook'
+  routes:
+    - match:
+        severity: critical
+      receiver: 'critical-alerts'
+      group_wait: 5s
+      repeat_interval: 30m
+    - match:
+        severity: warning
+      receiver: 'warning-alerts'
+      group_wait: 30s
+      repeat_interval: 2h
+
+receivers:
+  - name: 'web.hook'
+    webhook_configs:
+      - url: 'http://127.0.0.1:5001/'
+
+  - name: 'critical-alerts'
+    email_configs:
+      - to: 'admin@example.com'
+        subject: 'CRITICAL: PMOVES Platform Alert'
+        body: |
+          Alert: {{ .GroupLabels.alertname }}
+          Summary: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+          Description: {{ range .Alerts }}{{ .Annotations.description }}{{ end }}
+          
+          Severity: CRITICAL
+          Time: {{ range .Alerts }}{{ .StartsAt }}{{ end }}
+          
+          Please investigate immediately.
+    slack_configs:
+      - api_url: 'YOUR_SLACK_WEBHOOK_URL'
+        channel: '#pmoves-alerts'
+        title: 'CRITICAL: PMOVES Platform Alert'
+        text: |
+          🚨 *CRITICAL ALERT* 🚨
+          
+          *Alert:* {{ .GroupLabels.alertname }}
+          *Summary:* {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+          *Description:* {{ range .Alerts }}{{ .Annotations.description }}{{ end }}
+          
+          *Time:* {{ range .Alerts }}{{ .StartsAt }}{{ end }}
+        color: 'danger'
+
+  - name: 'warning-alerts'
+    email_configs:
+      - to: 'team@example.com'
+        subject: 'WARNING: PMOVES Platform Alert'
+        body: |
+          Alert: {{ .GroupLabels.alertname }}
+          Summary: {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+          Description: {{ range .Alerts }}{{ .Annotations.description }}{{ end }}
+          
+          Severity: WARNING
+          Time: {{ range .Alerts }}{{ .StartsAt }}{{ end }}
+          
+          Please review when convenient.
+    slack_configs:
+      - api_url: 'YOUR_SLACK_WEBHOOK_URL'
+        channel: '#pmoves-alerts'
+        title: 'WARNING: PMOVES Platform Alert'
+        text: |
+          ⚠️ *WARNING ALERT* ⚠️
+          
+          *Alert:* {{ .GroupLabels.alertname }}
+          *Summary:* {{ range .Alerts }}{{ .Annotations.summary }}{{ end }}
+          *Description:* {{ range .Alerts }}{{ .Annotations.description }}{{ end }}
+          
+          *Time:* {{ range .Alerts }}{{ .StartsAt }}{{ end }}
+        color: 'warning'
+
+inhibit_rules:
+  - source_match:
+      severity: 'critical'
+    target_match:
+      severity: 'warning'
+    equal: ['alertname', 'dev', 'instance'] 

@@ -1,0 +1,81 @@
+# Supabase Agent Environment Configuration
+
+# ======================
+# Core Agent Settings
+# ======================
+AGENT_ID=supabase_agent
+AGENT_NAME=Supabase Agent
+AGENT_DESCRIPTION=Interacts with Supabase database and provides data management capabilities
+AGENT_VERSION=1.0.0
+AGENT_PORT=8002
+
+# Agent endpoint URL (used for registration and health checks)
+AGENT_ENDPOINT_URL=http://localhost:8002
+
+# ======================
+# Supabase Configuration
+# ======================
+# Your Supabase project URL and API key
+SUPABASE_URL=https://your-project-id.supabase.co
+SUPABASE_KEY=your-anon-key-here
+
+# ======================
+# Agent Framework Settings
+# ======================
+# Registry URL for agent registration (optional)
+AGENT_REGISTRY_URL=http://localhost:8000/agents
+
+# Heartbeat interval in seconds
+HEARTBEAT_INTERVAL_SECONDS=30
+
+# Agent capabilities (JSON array)
+AGENT_CAPABILITIES=["supabase_interaction", "query_execution", "data_upsert", "table_management"]
+
+# Agent tags (JSON array)
+AGENT_TAGS=["database", "supabase", "data"]
+
+# Agent dependencies (JSON array)
+AGENT_DEPENDENCIES=["supabase", "litellm"]
+
+# Agent status
+AGENT_STATUS=ready
+
+# ======================
+# Input/Output Schema (JSON)
+# ======================
+AGENT_INPUT_SCHEMA={"type": "object", "properties": {"query": {"type": "string"}, "table_name": {"type": "string"}}}
+AGENT_OUTPUT_SCHEMA={"type": "object", "properties": {"result": {"type": "array"}, "message": {"type": "string"}}}
+
+# Agent configuration (JSON)
+AGENT_CONFIG={"max_query_limit": 1000, "allow_ddl": false}
+
+# ======================
+# LiteLLM Integration
+# ======================
+# LiteLLM proxy URL for AI capabilities
+LITELLM_PROXY_URL=http://litellm-proxy:4000
+
+# ======================
+# Chat Listener Settings
+# ======================
+# Table names for chat functionality
+CHAT_INPUT_TABLE_NAME=chat_messages
+CHAT_OUTPUT_TABLE_NAME=agent_responses
+
+# Chat polling interval in seconds
+CHAT_POLL_INTERVAL_SECONDS=5
+
+# ======================
+# Logging Configuration
+# ======================
+LOG_LEVEL=INFO
+
+# ======================
+# Platform Integration
+# ======================
+# Network settings for Docker
+NETWORK_NAME=pmoves-network
+
+# Dependencies
+DEPENDS_ON_LITELLM=true
+DEPENDS_ON_SUPABASE=true 

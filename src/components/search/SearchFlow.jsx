@@ -1,61 +1,116 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { PROGRESS_STAGES, STATUS_INDICATORS, ANALYSIS_STEPS } from '@/lib/search-styles';
 
 /**
  * Component for displaying the search flow process with enhanced animations
  */
-export function SearchFlowIndicator({ currentStage = 'start', metadata = {}, loading = false }) {
-  // Debug log the current stage and loading state
-  console.log('SearchFlowIndicator received:', { currentStage, loading, metadata });
+export const SearchFlowIndicator = React.memo(function SearchFlowIndicator({ currentStage = 'start', metadata = {}, loading = false }) {
+  // Define all stages in order - memoized to prevent recreation
+  const stages = useMemo(() => ['start', 'search', 'filter', 'combine', 'analyze', 'complete'], []);
   
-  // Define all stages in order
-  const stages = ['start', 'search', 'filter', 'combine', 'analyze', 'complete'];
+  // Memoize stage calculations to prevent unnecessary recalculations
+  const stageInfo = useMemo(() => {
+    const effectiveStage = (!loading && currentStage === 'analyze') ? 'complete' : currentStage;
+    const currentIndex = stages.indexOf(effectiveStage) !== -1 ? stages.indexOf(effectiveStage) : 0;
+    return { effectiveStage, currentIndex };
+  }, [currentStage, loading, stages]);
   
-  // Find the current stage index
-  // If the stage is not found, default to the 'start' stage
-  // Ensure we use 'complete' stage when loading is false and we're in the last stage
-  const effectiveStage = (!loading && currentStage === 'analyze') ? 'complete' : currentStage;
-  const currentIndex = stages.indexOf(effectiveStage) !== -1 ? stages.indexOf(effectiveStage) : 0;
-  console.log('Stage index:', currentIndex, 'for stage:', effectiveStage);
-  
-  // Animation state
+  // Animation state - only update when stage actually changes
   const [animateIn, setAnimateIn] = useState(false);
-  
-  // Track previous stage for animation
   const [prevStage, setPrevStage] = useState(currentStage);
-  const [stageChanged, setStageChanged] = useState(false);
   
-  // Detect stage changes for animations
+  // Memoize stage change detection
+  const stageChanged = useMemo(() => currentStage !== prevStage, [currentStage, prevStage]);
+  
+  // Handle stage changes with cleanup
   useEffect(() => {
-    console.log('Stage changed from', prevStage, 'to', currentStage);
-    if (currentStage !== prevStage) {
+    if (stageChanged) {
       setPrevStage(currentStage);
-      setStageChanged(true);
       
       // Reset stage changed flag after animation
       const timer = setTimeout(() => {
-        setStageChanged(false);
+        // No need for additional state here
       }, 500);
       
       return () => clearTimeout(timer);
     }
-  }, [currentStage, prevStage]);
+  }, [currentStage, stageChanged]);
   
+  // Initial animation trigger - only once
   useEffect(() => {
-    // Trigger animation after component mounts
     const timer = setTimeout(() => {
       setAnimateIn(true);
     }, 300);
     
     return () => clearTimeout(timer);
-  }, []);
+  }, []); // Empty dependency array - only run once
   
-  // Force component to be visible even if animateIn is false
-  const visibilityClass = 'opacity-100';
+  // Memoize metadata display to prevent unnecessary re-renders
+  const metadataDisplay = useMemo(() => {
+    if (!metadata || Object.keys(metadata).length === 0) return null;
+    
+    const metadataItems = [];
+    
+    if (metadata.search_duration_seconds !== undefined) {
+      metadataItems.push(
+        <div key="duration" className="p-2 bg-blue-50 rounded-md">
+          <span className="text-gray-500">⏱️ Duration:</span>{' '}
+          <span className="font-medium text-blue-700">{metadata.search_duration_seconds.toFixed(2)}s</span>
+        </div>
+      );
+    }
+    
+    if (metadata.total_results_found !== undefined) {
+      metadataItems.push(
+        <div key="results" className="p-2 bg-green-50 rounded-md">
+          <span className="text-gray-500">📊 Results:</span>{' '}
+          <span className="font-medium text-green-700">{metadata.total_results_found}</span>
+        </div>
+      );
+    }
+    
+    if (metadata.token_usage?.embedding_tokens !== undefined) {
+      metadataItems.push(
+        <div key="embedding" className="p-2 bg-purple-50 rounded-md">
+          <span className="text-gray-500">🧠 Embedding Tokens:</span>{' '}
+          <span className="font-medium text-purple-700">{metadata.token_usage.embedding_tokens.toLocaleString()}</span>
+        </div>
+      );
+    }
+    
+    if (metadata.token_usage?.generation_tokens?.input !== undefined) {
+      metadataItems.push(
+        <div key="gen-input" className="p-2 bg-yellow-50 rounded-md">
+          <span className="text-gray-500">📥 Generation Input:</span>{' '}
+          <span className="font-medium text-yellow-700">{metadata.token_usage.generation_tokens.input.toLocaleString()}</span>
+        </div>
+      );
+    }
+    
+    if (metadata.token_usage?.generation_tokens?.output !== undefined) {
+      metadataItems.push(
+        <div key="gen-output" className="p-2 bg-cyan-50 rounded-md">
+          <span className="text-gray-500">📤 Generation Output:</span>{' '}
+          <span className="font-medium text-cyan-700">{metadata.token_usage.generation_tokens.output.toLocaleString()}</span>
+        </div>
+      );
+    }
+    
+    if (metadata.token_usage?.total_tokens !== undefined) {
+      metadataItems.push(
+        <div key="total" className="p-2 bg-red-50 rounded-md">
+          <span className="text-gray-500">💰 Total Tokens:</span>{' '}
+          <span className="font-medium text-red-700">{metadata.token_usage.total_tokens.toLocaleString()}</span>
+        </div>
+      );
+    }
+    
+    return metadataItems;
+  }, [metadata]);
   
   return (
-    <Card className={`mb-6 overflow-hidden transition-all duration-500 ${visibilityClass}`}>
+    <Card className="mb-6 overflow-hidden transition-all duration-500 opacity-100">
       <CardHeader className="pb-2 bg-gradient-to-r from-blue-50 to-cyan-50">
         <CardTitle className="text-base flex items-center justify-between">
           <div className="flex items-center">
@@ -76,7 +131,7 @@ export function SearchFlowIndicator({ currentStage = 'start', metadata = {}, loa
             <div 
               className="h-full bg-blue-400 transition-all duration-1000" 
               style={{ 
-                width: `${currentIndex === 0 ? 0 : (currentIndex / (stages.length - 1)) * 100}%`,
+                width: `${stageInfo.currentIndex === 0 ? 0 : (stageInfo.currentIndex / (stages.length - 1)) * 100}%`,
                 transitionDelay: '0.5s'
               }}
             ></div>
@@ -85,16 +140,16 @@ export function SearchFlowIndicator({ currentStage = 'start', metadata = {}, loa
           {/* Stages */}
           <div className="flex justify-between relative">
             {stages.map((stage, index) => {
-              const stageInfo = PROGRESS_STAGES[stage] || {
+              const stageConfig = PROGRESS_STAGES[stage] || {
                 icon: '📌',
                 message: stage.charAt(0).toUpperCase() + stage.slice(1),
                 textColor: 'text-gray-600',
                 bgColor: 'bg-gray-100'
               };
               
-              const isActive = index <= currentIndex;
-              const isCurrent = index === currentIndex;
-              const isPast = index < currentIndex;
+              const isActive = index <= stageInfo.currentIndex;
+              const isCurrent = index === stageInfo.currentIndex;
+              const isPast = index < stageInfo.currentIndex;
               
               // Calculate delay for staggered animation
               const animationDelay = 0.1 + (index * 0.15);
@@ -106,7 +161,7 @@ export function SearchFlowIndicator({ currentStage = 'start', metadata = {}, loa
                   style={{ 
                     transition: 'transform 0.5s ease, opacity 0.5s ease',
                     transitionDelay: `${animationDelay}s`,
-                    opacity: 1, // Always visible
+                    opacity: 1,
                     transform: animateIn ? 'translateY(0)' : 'translateY(10px)'
                   }}
                 >
@@ -114,26 +169,26 @@ export function SearchFlowIndicator({ currentStage = 'start', metadata = {}, loa
                   <div className={`
                     w-8 h-8 rounded-full flex items-center justify-center text-sm search-flow-step
                     transition-all duration-300
-                    ${isActive ? `${stageInfo.bgColor || 'bg-blue-100'}` : 'bg-gray-100'}
-                    ${isActive ? `${stageInfo.textColor || 'text-blue-600'}` : 'text-gray-400'}
+                    ${isActive ? `${stageConfig.bgColor || 'bg-blue-100'}` : 'bg-gray-100'}
+                    ${isActive ? `${stageConfig.textColor || 'text-blue-600'}` : 'text-gray-400'}
                     ${isCurrent ? 'ring-2 ring-offset-2 ring-blue-400 active animate-pulse' : ''}
                     ${isPast ? 'shadow-sm' : ''}
                   `}>
                     {isCurrent && loading ? (
                       <span className="animate-spin">{STATUS_INDICATORS.progress}</span>
                     ) : (
-                      <span className={isPast ? 'transform scale-110' : ''}>{stageInfo.icon}</span>
+                      <span className={isPast ? 'transform scale-110' : ''}>{stageConfig.icon}</span>
                     )}
                   </div>
                   
                   {/* Stage label */}
                   <div className={`
                     mt-2 text-xs text-center max-w-[80px]
-                    ${isActive ? stageInfo.textColor || 'text-blue-600' : 'text-gray-400'}
-                    ${isActive ? stageInfo.fontWeight || 'font-medium' : 'font-normal'}
+                    ${isActive ? stageConfig.textColor || 'text-blue-600' : 'text-gray-400'}
+                    ${isActive ? stageConfig.fontWeight || 'font-medium' : 'font-normal'}
                     transition-all duration-300
                   `}>
-                    {stageInfo.message}
+                    {stageConfig.message}
                   </div>
                 </div>
               );
@@ -161,7 +216,7 @@ export function SearchFlowIndicator({ currentStage = 'start', metadata = {}, loa
         </div>
         
         {/* Metadata display with animation */}
-        {metadata && Object.keys(metadata).length > 0 && (
+        {metadataDisplay && metadataDisplay.length > 0 && (
           <div 
             className="mt-4 pt-2 border-t border-gray-200 grid grid-cols-2 gap-2 text-xs"
             style={{ 
@@ -171,78 +226,102 @@ export function SearchFlowIndicator({ currentStage = 'start', metadata = {}, loa
               transform: animateIn ? 'translateY(0)' : 'translateY(10px)'
             }}
           >
-            {metadata.search_duration_seconds !== undefined && (
-              <div className="p-2 bg-blue-50 rounded-md">
-                <span className="text-gray-500">⏱️ Duration:</span>{' '}
-                <span className="font-medium text-blue-700">{metadata.search_duration_seconds.toFixed(2)}s</span>
-              </div>
-            )}
-            {metadata.total_results_found !== undefined && (
-              <div className="p-2 bg-green-50 rounded-md">
-                <span className="text-gray-500">📊 Results:</span>{' '}
-                <span className="font-medium text-green-700">{metadata.total_results_found}</span>
-              </div>
-            )}
-            {metadata.token_usage?.embedding_tokens !== undefined && (
-              <div className="p-2 bg-purple-50 rounded-md">
-                <span className="text-gray-500">🧠 Embedding Tokens:</span>{' '}
-                <span className="font-medium text-purple-700">{metadata.token_usage.embedding_tokens.toLocaleString()}</span>
-              </div>
-            )}
-            {metadata.token_usage?.generation_tokens?.input !== undefined && (
-              <div className="p-2 bg-yellow-50 rounded-md">
-                <span className="text-gray-500">📥 Generation Input:</span>{' '}
-                <span className="font-medium text-yellow-700">{metadata.token_usage.generation_tokens.input.toLocaleString()}</span>
-              </div>
-            )}
-            {metadata.token_usage?.generation_tokens?.output !== undefined && (
-              <div className="p-2 bg-cyan-50 rounded-md">
-                <span className="text-gray-500">📤 Generation Output:</span>{' '}
-                <span className="font-medium text-cyan-700">{metadata.token_usage.generation_tokens.output.toLocaleString()}</span>
-              </div>
-            )}
-            {metadata.token_usage?.total_tokens !== undefined && (
-              <div className="p-2 bg-red-50 rounded-md">
-                <span className="text-gray-500">💰 Total Tokens:</span>{' '}
-                <span className="font-medium text-red-700">{metadata.token_usage.total_tokens.toLocaleString()}</span>
-              </div>
-            )}
+            {metadataDisplay}
           </div>
         )}
       </CardContent>
     </Card>
   );
-}
+});
 
 /**
  * Component for displaying search results by method with enhanced styling
  */
-export function SearchResultsByMethod({ results, title, icon }) {
+export const SearchResultsByMethod = React.memo(function SearchResultsByMethod({ results, title, icon }) {
   // Animation state
   const [animateIn, setAnimateIn] = useState(false);
   
+  // Memoize the results processing to prevent unnecessary recalculations
+  const { resultsByMethod, sortedMethods } = useMemo(() => {
+    // Group results by method
+    const grouped = results.reduce((acc, result) => {
+      const method = result.search_method || 'unknown';
+      if (!acc[method]) acc[method] = [];
+      acc[method].push(result);
+      return acc;
+    }, {});
+    
+    // Sort methods by priority: hybrid, dot_product, keyword, others
+    const methodOrder = ['hybrid', 'dot_product', 'keyword'];
+    const sorted = Object.keys(grouped).sort(
+      (a, b) => methodOrder.indexOf(a) - methodOrder.indexOf(b)
+    );
+    
+    return { resultsByMethod: grouped, sortedMethods: sorted };
+  }, [results]);
+  
+  // Memoize source analysis for all methods at once
+  const sourceAnalysisByMethod = useMemo(() => {
+    const analysis = {};
+    Object.entries(resultsByMethod).forEach(([method, methodResults]) => {
+      analysis[method] = Object.entries(
+        methodResults.reduce((acc, r) => {
+          acc[r.source] = (acc[r.source] || 0) + 1;
+          return acc;
+        }, {})
+      )
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, 3);
+    });
+    return analysis;
+  }, [resultsByMethod]);
+  
+  // Memoize method styles to prevent recreation
+  const getMethodStyle = useCallback((method) => {
+    switch (method) {
+      case 'keyword':
+        return { bgColor: 'bg-cyan-50', borderColor: 'border-cyan-200', textColor: 'text-cyan-700' };
+      case 'dot_product':
+        return { bgColor: 'bg-blue-50', borderColor: 'border-blue-200', textColor: 'text-blue-700' };
+      case 'hybrid':
+        return { bgColor: 'bg-green-50', borderColor: 'border-green-200', textColor: 'text-green-700' };
+      default:
+        return { bgColor: 'bg-gray-50', borderColor: 'border-gray-200', textColor: 'text-gray-700' };
+    }
+  }, []);
+  
+  // Memoize method descriptions
+  const getMethodDescription = useCallback((method) => {
+    switch (method) {
+      case 'keyword':
+        return 'Traditional text matching to find content containing specific keywords.';
+      case 'dot_product':
+        return 'Vector similarity search using AI embeddings to find semantically similar content.';
+      case 'hybrid':
+        return 'Combined approach using both keyword and vector search for comprehensive results.';
+      default:
+        return 'Custom search method.';
+    }
+  }, []);
+  
+  // Memoize method icons
+  const getMethodIcon = useCallback((method) => {
+    switch (method) {
+      case 'keyword': return '🔍';
+      case 'dot_product': return '🎯';
+      case 'hybrid': return '🔄';
+      default: return '📌';
+    }
+  }, []);
+  
   useEffect(() => {
-    // Trigger animation after component mounts
+    // Trigger animation after component mounts - only once
     const timer = setTimeout(() => {
       setAnimateIn(true);
     }, 300);
     
     return () => clearTimeout(timer);
-  }, []);
-  
-  // Group results by method
-  const resultsByMethod = results.reduce((acc, result) => {
-    const method = result.search_method || 'unknown';
-    if (!acc[method]) acc[method] = [];
-    acc[method].push(result);
-    return acc;
-  }, {});
-  
-  // Sort methods by priority: hybrid, dot_product, keyword, others
-  const methodOrder = ['hybrid', 'dot_product', 'keyword'];
-  const sortedMethods = Object.keys(resultsByMethod).sort(
-    (a, b) => methodOrder.indexOf(a) - methodOrder.indexOf(b)
-  );
+  }, []); // Empty dependency array
   
   return (
     <Card className={`mb-6 overflow-hidden transition-all duration-500 ${animateIn ? 'opacity-100' : 'opacity-0'}`}>
@@ -257,15 +336,8 @@ export function SearchResultsByMethod({ results, title, icon }) {
           {sortedMethods.map((method, methodIndex) => {
             const methodResults = resultsByMethod[method];
             const count = methodResults.length;
-            
-            // Get method style
-            const methodStyle = method === 'keyword' 
-              ? { bgColor: 'bg-cyan-50', borderColor: 'border-cyan-200', textColor: 'text-cyan-700' }
-              : method === 'dot_product'
-                ? { bgColor: 'bg-blue-50', borderColor: 'border-blue-200', textColor: 'text-blue-700' }
-                : method === 'hybrid'
-                  ? { bgColor: 'bg-green-50', borderColor: 'border-green-200', textColor: 'text-green-700' }
-                  : { bgColor: 'bg-gray-50', borderColor: 'border-gray-200', textColor: 'text-gray-700' };
+            const methodStyle = getMethodStyle(method);
+            const topSources = sourceAnalysisByMethod[method] || [];
             
             // Calculate delay for staggered animation
             const animationDelay = 0.2 + (methodIndex * 0.15);
@@ -281,11 +353,7 @@ export function SearchResultsByMethod({ results, title, icon }) {
                 }}
               >
                 <h3 className={`text-sm font-medium flex items-center mb-2 ${methodStyle.textColor}`}>
-                  <span className="mr-1">{
-                    method === 'keyword' ? '🔍' :
-                    method === 'dot_product' ? '🎯' :
-                    method === 'hybrid' ? '🔄' : '📌'
-                  }</span>
+                  <span className="mr-1">{getMethodIcon(method)}</span>
                   {method.charAt(0).toUpperCase() + method.slice(1)} Search
                   <span className="ml-2 text-xs bg-white px-2 py-0.5 rounded-full shadow-sm">
                     {count} results
@@ -293,42 +361,30 @@ export function SearchResultsByMethod({ results, title, icon }) {
                 </h3>
                 
                 <div className="text-xs text-gray-600 mb-2 pl-2 border-l-2 border-gray-300">
-                  {method === 'keyword' && 'Traditional text matching to find content containing specific keywords.'}
-                  {method === 'dot_product' && 'Vector similarity search using AI embeddings to find semantically similar content.'}
-                  {method === 'hybrid' && 'Combined approach using both keyword and vector search for comprehensive results.'}
-                  {method !== 'keyword' && method !== 'dot_product' && method !== 'hybrid' && 'Custom search method.'}
+                  {getMethodDescription(method)}
                 </div>
                 
                 <div className="text-xs mt-3 pt-2 border-t border-gray-200">
                   <span className="font-medium">Top sources:</span>{' '}
                   <div className="flex flex-wrap gap-1 mt-1">
-                    {Object.entries(
-                      methodResults.reduce((acc, r) => {
-                        acc[r.source] = (acc[r.source] || 0) + 1;
-                        return acc;
-                      }, {})
-                    )
-                      .sort((a, b) => b[1] - a[1])
-                      .slice(0, 3)
-                      .map(([source, count], i) => {
-                        const sourceStyle = source === 'video_transcriptions' 
-                          ? 'bg-green-100 text-green-700 border-green-200'
-                          : source === 'document_embeddings'
-                            ? 'bg-blue-100 text-blue-700 border-blue-200'
-                            : source === 'video_transcriptions_full'
-                              ? 'bg-purple-100 text-purple-700 border-purple-200'
-                              : 'bg-gray-100 text-gray-700 border-gray-200';
-                        
-                        return (
-                          <span 
-                            key={source} 
-                            className={`${sourceStyle} px-2 py-0.5 rounded-full text-xs border`}
-                          >
-                            {source} ({count})
-                          </span>
-                        );
-                      })
-                    }
+                    {topSources.map(([source, count], i) => {
+                      const sourceStyle = source === 'video_transcriptions' 
+                        ? 'bg-green-100 text-green-700 border-green-200'
+                        : source === 'document_embeddings'
+                          ? 'bg-blue-100 text-blue-700 border-blue-200'
+                          : source === 'video_transcriptions_full'
+                            ? 'bg-purple-100 text-purple-700 border-purple-200'
+                            : 'bg-gray-100 text-gray-700 border-gray-200';
+                      
+                      return (
+                        <span 
+                          key={source} 
+                          className={`${sourceStyle} px-2 py-0.5 rounded-full text-xs border`}
+                        >
+                          {source} ({count})
+                        </span>
+                      );
+                    })}
                   </div>
                 </div>
               </div>
@@ -338,7 +394,7 @@ export function SearchResultsByMethod({ results, title, icon }) {
       </CardContent>
     </Card>
   );
-}
+});
 
 /**
  * Component for displaying the analysis process with enhanced animations

@@ -1,5 +1,6 @@
 from typing import Optional, Dict, Any
-from backend.app.models.tool_calling_models import ToolSchema
+from ...models.tool_calling_models import ToolSchema
+
 
 class ToolSchemaManager:
     def __init__(self):
@@ -11,20 +12,23 @@ class ToolSchemaManager:
             "get_weather": {
                 "type": "object",
                 "properties": {
-                    "location": {"type": "string", "description": "The city and state, e.g. San Francisco, CA"},
-                    "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+                    "location": {
+                        "type": "string",
+                        "description": "The city and state, e.g. San Francisco, CA",
+                    },
+                    "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]},
                 },
-                "required": ["location"]
+                "required": ["location"],
             },
             "send_email": {
                 "type": "object",
                 "properties": {
                     "to": {"type": "string"},
                     "subject": {"type": "string"},
-                    "body": {"type": "string"}
+                    "body": {"type": "string"},
                 },
-                "required": ["to", "subject", "body"]
-            }
+                "required": ["to", "subject", "body"],
+            },
             # Placeholder: Schemas could be loaded from a configuration file or database here.
         }
 

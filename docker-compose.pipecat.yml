@@ -13,7 +13,7 @@ services:
     environment:
       CONFIG_PATH: /app/config.yaml
     networks:
-      - pmoves-pipecat-net
+      - pmoves-network
 
   pipecat-agent:
     build:

@@ -1,0 +1,29 @@
+# Core Pipecat with all capabilities
+pipecat-ai[anthropic,assemblyai,aws,azure,cartesia,cerebras,deepseek,daily,deepgram,elevenlabs,fal,fireworks,fish,gladia,google,grok,groq,koala,lmnt,local,nim,noisereduce,openai,qwen,remote-smart-turn,silero,simli,soundfile,tavus,together,websocket,whisper]
+
+# FastAPI for service endpoints
+fastapi
+uvicorn
+httpx
+
+# LiteLLM integration
+litellm
+
+# Supabase and realtime
+supabase
+realtime
+
+# Environment and configuration
+python-dotenv
+pydantic
+
+# A2A protocol support (will be imported conditionally)
+# google-a2a-python  # Not available in PyPI, will be handled conditionally
+
+# Agent registry and orchestration
+asyncio-mqtt  # For potential MQTT communication
+websockets
+
+# Logging and monitoring
+structlog
+prometheus-client 

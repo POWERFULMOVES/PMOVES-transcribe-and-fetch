@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  pmoves-pipecat-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pmoves-pipecat-agent
+    ports:
+      - "8001:8000"
+    env_file:
+      - ../backend/app/.env
+    environment:
+      # Container-specific overrides
+      - AGENT_ENDPOINT=http://pmoves-pipecat-agent:8000
+      - LITELLM_PROXY_URL=http://litellm-proxy:4000
+      - AGENT_REGISTRY_URL=http://pmoves-backend:8000/agents
+      - PORT=8000
+    volumes:
+      # Mount logs for persistence
+      - ./logs:/app/logs
+      # Optional: Mount for development
+      - ./app:/app/app
+    restart: unless-stopped
+    depends_on:
+      litellm-proxy:
+        condition: service_healthy
+    networks:
+      - pmoves-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 10s
+      retries: 3
+
+  # If running standalone, include litellm-proxy
+  litellm-proxy:
+    image: ghcr.io/berriai/litellm:main-latest
+    container_name: litellm-proxy-pipecat
+    ports:
+      - "4000:4000"
+    volumes:
+      - ../litellm_proxy_config/config.yaml:/app/config.yaml
+    env_file:
+      - ../backend/app/.env
+      - ../.env
+    environment:
+      CONFIG_PATH: /app/config.yaml
+    networks:
+      - pmoves-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+
+networks:
+  pmoves-network:
+    driver: bridge
+    name: pmoves-network
