@@ -364,62 +364,64 @@ async def chat_completions(
         # Remove None values from the payload to avoid sending nulls for optional fields
         litellm_payload = {k: v for k, v in litellm_payload.items() if v is not None}
 
-        logger.info(f"Sending chat completion request to LiteLLM proxy: {LITELLM_PROXY_URL}/v1/chat/completions")
-        
-        headers = {}
-        if LITELLM_PROXY_API_KEY:
-            headers["Authorization"] = f"Bearer {LITELLM_PROXY_API_KEY}"
+        # Process tools for the service call
+        tools_for_litellm = [tool.model_dump(exclude_none=True) for tool in request_body.tools] if request_body.tools else None
 
-        async with httpx.AsyncClient(timeout=120.0) as client: # Use httpx to call the proxy
-            response = await client.post(
-                f"{LITELLM_PROXY_URL}/v1/chat/completions",
-                json=litellm_payload,
-                headers=headers
-            )
-            response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-            
-            # If streaming, return a StreamingResponse
-            if request_body.stream:
-                async def stream_response():
-                    async for chunk in response.aiter_bytes():
-                        yield chunk
-                # Determine media type - text/event-stream for SSE
-                return StreamingResponse(stream_response(), media_type="text/event-stream")
+        logger.info(f"Calling chat_completion_advanced service for model_alias: {request_body.model_alias}")
 
-            # If not streaming, parse the JSON response
-            litellm_response_data = response.json()
+        service_response = await llm_registry.chat_completion_advanced(
+            model_alias=request_body.model_alias,
+            messages=messages_for_litellm,
+            temperature=request_body.temperature,
+            max_tokens=request_body.max_tokens,
+            stream=request_body.stream,
+            user=request_body.user,
+            tools=tools_for_litellm,
+            tool_choice=request_body.tool_choice,
+            safety_settings=request_body.safety_settings,
+            thinking=request_body.thinking,
+            reasoning_effort=request_body.reasoning_effort,
+            cache_control=request_body.cache_control,
+            extra_body=request_body.extra_body
+            # request_timeout is not explicitly passed here, using service default
+        )
 
-        # Map LiteLLM's response structure to our ChatCompletionResponse Pydantic model.
-        # LiteLLM's response should be compatible with OpenAI's ChatCompletionResponse.
-        # We can directly use the Pydantic model's parsing capabilities.
-        
-        # Ensure the 'model' field in the response is the actual model used by LiteLLM
-        actual_model_used = litellm_response_data.get("model", request_body.model_alias)
-        litellm_response_data['model'] = actual_model_used # Ensure our model uses the actual model ID
+        if request_body.stream:
+            # service_response is an AsyncGenerator
+            return StreamingResponse(service_response, media_type="text/event-stream")
+        else:
+            # service_response is a Dict
+            # Ensure the 'model' field in the response is the actual model used by LiteLLM,
+            # as the service might get this from LiteLLM's response.
+            # If not present in service_response, use the requested alias (though it should be there).
+            actual_model_used = service_response.get("model", request_body.model_alias)
+            service_response['model'] = actual_model_used
 
-        # Use the Pydantic model to parse the response data
-        return ChatCompletionResponse(**litellm_response_data)
+            # The service_response should be directly usable by ChatCompletionResponse
+            # if it matches the OpenAI/LiteLLM format.
+            return ChatCompletionResponse(**service_response)
 
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error calling LiteLLM proxy chat endpoint ({e.request.url}): {e.response.status_code} - {e.response.text}", exc_info=True)
-        # Attempt to parse error details from the response body if available
-        error_detail = f"LLM proxy returned an HTTP error: {e.response.status_code}"
+        logger.error(f"HTTP error from LLM service during chat completion ({e.request.url}): {e.response.status_code} - {e.response.text}", exc_info=True)
+        error_detail = f"LLM service returned an HTTP error: {e.response.status_code}"
         try:
             error_response_data = e.response.json()
             if "error" in error_response_data and isinstance(error_response_data["error"], dict):
-                 error_detail += f" - {error_response_data['error'].get('message', 'Unknown error from proxy')}"
-            elif "detail" in error_response_data:
+                 error_detail += f" - {error_response_data['error'].get('message', 'Unknown error from LLM service')}"
+            elif "detail" in error_response_data: # Some proxies might use 'detail'
                  error_detail += f" - {error_response_data['detail']}"
-            else:
-                 error_detail += f" - {e.response.text}" # Fallback to raw text
-        except json.JSONDecodeError:
-            error_detail += f" - {e.response.text}" # Fallback to raw text if JSON parsing fails
-            
+            else: # Fallback if error structure is unknown
+                 error_detail += f" - {e.response.text[:200]}" # Limit length
+        except json.JSONDecodeError: # If the error response itself is not JSON
+            error_detail += f" - {e.response.text[:200]}"
         raise HTTPException(status_code=e.response.status_code, detail=error_detail)
     except httpx.RequestError as e:
-        logger.error(f"Request error calling LiteLLM proxy chat endpoint ({e.request.url}): {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to connect to LLM proxy: {e}")
-    except Exception as e:
+        logger.error(f"Request error connecting to LLM service during chat completion ({e.request.url}): {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail=f"Failed to connect to LLM service: {str(e)}") # 503 Service Unavailable
+    except json.JSONDecodeError as e: # If service returns non-JSON for non-streaming, or if ChatCompletionResponse parsing fails
+        logger.error(f"JSON decode error processing response from LLM service for chat completion: {e.msg}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Invalid JSON response from LLM service: {e.msg}")
+    except Exception as e: # Catch-all for other unexpected errors
         logger.error(f"Unexpected error during chat completion for model_alias {request_body.model_alias}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
