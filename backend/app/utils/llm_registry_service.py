@@ -312,127 +312,701 @@ class LLMRegistryService:
             "cache_ttl_seconds": LLM_CACHE_TTL_SECONDS
         }
 
-    async def transcribe_audio(self, model_id: str, audio_data: bytes, **kwargs) -> Optional[Dict[str, Any]]:
+    # Old transcribe_audio method removed.
+    # Old get_chat_completion method removed.
+
+    async def chat_completion_advanced(
+        self,
+        model_alias: str,
+        messages: List[Dict[str, Any]],
+        temperature: Optional[float] = 0.7,
+        max_tokens: Optional[int] = None,
+        stream: Optional[bool] = False,
+        user: Optional[str] = None,
+        tools: Optional[List[Dict[str, Any]]] = None,
+        tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        safety_settings: Optional[List[Dict[str, Any]]] = None,
+        thinking: Optional[Dict[str, Any]] = None,
+        reasoning_effort: Optional[str] = None,
+        cache_control: Optional[Dict[str, Any]] = None,
+        extra_body: Optional[Dict[str, Any]] = None,
+        request_timeout: Optional[float] = 120.0
+    ) -> Union[Dict[str, Any], AsyncGenerator[bytes, None]]:
         """
-        Sends audio data to the LiteLLM proxy for transcription.
+        Performs a chat completion request to the LiteLLM proxy with advanced parameters.
 
         Args:
-            model_id: The ID of the transcription model to use (as configured in LiteLLM).
-            audio_data: The audio content as bytes.
-            **kwargs: Additional parameters to pass to the LiteLLM transcription endpoint.
+            model_alias: The alias of the model to use (as configured in LiteLLM).
+            messages: A list of message objects.
+            temperature: Sampling temperature.
+            max_tokens: Maximum number of tokens to generate.
+            stream: Whether to stream the response.
+            user: A unique identifier for the end-user.
+            tools: A list of tools the model may call.
+            tool_choice: Controls which tool the model should use.
+            safety_settings: Safety settings for the request.
+            thinking: Custom parameter for LiteLLM.
+            reasoning_effort: Custom parameter for LiteLLM.
+            cache_control: Cache control parameters for LiteLLM proxy.
+            extra_body: Additional parameters to include in the request body.
+            request_timeout: Timeout for the HTTP request in seconds.
 
         Returns:
-            A dictionary containing the transcription results (full text and segments)
-            or None if the transcription fails.
+            If stream is False, a dictionary containing the chat completion response.
+            If stream is True, an async generator yielding bytes of the streamed response.
+        
+        Raises:
+            ValueError: If LiteLLM Proxy URL is not configured.
+            httpx.HTTPStatusError: If the proxy returns an HTTP error status.
+            httpx.RequestError: If a network error occurs.
+            json.JSONDecodeError: If stream is False and the response is not valid JSON.
         """
-        endpoint_url = f"{self.litellm_proxy_url}/v1/audio/transcriptions" # Use instance's URL
-        logger.info(f"Attempting transcription via LiteLLM proxy: {endpoint_url} with model '{model_id}'")
+        proxy_url_to_use = self.litellm_proxy_url if self.litellm_proxy_url else LITELLM_PROXY_URL
+        if not proxy_url_to_use:
+            logger.error("LiteLLM Proxy URL is not configured for chat_completion_advanced.")
+            raise ValueError("LiteLLM Proxy URL is not configured.")
 
-        headers = {}
+        endpoint_url = f"{proxy_url_to_use}/v1/chat/completions"
+        logger.info(f"Attempting advanced chat completion: {endpoint_url} with model '{model_alias}', stream: {stream}")
+
+        headers = {"Content-Type": "application/json"}
+        # Use the global LITELLM_PROXY_API_KEY as the class doesn't store it per instance
+        # This aligns with how _fetch_models_from_litellm_proxy and transcribe_audio use it.
         if LITELLM_PROXY_API_KEY:
             headers["Authorization"] = f"Bearer {LITELLM_PROXY_API_KEY}"
 
-        # LiteLLM expects the audio file as a multipart/form-data file upload
-        # and the model ID as a form field.
-        files = {'file': ('audio.mp3', audio_data, 'audio/mpeg')} # Assuming mp3 format is acceptable or handled by proxy
-        data = {'model': model_id}
+        litellm_payload = {
+            "model": model_alias,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "stream": stream,
+            "user": user,
+            "tools": tools,
+            "tool_choice": tool_choice,
+            "safety_settings": safety_settings,
+            "thinking": thinking,
+            "reasoning_effort": reasoning_effort,
+            "cache_control": cache_control,
+            # "extra_body" is merged below if it exists
+        }
 
-        # Include any additional kwargs as form data
-        for key, value in kwargs.items():
-            data[key] = value
+        # Merge extra_body if provided
+        if extra_body:
+            litellm_payload.update(extra_body)
+        
+        # Remove None values from the payload to avoid sending them to LiteLLM
+        litellm_payload = {k: v for k, v in litellm_payload.items() if v is not None}
+        
+        logger.debug(f"LiteLLM payload for advanced chat completion (model: {model_alias}): {litellm_payload}")
 
-        try:
-            async with httpx.AsyncClient(timeout=600.0) as client: # Increased timeout for transcription
-                response = await client.post(endpoint_url, headers=headers, files=files, data=data)
-                response.raise_for_status() # Raise an exception for bad status codes
+        async with httpx.AsyncClient(timeout=request_timeout) as client:
+            response = None # Initialize response to None for broader scope in finally blocks
+            try:
+                response = await client.post(
+                    endpoint_url,
+                    headers=headers,
+                    json=litellm_payload
+                )
+                response.raise_for_status() # Raise HTTPStatusError for 4xx/5xx responses
 
-                transcription_result = response.json()
-                logger.info(f"Transcription successful for model '{model_id}'.")
-
-                # LiteLLM's /v1/audio/transcriptions endpoint (OpenAI compatible)
-                # returns a structure like: {"text": "...", "segments": [...]}
-                # We need to return this structure or adapt it if necessary for transcribe1.py
-
-                # Ensure the response has the expected keys
-                if "text" in transcription_result and "segments" in transcription_result:
-                     return transcription_result
+                if stream:
+                    async def stream_generator():
+                        # Ensure response is available in this inner scope
+                        nonlocal response 
+                        try:
+                            async for chunk in response.aiter_bytes():
+                                yield chunk
+                        except Exception as e_stream: 
+                            logger.error(f"Error during response streaming for model '{model_alias}': {e_stream}", exc_info=True)
+                            raise 
+                        finally:
+                            if response:
+                                await response.aclose()
+                                logger.debug(f"Stream closed for model '{model_alias}'")
+                    return stream_generator()
                 else:
-                     logger.error(f"Unexpected response structure from LiteLLM transcription endpoint: {transcription_result}")
-                     return None
+                    try:
+                        response_data = response.json()
+                    except json.JSONDecodeError as e_json:
+                        logger.error(f"JSON decode error for non-streamed response from model '{model_alias}': {e_json.msg}. Response text (first 500 chars): {response.text[:500]}", exc_info=False)
+                        # Response will be closed in the outer finally block
+                        raise 
+                    
+                    logger.info(f"Non-streamed chat completion successful for model '{model_alias}'.")
+                    return response_data
 
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error during transcription via LiteLLM proxy ({e.request.url}): {e.response.status_code} - {e.response.text}", exc_info=True)
-            return None
-        except httpx.RequestError as e:
-            logger.error(f"Request error during transcription via LiteLLM proxy ({e.request.url}): {e}", exc_info=True)
-            return None
-        except Exception as e:
-            logger.error(f"Unexpected error during transcription via LiteLLM proxy: {e}", exc_info=True)
-            return None
+            except httpx.HTTPStatusError as e_http:
+                response_text = e_http.response.text[:500] if e_http.response else "No response body"
+                logger.error(
+                    f"HTTP error during advanced chat completion for model '{model_alias}' ({e_http.request.url}): "
+                    f"{e_http.response.status_code} - {response_text}", 
+                    exc_info=True # Full traceback for HTTPStatusError
+                )
+                raise 
+            except httpx.RequestError as e_req:
+                logger.error(
+                    f"Request error during advanced chat completion for model '{model_alias}' ({e_req.request.url}): {e_req}", 
+                    exc_info=True
+                )
+                raise 
+            except Exception as e_unexpected:
+                logger.error(
+                    f"Unexpected error during advanced chat completion for model '{model_alias}': {e_unexpected}",
+                    exc_info=True
+                )
+                raise
+            finally:
+                if response and not stream: # For non-streaming, response should be closed here if not already
+                    if hasattr(response, 'is_closed') and not response.is_closed:
+                        await response.aclose()
+                        logger.debug(f"Non-streamed response closed for model '{model_alias}' in finally block.")
+                    elif not hasattr(response, 'is_closed'): # If it's not an httpx.Response (e.g. error before response)
+                        pass
+                # For streaming, stream_generator's finally block handles closing.
 
-    async def get_chat_completion(self, model_id: str, messages: list, **kwargs) -> Optional[str]:
+    async def create_embeddings_advanced(
+        self,
+        model_alias: str,
+        input_data: Union[str, List[str]],
+        extra_body: Optional[Dict[str, Any]] = None,
+        request_timeout: Optional[float] = 60.0
+    ) -> Dict[str, Any]:
         """
-        Gets a chat completion from the LiteLLM proxy.
+        Creates embeddings for the given input using the specified model via LiteLLM proxy.
 
         Args:
-            model_id: The ID of the chat model to use (as configured in LiteLLM).
-            messages: A list of message objects (e.g., [{"role": "user", "content": "Hello"}]).
-            **kwargs: Additional parameters for the chat completion request (e.g., temperature, max_tokens).
+            model_alias: The alias of the embedding model to use (as configured in LiteLLM).
+            input_data: A string or list of strings to embed.
+            extra_body: Additional parameters to include in the request body,
+                        e.g., {"encoding_format": "base64", "user": "user-123"}.
+            request_timeout: Timeout for the HTTP request in seconds.
 
         Returns:
-            The content of the first choice's message as a string, or None if an error occurs.
+            A dictionary representing the embedding response from LiteLLM,
+            typically mappable to OpenAI's EmbeddingResponse schema.
+        
+        Raises:
+            ValueError: If LiteLLM Proxy URL is not configured.
+            httpx.HTTPStatusError: If the proxy returns an HTTP error status.
+            httpx.RequestError: If a network error occurs.
+            json.JSONDecodeError: If the response is not valid JSON.
         """
-        endpoint_url = f"{self.litellm_proxy_url}/v1/chat/completions" # Use instance's URL
-        logger.info(f"Attempting chat completion via LiteLLM proxy: {endpoint_url} with model '{model_id}'")
+        proxy_url_to_use = self.litellm_proxy_url if self.litellm_proxy_url else LITELLM_PROXY_URL
+        if not proxy_url_to_use:
+            logger.error("LiteLLM Proxy URL is not configured for create_embeddings_advanced.")
+            raise ValueError("LiteLLM Proxy URL is not configured.")
+
+        endpoint_url = f"{proxy_url_to_use}/v1/embeddings"
+        logger.info(f"Attempting to create embeddings: {endpoint_url} with model '{model_alias}'")
 
         headers = {"Content-Type": "application/json"}
-        if LITELLM_PROXY_API_KEY: # Use the global API key from app_config for now
+        if LITELLM_PROXY_API_KEY:
             headers["Authorization"] = f"Bearer {LITELLM_PROXY_API_KEY}"
 
-        payload = {
-            "model": model_id,
-            "messages": messages,
-            **kwargs
+        litellm_payload = {
+            "model": model_alias,
+            "input": input_data,
         }
-        
-        # Default stream to False if not provided, as this method expects a single response
-        if "stream" not in payload:
-            payload["stream"] = False
 
-        try:
-            async with httpx.AsyncClient(timeout=kwargs.get("request_timeout", 120.0)) as client: # Allow timeout override
-                response = await client.post(endpoint_url, headers=headers, json=payload)
+        if extra_body:
+            litellm_payload.update(extra_body)
+        
+        # Remove None values from the payload to keep it clean
+        litellm_payload = {k: v for k, v in litellm_payload.items() if v is not None}
+
+        logger.debug(f"LiteLLM payload for embeddings (model: {model_alias}): {litellm_payload}")
+
+        async with httpx.AsyncClient(timeout=request_timeout) as client:
+            response = None 
+            try:
+                response = await client.post(
+                    endpoint_url,
+                    headers=headers,
+                    json=litellm_payload
+                )
+                response.raise_for_status() 
+                
+                try:
+                    response_data = response.json()
+                except json.JSONDecodeError as e_json:
+                    logger.error(f"JSON decode error for embeddings response from model '{model_alias}': {e_json.msg}. Response text (first 500 chars): {response.text[:500]}", exc_info=False)
+                    raise
+                
+                logger.info(f"Embeddings creation successful for model '{model_alias}'.")
+                return response_data
+
+            except httpx.HTTPStatusError as e_http:
+                response_text = e_http.response.text[:500] if e_http.response else "No response body"
+                logger.error(
+                    f"HTTP error during embeddings creation for model '{model_alias}' ({e_http.request.url}): "
+                    f"{e_http.response.status_code} - {response_text}", 
+                    exc_info=True
+                )
+                raise
+            except httpx.RequestError as e_req:
+                logger.error(
+                    f"Request error during embeddings creation for model '{model_alias}' ({e_req.request.url}): {e_req}", 
+                    exc_info=True
+                )
+                raise
+            except Exception as e_unexpected: # Catch any other unexpected errors
+                logger.error(
+                    f"Unexpected error during embeddings creation for model '{model_alias}': {e_unexpected}",
+                    exc_info=True
+                )
+                raise
+            finally:
+                if response:
+                    await response.aclose()
+                    logger.debug(f"Embeddings response closed for model '{model_alias}' in finally block.")
+
+    async def analyze_vision_advanced(
+        self,
+        model_alias: str,
+        messages: List[Dict[str, Any]], # Already converted from Pydantic ChatMessage with vision content
+        max_tokens: Optional[int] = 300,
+        temperature: Optional[float] = None,
+        # user: Optional[str] = None, # Not in current llm_routes.py payload for vision
+        extra_body: Optional[Dict[str, Any]] = None,
+        request_timeout: Optional[float] = 120.0
+    ) -> Dict[str, Any]: # Returns dict mappable to ChatCompletionResponse
+        """
+        Sends a request with vision (image) data to the LiteLLM proxy.
+        Assumes messages are already formatted correctly for multimodal input.
+
+        Args:
+            model_alias: The alias of the vision model to use.
+            messages: A list of message objects, with image URLs formatted as per LiteLLM expectations
+                      (e.g., {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,..."}}).
+            max_tokens: Maximum number of tokens to generate in the response.
+            temperature: Sampling temperature.
+            extra_body: Additional parameters to include in the request body.
+            request_timeout: Timeout for the HTTP request in seconds.
+
+        Returns:
+            A dictionary representing the chat completion response from LiteLLM.
+        
+        Raises:
+            ValueError: If LiteLLM Proxy URL is not configured.
+            httpx.HTTPStatusError: If the proxy returns an HTTP error status.
+            httpx.RequestError: If a network error occurs.
+            json.JSONDecodeError: If the response is not valid JSON.
+        """
+        proxy_url_to_use = self.litellm_proxy_url if self.litellm_proxy_url else LITELLM_PROXY_URL
+        if not proxy_url_to_use:
+            logger.error("LiteLLM Proxy URL is not configured for analyze_vision_advanced.")
+            raise ValueError("LiteLLM Proxy URL is not configured.")
+
+        endpoint_url = f"{proxy_url_to_use}/v1/chat/completions" # Vision models often use chat completions endpoint
+        logger.info(f"Attempting vision analysis: {endpoint_url} with model '{model_alias}'")
+
+        headers = {"Content-Type": "application/json"}
+        if LITELLM_PROXY_API_KEY:
+            headers["Authorization"] = f"Bearer {LITELLM_PROXY_API_KEY}"
+
+        litellm_payload = {
+            "model": model_alias,
+            "messages": messages,
+            "max_tokens": max_tokens,
+            "temperature": temperature,
+        }
+
+        if extra_body:
+            litellm_payload.update(extra_body)
+        
+        # Remove None values from the payload
+        litellm_payload = {k: v for k, v in litellm_payload.items() if v is not None}
+
+        logger.debug(f"LiteLLM payload for vision analysis (model: {model_alias}): {litellm_payload}")
+
+        async with httpx.AsyncClient(timeout=request_timeout) as client:
+            response = None
+            try:
+                response = await client.post(
+                    endpoint_url,
+                    headers=headers,
+                    json=litellm_payload
+                )
                 response.raise_for_status()
                 
-                completion_data = response.json()
+                try:
+                    response_data = response.json()
+                except json.JSONDecodeError as e_json:
+                    logger.error(f"JSON decode error for vision analysis response from model '{model_alias}': {e_json.msg}. Response text (first 500 chars): {response.text[:500]}", exc_info=False)
+                    raise
                 
-                if completion_data.get("choices") and isinstance(completion_data["choices"], list) and len(completion_data["choices"]) > 0:
-                    first_choice = completion_data["choices"][0]
-                    if first_choice.get("message") and isinstance(first_choice["message"], dict):
-                        content = first_choice["message"].get("content")
-                        if content:
-                            logger.info(f"Chat completion successful for model '{model_id}'.")
-                            return str(content)
-                        else:
-                            logger.warning(f"Chat completion response for model '{model_id}' had no content in the first choice's message.")
-                    else:
-                        logger.warning(f"Chat completion response for model '{model_id}' had no 'message' object in the first choice.")
-                else:
-                    logger.warning(f"Chat completion response for model '{model_id}' had no 'choices' or choices were empty.")
-                
-                return None # Fallthrough if expected data not found
+                logger.info(f"Vision analysis successful for model '{model_alias}'.")
+                return response_data
 
-        except httpx.HTTPStatusError as e:
-            logger.error(f"HTTP error during chat completion ({e.request.url}): {e.response.status_code} - {e.response.text}", exc_info=True)
-        except httpx.RequestError as e:
-            logger.error(f"Request error during chat completion ({e.request.url}): {e}", exc_info=True)
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON decode error parsing chat completion response: {e.msg}. Response text: {e.doc}", exc_info=False)
-        except Exception as e:
-            logger.error(f"Unexpected error during chat completion: {e}", exc_info=True)
+            except httpx.HTTPStatusError as e_http:
+                response_text = e_http.response.text[:500] if e_http.response else "No response body"
+                logger.error(
+                    f"HTTP error during vision analysis for model '{model_alias}' ({e_http.request.url}): "
+                    f"{e_http.response.status_code} - {response_text}", 
+                    exc_info=True
+                )
+                raise
+            except httpx.RequestError as e_req:
+                logger.error(
+                    f"Request error during vision analysis for model '{model_alias}' ({e_req.request.url}): {e_req}", 
+                    exc_info=True
+                )
+                raise
+            except Exception as e_unexpected:
+                logger.error(
+                    f"Unexpected error during vision analysis for model '{model_alias}': {e_unexpected}",
+                    exc_info=True
+                )
+                raise
+            finally:
+                if response:
+                    await response.aclose()
+                    logger.debug(f"Vision analysis response closed for model '{model_alias}' in finally block.")
+
+    async def synthesize_speech_advanced(
+        self,
+        model_alias: str,
+        input_text: str,
+        voice: str,
+        response_format: Optional[str] = "mp3",
+        speed: Optional[float] = 1.0,
+        extra_body: Optional[Dict[str, Any]] = None,
+        request_timeout: Optional[float] = 120.0
+    ) -> Tuple[AsyncGenerator[bytes, None], str]:
+        """
+        Synthesizes speech from text using the specified model via LiteLLM proxy,
+        returning a stream of audio data and its media type.
+
+        Args:
+            model_alias: The alias of the TTS model to use.
+            input_text: The text to synthesize.
+            voice: The voice to use for synthesis.
+            response_format: The desired audio format (e.g., "mp3", "opus").
+            speed: The speed of the speech.
+            extra_body: Additional parameters for the LiteLLM request.
+            request_timeout: Timeout for the HTTP request.
+
+        Returns:
+            A tuple containing:
+                - An async generator yielding bytes of the audio stream.
+                - A string representing the media type of the audio (e.g., "audio/mpeg").
         
-        return None
+        Raises:
+            ValueError: If LiteLLM Proxy URL is not configured.
+            httpx.HTTPStatusError: If the proxy returns an HTTP error status on the initial request.
+            httpx.RequestError: If a network error occurs on the initial request.
+        """
+        proxy_url_to_use = self.litellm_proxy_url if self.litellm_proxy_url else LITELLM_PROXY_URL
+        if not proxy_url_to_use:
+            logger.error("LiteLLM Proxy URL is not configured for synthesize_speech_advanced.")
+            raise ValueError("LiteLLM Proxy URL is not configured.")
 
+        endpoint_url = f"{proxy_url_to_use}/v1/audio/speech"
+        logger.info(f"Attempting speech synthesis: {endpoint_url} with model '{model_alias}', format: {response_format}")
+
+        headers = {"Content-Type": "application/json"} # LiteLLM /v1/audio/speech usually expects JSON
+        if LITELLM_PROXY_API_KEY:
+            headers["Authorization"] = f"Bearer {LITELLM_PROXY_API_KEY}"
+
+        litellm_payload = {
+            "model": model_alias,
+            "input": input_text,
+            "voice": voice,
+            "response_format": response_format,
+            "speed": speed,
+        }
+
+        if extra_body:
+            litellm_payload.update(extra_body)
+        
+        litellm_payload = {k: v for k, v in litellm_payload.items() if v is not None}
+        logger.debug(f"LiteLLM payload for speech synthesis (model: {model_alias}): {litellm_payload}")
+
+        media_type_map = {
+            "mp3": "audio/mpeg",
+            "opus": "audio/opus",
+            "aac": "audio/aac",
+            "flac": "audio/flac",
+            # Add others if LiteLLM supports them, e.g., pcm, wav
+            "pcm": "audio/wav", # Often PCM is delivered as WAV
+            "wav": "audio/wav"
+        }
+        media_type = media_type_map.get(response_format.lower() if response_format else "mp3", "application/octet-stream")
+
+        # httpx.AsyncClient should be managed carefully with response streaming
+        # The response object itself needs to be passed to the generator
+        
+        client = httpx.AsyncClient(timeout=request_timeout)
+        response = None # Define response here to ensure it's available in finally block
+        try:
+            response = await client.post(
+                endpoint_url,
+                headers=headers,
+                json=litellm_payload
+            )
+            response.raise_for_status() # Check for errors before starting to stream
+
+            # If successful up to here, prepare the generator
+            async def stream_generator(r: httpx.Response, c: httpx.AsyncClient):
+                try:
+                    async for chunk in r.aiter_bytes():
+                        yield chunk
+                except httpx.ReadError as e_read: # Catch errors during streaming
+                    logger.error(f"Read error during speech audio streaming for model '{model_alias}': {e_read}", exc_info=True)
+                    # Error is logged, generator stops. Consumer of generator will handle abrupt end.
+                except Exception as e_stream:
+                    logger.error(f"Unexpected error during speech audio streaming for model '{model_alias}': {e_stream}", exc_info=True)
+                finally:
+                    await r.aclose()
+                    await c.aclose() # Close client after response is fully processed
+                    logger.debug(f"Speech audio stream and client closed for model '{model_alias}'")
+            
+            return (stream_generator(response, client), media_type)
+
+        except (httpx.HTTPStatusError, httpx.RequestError) as e_req_http: # Catch initial request errors
+            # These errors happen before streaming starts or if response.raise_for_status() fails
+            error_message = f"Error during initial speech synthesis request for model '{model_alias}': {e_req_http}"
+            if isinstance(e_req_http, httpx.HTTPStatusError):
+                error_message += f" - Status: {e_req_http.response.status_code}, Response: {e_req_http.response.text[:500]}"
+            logger.error(error_message, exc_info=True)
+            
+            if response: # If response object exists, ensure it's closed
+                await response.aclose()
+            await client.aclose() # Always close the client if an error occurs before returning generator
+            raise # Re-raise the caught httpx error
+        
+        except Exception as e_unexpected: # Catch any other unexpected errors during setup
+            logger.error(f"Unexpected error during speech synthesis setup for model '{model_alias}': {e_unexpected}", exc_info=True)
+            if response:
+                await response.aclose()
+            await client.aclose()
+            raise
+
+    async def transcribe_audio_advanced(
+        self,
+        model_alias: str,
+        file_name: str, 
+        file_data: bytes, 
+        content_type: str, 
+        language: Optional[str] = None,
+        prompt: Optional[str] = None,
+        response_format: Optional[str] = "json", 
+        temperature: Optional[float] = 0.0,
+        extra_form_data: Optional[Dict[str, Any]] = None, 
+        request_timeout: Optional[float] = 300.0
+    ) -> Union[Dict[str, Any], str]:
+        """
+        Transcribes audio using the specified model via LiteLLM proxy.
+
+        Args:
+            model_alias: The alias of the transcription model.
+            file_name: The original filename of the audio.
+            file_data: The raw bytes of the audio file.
+            content_type: The MIME type of the audio file.
+            language: The language of the audio.
+            prompt: An optional text prompt to guide transcription.
+            response_format: Desired output format ('json', 'text', 'srt', 'verbose_json', 'vtt').
+            temperature: Sampling temperature for transcription.
+            extra_form_data: Additional form fields for the multipart request.
+            request_timeout: Timeout for the HTTP request.
+
+        Returns:
+            A dictionary if the response format is JSON, otherwise a string.
+        
+        Raises:
+            ValueError: If LiteLLM Proxy URL is not configured.
+            httpx.HTTPStatusError: If the proxy returns an HTTP error status.
+            httpx.RequestError: If a network error occurs.
+            json.JSONDecodeError: If a JSON response was expected and parsing fails.
+        """
+        proxy_url_to_use = self.litellm_proxy_url if self.litellm_proxy_url else LITELLM_PROXY_URL
+        if not proxy_url_to_use:
+            logger.error("LiteLLM Proxy URL is not configured for transcribe_audio_advanced.")
+            raise ValueError("LiteLLM Proxy URL is not configured.")
+
+        endpoint_url = f"{proxy_url_to_use}/v1/audio/transcriptions"
+        logger.info(f"Attempting audio transcription: {endpoint_url} with model '{model_alias}', format: {response_format}")
+
+        headers = {} # Content-Type will be set by httpx for multipart/form-data
+        if LITELLM_PROXY_API_KEY:
+            headers["Authorization"] = f"Bearer {LITELLM_PROXY_API_KEY}"
+
+        data_payload = {
+            "model": model_alias,
+            "language": language,
+            "prompt": prompt,
+            "response_format": response_format,
+            "temperature": temperature,
+        }
+        if extra_form_data:
+            data_payload.update(extra_form_data)
+        
+        # Filter out None values from data_payload
+        data_payload = {k: v for k, v in data_payload.items() if v is not None}
+        logger.debug(f"LiteLLM data payload for audio transcription (model: {model_alias}): {data_payload}")
+
+        files_payload = {'file': (file_name, file_data, content_type)}
+
+        async with httpx.AsyncClient(timeout=request_timeout) as client:
+            response = None
+            try:
+                response = await client.post(
+                    endpoint_url,
+                    headers=headers,
+                    data=data_payload,
+                    files=files_payload
+                )
+                response.raise_for_status()
+                
+                # Determine how to parse based on expected response_format or Content-Type header
+                # LiteLLM's /v1/audio/transcriptions should set Content-Type appropriately
+                response_content_type = response.headers.get("Content-Type", "").lower()
+
+                if "application/json" in response_content_type:
+                    try:
+                        return response.json()
+                    except json.JSONDecodeError as e_json:
+                        logger.error(f"JSON decode error for transcription response (model '{model_alias}', format '{response_format}'): {e_json.msg}. Response text (first 500 chars): {response.text[:500]}", exc_info=False)
+                        raise
+                else: # For 'text', 'srt', 'vtt', etc.
+                    return response.text
+
+            except httpx.HTTPStatusError as e_http:
+                response_text = e_http.response.text[:500] if e_http.response else "No response body"
+                logger.error(
+                    f"HTTP error during audio transcription for model '{model_alias}' ({e_http.request.url}): "
+                    f"{e_http.response.status_code} - {response_text}", 
+                    exc_info=True
+                )
+                raise
+            except httpx.RequestError as e_req:
+                logger.error(
+                    f"Request error during audio transcription for model '{model_alias}' ({e_req.request.url}): {e_req}", 
+                    exc_info=True
+                )
+                raise
+            except Exception as e_unexpected:
+                logger.error(
+                    f"Unexpected error during audio transcription for model '{model_alias}': {e_unexpected}",
+                    exc_info=True
+                )
+                raise
+            finally:
+                if response:
+                    await response.aclose()
+                    logger.debug(f"Audio transcription response closed for model '{model_alias}' in finally block.")
+
+    async def generate_image_advanced(
+        self,
+        model_alias: str,
+        prompt: str,
+        n: Optional[int] = 1,
+        size: Optional[str] = None, 
+        quality: Optional[str] = None, 
+        style: Optional[str] = None, 
+        response_format: Optional[str] = "url", 
+        extra_body: Optional[Dict[str, Any]] = None,
+        request_timeout: Optional[float] = 120.0
+    ) -> Dict[str, Any]:
+        """
+        Generates an image using the specified model via LiteLLM proxy.
+
+        Args:
+            model_alias: The alias of the image generation model.
+            prompt: The text prompt for image generation.
+            n: The number of images to generate.
+            size: The size of the generated images (e.g., '1024x1024').
+            quality: The quality of the images ('standard', 'hd').
+            style: The style of the images ('vivid', 'natural').
+            response_format: The format of the response ('url', 'b64_json').
+            extra_body: Additional parameters for the LiteLLM request.
+            request_timeout: Timeout for the HTTP request.
+
+        Returns:
+            A dictionary representing the image generation response from LiteLLM.
+        
+        Raises:
+            ValueError: If LiteLLM Proxy URL is not configured.
+            httpx.HTTPStatusError: If the proxy returns an HTTP error status.
+            httpx.RequestError: If a network error occurs.
+            json.JSONDecodeError: If the response is not valid JSON.
+        """
+        proxy_url_to_use = self.litellm_proxy_url if self.litellm_proxy_url else LITELLM_PROXY_URL
+        if not proxy_url_to_use:
+            logger.error("LiteLLM Proxy URL is not configured for generate_image_advanced.")
+            raise ValueError("LiteLLM Proxy URL is not configured.")
+
+        endpoint_url = f"{proxy_url_to_use}/v1/images/generations"
+        logger.info(f"Attempting image generation: {endpoint_url} with model '{model_alias}'")
+
+        headers = {"Content-Type": "application/json"}
+        if LITELLM_PROXY_API_KEY:
+            headers["Authorization"] = f"Bearer {LITELLM_PROXY_API_KEY}"
+
+        litellm_payload = {
+            "model": model_alias,
+            "prompt": prompt,
+            "n": n,
+            "size": size,
+            "quality": quality,
+            "style": style,
+            "response_format": response_format,
+        }
+
+        if extra_body:
+            litellm_payload.update(extra_body)
+        
+        litellm_payload = {k: v for k, v in litellm_payload.items() if v is not None}
+        logger.debug(f"LiteLLM payload for image generation (model: {model_alias}): {litellm_payload}")
+
+        async with httpx.AsyncClient(timeout=request_timeout) as client:
+            response = None
+            try:
+                response = await client.post(
+                    endpoint_url,
+                    headers=headers,
+                    json=litellm_payload
+                )
+                response.raise_for_status()
+                
+                try:
+                    response_data = response.json()
+                except json.JSONDecodeError as e_json:
+                    logger.error(f"JSON decode error for image generation response from model '{model_alias}': {e_json.msg}. Response text (first 500 chars): {response.text[:500]}", exc_info=False)
+                    raise
+                
+                logger.info(f"Image generation successful for model '{model_alias}'.")
+                return response_data
+
+            except httpx.HTTPStatusError as e_http:
+                response_text = e_http.response.text[:500] if e_http.response else "No response body"
+                logger.error(
+                    f"HTTP error during image generation for model '{model_alias}' ({e_http.request.url}): "
+                    f"{e_http.response.status_code} - {response_text}", 
+                    exc_info=True
+                )
+                raise
+            except httpx.RequestError as e_req:
+                logger.error(
+                    f"Request error during image generation for model '{model_alias}' ({e_req.request.url}): {e_req}", 
+                    exc_info=True
+                )
+                raise
+            except Exception as e_unexpected:
+                logger.error(
+                    f"Unexpected error during image generation for model '{model_alias}': {e_unexpected}",
+                    exc_info=True
+                )
+                raise
+            finally:
+                if response:
+                    await response.aclose()
+                    logger.debug(f"Image generation response closed for model '{model_alias}' in finally block.")
+
+
+# --- Singleton Instance and Getter Function ---
+_llm_registry_instance: Optional[LLMRegistryService] = None
 
 # --- Singleton Instance and Getter Function ---
 _llm_registry_instance: Optional[LLMRegistryService] = None
@@ -519,12 +1093,27 @@ if __name__ == "__main__":
                 {"role": "user", "content": "Hello! What is the capital of France?"}
             ]
             # Example of additional kwargs:
-            # chat_kwargs = {"temperature": 0.7, "max_tokens": 50}
+            chat_kwargs = {"temperature": 0.7, "max_tokens": 50, "stream": False}
             # completion_response = await registry.get_chat_completion(test_chat_model_id, test_messages, **chat_kwargs)
-            completion_response = await registry.get_chat_completion(test_chat_model_id, test_messages)
+            completion_response_dict = await registry.chat_completion_advanced(
+                model_alias=test_chat_model_id, 
+                messages=test_messages, 
+                **chat_kwargs
+            )
 
-            if completion_response:
-                print(f"  LLM Response: {completion_response}")
+            if completion_response_dict and isinstance(completion_response_dict, dict):
+                # Extract content from the response dictionary
+                # This assumes a structure similar to OpenAI's response
+                try:
+                    content = completion_response_dict.get("choices")[0].get("message").get("content")
+                    print(f"  LLM Response: {content}")
+                except (IndexError, AttributeError, TypeError) as e_parse:
+                    print(f"  Error parsing LLM response content: {e_parse}. Full response: {completion_response_dict}")
+            elif hasattr(completion_response_dict, '__aiter__'): # If it's a stream
+                 print(f"  LLM Response is a stream. Consuming for test...")
+                 async for chunk in completion_response_dict:
+                     print(f"    Stream chunk: {chunk[:50]}...") # Print first 50 bytes of chunk
+                 print(f"  LLM Stream finished.")
             else:
                 print("  Failed to get chat completion.")
         else:

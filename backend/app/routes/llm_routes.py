@@ -1,15 +1,12 @@
 import logging
 import time # Added for timestamp in ChatCompletionResponse
-import shutil # For saving uploaded files
-from pathlib import Path # For path manipulation
 from typing import List, Optional, Dict, Any, Union, AsyncGenerator # Added AsyncGenerator
 from fastapi import APIRouter, Depends, HTTPException, Body, UploadFile, File
 from fastapi.responses import StreamingResponse # Added for TTS
 from pydantic import BaseModel, Field, HttpUrl
 
-import httpx # Added for making HTTP requests
+import httpx # Added for making HTTP requests (still needed for error types)
 from ..utils.llm_registry_service import get_llm_registry_service, LLMRegistryService
-from ..app_config import LITELLM_PROXY_URL, LITELLM_PROXY_API_KEY # Import LiteLLM config
 
 # Imports for Tool Calling API Endpoints
 from ..services.tool_calling.tool_schema_manager import ToolSchemaManager
@@ -225,13 +222,6 @@ class AudioTranscriptionResponse(BaseModel):
     words: Optional[List[Dict[str, Any]]] = None # For verbose_json with word timestamps
 
 
-# Temporary storage for uploaded audio files
-TEMP_AUDIO_DIR = Path("temp_audio_uploads")
-TEMP_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
-
-TEMP_TTS_DIR = Path("temp_tts_audio") # For Text-to-Speech output
-TEMP_TTS_DIR.mkdir(parents=True, exist_ok=True)
-
 # --- Pydantic Models for Text-to-Speech ---
 
 class TextToSpeechRequest(BaseModel):
@@ -364,62 +354,64 @@ async def chat_completions(
         # Remove None values from the payload to avoid sending nulls for optional fields
         litellm_payload = {k: v for k, v in litellm_payload.items() if v is not None}
 
-        logger.info(f"Sending chat completion request to LiteLLM proxy: {LITELLM_PROXY_URL}/v1/chat/completions")
-        
-        headers = {}
-        if LITELLM_PROXY_API_KEY:
-            headers["Authorization"] = f"Bearer {LITELLM_PROXY_API_KEY}"
+        # Process tools for the service call
+        tools_for_litellm = [tool.model_dump(exclude_none=True) for tool in request_body.tools] if request_body.tools else None
 
-        async with httpx.AsyncClient(timeout=120.0) as client: # Use httpx to call the proxy
-            response = await client.post(
-                f"{LITELLM_PROXY_URL}/v1/chat/completions",
-                json=litellm_payload,
-                headers=headers
-            )
-            response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-            
-            # If streaming, return a StreamingResponse
-            if request_body.stream:
-                async def stream_response():
-                    async for chunk in response.aiter_bytes():
-                        yield chunk
-                # Determine media type - text/event-stream for SSE
-                return StreamingResponse(stream_response(), media_type="text/event-stream")
+        logger.info(f"Calling chat_completion_advanced service for model_alias: {request_body.model_alias}")
 
-            # If not streaming, parse the JSON response
-            litellm_response_data = response.json()
+        service_response = await llm_registry.chat_completion_advanced(
+            model_alias=request_body.model_alias,
+            messages=messages_for_litellm,
+            temperature=request_body.temperature,
+            max_tokens=request_body.max_tokens,
+            stream=request_body.stream,
+            user=request_body.user,
+            tools=tools_for_litellm,
+            tool_choice=request_body.tool_choice,
+            safety_settings=request_body.safety_settings,
+            thinking=request_body.thinking,
+            reasoning_effort=request_body.reasoning_effort,
+            cache_control=request_body.cache_control,
+            extra_body=request_body.extra_body
+            # request_timeout is not explicitly passed here, using service default
+        )
 
-        # Map LiteLLM's response structure to our ChatCompletionResponse Pydantic model.
-        # LiteLLM's response should be compatible with OpenAI's ChatCompletionResponse.
-        # We can directly use the Pydantic model's parsing capabilities.
-        
-        # Ensure the 'model' field in the response is the actual model used by LiteLLM
-        actual_model_used = litellm_response_data.get("model", request_body.model_alias)
-        litellm_response_data['model'] = actual_model_used # Ensure our model uses the actual model ID
+        if request_body.stream:
+            # service_response is an AsyncGenerator
+            return StreamingResponse(service_response, media_type="text/event-stream")
+        else:
+            # service_response is a Dict
+            # Ensure the 'model' field in the response is the actual model used by LiteLLM,
+            # as the service might get this from LiteLLM's response.
+            # If not present in service_response, use the requested alias (though it should be there).
+            actual_model_used = service_response.get("model", request_body.model_alias)
+            service_response['model'] = actual_model_used
 
-        # Use the Pydantic model to parse the response data
-        return ChatCompletionResponse(**litellm_response_data)
+            # The service_response should be directly usable by ChatCompletionResponse
+            # if it matches the OpenAI/LiteLLM format.
+            return ChatCompletionResponse(**service_response)
 
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error calling LiteLLM proxy chat endpoint ({e.request.url}): {e.response.status_code} - {e.response.text}", exc_info=True)
-        # Attempt to parse error details from the response body if available
-        error_detail = f"LLM proxy returned an HTTP error: {e.response.status_code}"
+        logger.error(f"HTTP error from LLM service during chat completion ({e.request.url}): {e.response.status_code} - {e.response.text}", exc_info=True)
+        error_detail = f"LLM service returned an HTTP error: {e.response.status_code}"
         try:
             error_response_data = e.response.json()
             if "error" in error_response_data and isinstance(error_response_data["error"], dict):
-                 error_detail += f" - {error_response_data['error'].get('message', 'Unknown error from proxy')}"
-            elif "detail" in error_response_data:
+                 error_detail += f" - {error_response_data['error'].get('message', 'Unknown error from LLM service')}"
+            elif "detail" in error_response_data: # Some proxies might use 'detail'
                  error_detail += f" - {error_response_data['detail']}"
-            else:
-                 error_detail += f" - {e.response.text}" # Fallback to raw text
-        except json.JSONDecodeError:
-            error_detail += f" - {e.response.text}" # Fallback to raw text if JSON parsing fails
-            
+            else: # Fallback if error structure is unknown
+                 error_detail += f" - {e.response.text[:200]}" # Limit length
+        except json.JSONDecodeError: # If the error response itself is not JSON
+            error_detail += f" - {e.response.text[:200]}"
         raise HTTPException(status_code=e.response.status_code, detail=error_detail)
     except httpx.RequestError as e:
-        logger.error(f"Request error calling LiteLLM proxy chat endpoint ({e.request.url}): {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to connect to LLM proxy: {e}")
-    except Exception as e:
+        logger.error(f"Request error connecting to LLM service during chat completion ({e.request.url}): {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail=f"Failed to connect to LLM service: {str(e)}") # 503 Service Unavailable
+    except json.JSONDecodeError as e: # If service returns non-JSON for non-streaming, or if ChatCompletionResponse parsing fails
+        logger.error(f"JSON decode error processing response from LLM service for chat completion: {e.msg}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Invalid JSON response from LLM service: {e.msg}")
+    except Exception as e: # Catch-all for other unexpected errors
         logger.error(f"Unexpected error during chat completion for model_alias {request_body.model_alias}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
@@ -441,53 +433,47 @@ async def create_embeddings(
             # Add other parameters like encoding_format, user if supported and needed
         }
         
-        logger.info(f"Sending embedding request to LiteLLM proxy: {LITELLM_PROXY_URL}/v1/embeddings")
-        
-        headers = {}
-        if LITELLM_PROXY_API_KEY:
-            headers["Authorization"] = f"Bearer {LITELLM_PROXY_API_KEY}"
+        # The EmbeddingRequest model does not currently have an 'extra_body' field.
+        # If it were to be added, it could be accessed like:
+        # extra_body_payload = getattr(request_body, 'extra_body', None)
+        # For now, we pass None as the service method handles it.
+        extra_body_payload = None 
 
-        async with httpx.AsyncClient(timeout=60.0) as client: # Use httpx to call the proxy
-            response = await client.post(
-                f"{LITELLM_PROXY_URL}/v1/embeddings",
-                json=litellm_payload,
-                headers=headers
-            )
-            response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-            
-            litellm_embedding_response = response.json()
+        logger.info(f"Calling create_embeddings_advanced service for model_alias: {request_body.model_alias}")
 
-        # Map LiteLLM's embedding response structure to our EmbeddingResponse Pydantic model.
-        # LiteLLM's response should be compatible with OpenAI's EmbeddingResponse.
-        # We can directly use the Pydantic model's parsing capabilities.
-        
-        # Ensure the 'model' field in the response is the actual model used by LiteLLM
-        actual_model_used = litellm_embedding_response.get("model", request_body.model_alias)
-        litellm_embedding_response['model'] = actual_model_used # Ensure our model uses the actual model ID
+        service_response_dict = await llm_registry.create_embeddings_advanced(
+            model_alias=request_body.model_alias,
+            input_data=request_body.input,
+            extra_body=extra_body_payload
+            # request_timeout can be passed if desired, using service default for now
+        )
 
-        # Use the Pydantic model to parse the response data
-        return EmbeddingResponse(**litellm_embedding_response)
+        # The service_response_dict should contain the 'model' field as returned by LiteLLM.
+        # EmbeddingResponse Pydantic model will validate this.
+        return EmbeddingResponse(**service_response_dict)
 
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error calling LiteLLM proxy embeddings endpoint ({e.request.url}): {e.response.status_code} - {e.response.text}", exc_info=True)
-        error_detail = f"LLM proxy returned an HTTP error: {e.response.status_code}"
+        logger.error(f"HTTP error from LLM service during embedding creation ({e.request.url}): {e.response.status_code} - {e.response.text}", exc_info=True)
+        error_detail = f"LLM service returned an HTTP error: {e.response.status_code}"
         try:
             error_response_data = e.response.json()
             if "error" in error_response_data and isinstance(error_response_data["error"], dict):
-                 error_detail += f" - {error_response_data['error'].get('message', 'Unknown error from proxy')}"
+                 error_detail += f" - {error_response_data['error'].get('message', 'Unknown error from LLM service')}"
             elif "detail" in error_response_data:
                  error_detail += f" - {error_response_data['detail']}"
             else:
-                 error_detail += f" - {e.response.text}" # Fallback to raw text
+                 error_detail += f" - {e.response.text[:200]}" # Limit length
         except json.JSONDecodeError:
-            error_detail += f" - {e.response.text}" # Fallback to raw text if JSON parsing fails
-            
+            error_detail += f" - {e.response.text[:200]}"
         raise HTTPException(status_code=e.response.status_code, detail=error_detail)
     except httpx.RequestError as e:
-        logger.error(f"Request error calling LiteLLM proxy embeddings endpoint ({e.request.url}): {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to connect to LLM proxy: {e}")
-    except Exception as e:
-        logger.error(f"Unexpected error during embedding generation for model_alias {request_body.model_alias}: {e}", exc_info=True)
+        logger.error(f"Request error connecting to LLM service during embedding creation ({e.request.url}): {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail=f"Failed to connect to LLM service: {str(e)}") # 503 Service Unavailable
+    except json.JSONDecodeError as e: # If service returns non-JSON or EmbeddingResponse parsing fails
+        logger.error(f"JSON decode error processing response from LLM service for embedding creation: {e.msg}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Invalid JSON response from LLM service: {e.msg}")
+    except Exception as e: # Catch-all for other unexpected errors
+        logger.error(f"Unexpected error during embedding creation for model_alias {request_body.model_alias}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 @router.post("/llm/generate-image", response_model=ImageGenerationResponse, tags=["LLM Endpoints"])
@@ -501,64 +487,61 @@ async def create_image_generation(
     try:
         logger.info(f"Received image generation request for model_alias: {request_body.model_alias}")
 
-        # Construct the payload for the LiteLLM proxy's /v1/images/generations endpoint
-        litellm_payload = {
-            "model": request_body.model_alias, # Use the alias as the model name for the proxy
-            "prompt": request_body.prompt,
-            "n": request_body.n,
-            "size": request_body.size,
-            "quality": request_body.quality,
-            "style": request_body.style,
-            "response_format": request_body.response_format,
-            # user=request_body.user
-        }
-        
-        # Remove None values from the payload
-        litellm_payload = {k: v for k, v in litellm_payload.items() if v is not None}
+        # ImageGenerationRequest doesn't currently have extra_body.
+        # If it needs to support extra_body, it should be added to its Pydantic model.
+        extra_body_payload = getattr(request_body, 'extra_body', None)
 
-        logger.info(f"Sending image generation request to LiteLLM proxy: {LITELLM_PROXY_URL}/v1/images/generations")
-        
-        headers = {}
-        if LITELLM_PROXY_API_KEY:
-            headers["Authorization"] = f"Bearer {LITELLM_PROXY_API_KEY}"
+        logger.info(f"Calling generate_image_advanced service for model_alias: {request_body.model_alias}")
 
-        async with httpx.AsyncClient(timeout=120.0) as client: # Use httpx to call the proxy
-            response = await client.post(
-                f"{LITELLM_PROXY_URL}/v1/images/generations",
-                json=litellm_payload,
-                headers=headers
-            )
-            response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-            
-            litellm_image_response = response.json()
+        service_response_dict = await llm_registry.generate_image_advanced(
+            model_alias=request_body.model_alias,
+            prompt=request_body.prompt,
+            n=request_body.n,
+            size=request_body.size,
+            quality=request_body.quality,
+            style=request_body.style,
+            response_format=request_body.response_format,
+            extra_body=extra_body_payload
+            # request_timeout can be passed if desired, using service default for now
+        )
 
-        # Map LiteLLM's image generation response structure to our ImageGenerationResponse Pydantic model.
-        # LiteLLM's response should be compatible with OpenAI's ImageGenerationResponse.
-        # We can directly use the Pydantic model's parsing capabilities.
-        
-        return ImageGenerationResponse(**litellm_image_response)
+        # The service_response_dict should be directly parsable by ImageGenerationResponse.
+        # LiteLLM's response for image generation typically includes 'created' and 'data' fields.
+        return ImageGenerationResponse(**service_response_dict)
 
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error calling LiteLLM proxy image generation endpoint ({e.request.url}): {e.response.status_code} - {e.response.text}", exc_info=True)
-        error_detail = f"LLM proxy returned an HTTP error: {e.response.status_code}"
+        logger.error(f"HTTP error from LLM service during image generation ({e.request.url}): {e.response.status_code} - {e.response.text}", exc_info=True)
+        error_detail = f"LLM service returned an HTTP error: {e.response.status_code}"
         try:
             error_response_data = e.response.json()
             if "error" in error_response_data and isinstance(error_response_data["error"], dict):
-                 error_detail += f" - {error_response_data['error'].get('message', 'Unknown error from proxy')}"
+                 error_detail += f" - {error_response_data['error'].get('message', 'Unknown error from LLM service')}"
             elif "detail" in error_response_data:
                  error_detail += f" - {error_response_data['detail']}"
             else:
-                 error_detail += f" - {e.response.text}" # Fallback to raw text
+                 error_detail += f" - {e.response.text[:200]}" # Limit length
         except json.JSONDecodeError:
-            error_detail += f" - {e.response.text}" # Fallback to raw text if JSON parsing fails
-            
+            error_detail += f" - {e.response.text[:200]}"
         raise HTTPException(status_code=e.response.status_code, detail=error_detail)
     except httpx.RequestError as e:
-        logger.error(f"Request error calling LiteLLM proxy image generation endpoint ({e.request.url}): {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to connect to LLM proxy: {e}")
-    except Exception as e:
+        logger.error(f"Request error connecting to LLM service during image generation ({e.request.url}): {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail=f"Failed to connect to LLM service: {str(e)}") # 503 Service Unavailable
+    except json.JSONDecodeError as e: # If service returns non-JSON or ImageGenerationResponse parsing fails
+        logger.error(f"JSON decode error processing response from LLM service for image generation: {e.msg}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Invalid JSON response from LLM service: {e.msg}")
+    except Exception as e: # Catch-all for other unexpected errors
         logger.error(f"Unexpected error during image generation for model_alias {request_body.model_alias}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
+
+# The /llm/text-completion endpoint seems to be a new addition not covered by previous refactoring tasks.
+# If it was intended to be refactored, it would follow a similar pattern,
+# potentially using llm_registry.chat_completion_advanced with a specific prompt structure
+# or a new service method llm_registry.text_completion_advanced if the /v1/completions
+# endpoint in LiteLLM has significantly different parameters or response structures than chat.
+# For now, I will assume this endpoint is either new or intentionally not yet refactored,
+# as the task was to clean up after the six specified "advanced" methods.
+# If this endpoint also needs refactoring to use a service method, that would be a separate step.
 
 @router.post("/llm/text-completion", response_model=TextCompletionResponse, tags=["LLM Endpoints"])
 async def create_text_completion(
@@ -658,107 +641,66 @@ async def create_audio_transcription(
     Endpoint for transcribing audio using a registered LLM.
     Accepts audio file via multipart/form-data.
     """
-    temp_file_path: Optional[Path] = None
     try:
         logger.info(f"Received audio transcription request for model_alias: {model_alias}, filename: {file.filename}")
 
-        # Save UploadFile to a temporary file, as LiteLLM expects a file path
-        # Ensure the temp directory exists
-        TEMP_AUDIO_DIR.mkdir(parents=True, exist_ok=True)
+        file_data = await file.read()
         
-        # Create a unique temporary filename
-        temp_file_path = TEMP_AUDIO_DIR / f"{time.time_ns()}_{file.filename}"
-        
-        with open(temp_file_path, "wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
-        
-        logger.info(f"Temporary audio file saved to: {temp_file_path}")
+        # The route currently doesn't explicitly collect 'extra_form_data'.
+        # If this is needed, the route signature or logic would have to change
+        # to gather additional Body fields into a dict. For now, pass None.
+        extra_data_payload = None
 
-        # Construct the payload for the LiteLLM proxy's /v1/audio/transcriptions endpoint
-        # This endpoint expects multipart/form-data
-        litellm_data = {
-            "model": model_alias, # Use the alias as the model name for the proxy
-            "language": language,
-            "prompt": prompt,
-            "response_format": response_format,
-            "temperature": temperature,
-            # Add other parameters as needed
-        }
-        
-        # Remove None values from the data payload
-        litellm_data = {k: v for k, v in litellm_data.items() if v is not None}
+        logger.info(f"Calling transcribe_audio_advanced service for model_alias: {model_alias}")
 
-        # Prepare the file for sending
-        files = {"file": (file.filename, open(temp_file_path, "rb"), file.content_type)}
+        service_response = await llm_registry.transcribe_audio_advanced(
+            model_alias=model_alias,
+            file_name=file.filename,
+            file_data=file_data,
+            content_type=file.content_type,
+            language=language,
+            prompt=prompt,
+            response_format=response_format,
+            temperature=temperature,
+            extra_form_data=extra_data_payload
+            # request_timeout can be passed if desired, using service default for now
+        )
 
-        logger.info(f"Sending audio transcription request to LiteLLM proxy: {LITELLM_PROXY_URL}/v1/audio/transcriptions")
-        
-        headers = {}
-        if LITELLM_PROXY_API_KEY:
-            headers["Authorization"] = f"Bearer {LITELLM_PROXY_API_KEY}"
-
-        async with httpx.AsyncClient(timeout=300.0) as client: # Use httpx to call the proxy
-            response = await client.post(
-                f"{LITELLM_PROXY_URL}/v1/audio/transcriptions",
-                data=litellm_data,
-                files=files,
-                headers=headers
-            )
-            response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-            
-            # LiteLLM's transcription response can be a string (text, srt, vtt) or JSON (json, verbose_json)
-            # We need to handle both cases.
-            content_type = response.headers.get("Content-Type", "")
-            if "application/json" in content_type:
-                litellm_transcription_response = response.json()
-            else:
-                litellm_transcription_response = response.text # Assume text-based format
-
-        # Map LiteLLM's audio transcription response structure to our AudioTranscriptionResponse Pydantic model.
-        # If the response is a string, wrap it in the Pydantic model. If it's a dict, parse it.
-        
-        if isinstance(litellm_transcription_response, str):
-             return AudioTranscriptionResponse(text=litellm_transcription_response)
-        elif isinstance(litellm_transcription_response, dict):
-             # Use the Pydantic model to parse the response data
-             return AudioTranscriptionResponse(**litellm_transcription_response)
+        if isinstance(service_response, str):
+            # For text, srt, vtt formats, FastAPI will handle Content-Type as text/plain
+            return service_response 
+        elif isinstance(service_response, dict):
+            # For json, verbose_json formats
+            return AudioTranscriptionResponse(**service_response)
         else:
-            logger.error(f"Unexpected response type from LiteLLM transcription: {type(litellm_transcription_response)}. Expected str or dict.")
-            raise HTTPException(status_code=500, detail="Audio transcription failed: Unexpected response format from proxy.")
-
+            # Should not happen based on service method's return type hint, but good for safety
+            logger.error(f"Unexpected response type from LLM service transcription: {type(service_response)}. Expected str or dict.")
+            raise HTTPException(status_code=500, detail="Audio transcription failed: Unexpected response format from LLM service.")
 
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error calling LiteLLM proxy transcription endpoint ({e.request.url}): {e.response.status_code} - {e.response.text}", exc_info=True)
-        error_detail = f"LLM proxy returned an HTTP error: {e.response.status_code}"
+        logger.error(f"HTTP error from LLM service during audio transcription ({e.request.url}): {e.response.status_code} - {e.response.text}", exc_info=True)
+        error_detail = f"LLM service returned an HTTP error: {e.response.status_code}"
         try:
-            error_response_data = e.response.json()
+            error_response_data = e.response.json() # Error response from proxy might be JSON
             if "error" in error_response_data and isinstance(error_response_data["error"], dict):
-                 error_detail += f" - {error_response_data['error'].get('message', 'Unknown error from proxy')}"
+                 error_detail += f" - {error_response_data['error'].get('message', 'Unknown error from LLM service')}"
             elif "detail" in error_response_data:
                  error_detail += f" - {error_response_data['detail']}"
             else:
-                 error_detail += f" - {e.response.text}" # Fallback to raw text
-        except json.JSONDecodeError:
-            error_detail += f" - {e.response.text}" # Fallback to raw text if JSON parsing fails
-            
+                 error_detail += f" - {e.response.text[:200]}" # Limit length
+        except json.JSONDecodeError: # If the error response itself is not JSON
+            error_detail += f" - {e.response.text[:200]}"
         raise HTTPException(status_code=e.response.status_code, detail=error_detail)
     except httpx.RequestError as e:
-        logger.error(f"Request error calling LiteLLM proxy transcription endpoint ({e.request.url}): {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to connect to LLM proxy: {e}")
-    except Exception as e:
+        logger.error(f"Request error connecting to LLM service during audio transcription ({e.request.url}): {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail=f"Failed to connect to LLM service: {str(e)}") # 503 Service Unavailable
+    except json.JSONDecodeError as e: # If service returns JSON but it's malformed for AudioTranscriptionResponse
+        logger.error(f"JSON decode error processing response from LLM service for audio transcription: {e.msg}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Invalid JSON response from LLM service: {e.msg}")
+    except Exception as e: # Catch-all for other unexpected errors
         logger.error(f"Unexpected error during audio transcription for model_alias {model_alias}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
-    finally:
-        # Clean up the temporary file
-        if temp_file_path and temp_file_path.exists():
-            try:
-                # Ensure the file handle is closed before attempting to unlink
-                if 'files' in locals() and 'file' in files:
-                    files['file'][1].close()
-                temp_file_path.unlink()
-                logger.info(f"Temporary audio file {temp_file_path} deleted.")
-            except Exception as e_unlink:
-                logger.error(f"Error deleting temporary audio file {temp_file_path}: {e_unlink}", exc_info=True)
+    # No finally block for temp file cleanup needed anymore
 
 @router.post("/llm/text-to-speech", tags=["LLM Endpoints"])
 async def create_text_to_speech(
@@ -772,85 +714,49 @@ async def create_text_to_speech(
     try:
         logger.info(f"Received text-to-speech request for model_alias: {request_body.model_alias}, voice: {request_body.voice}")
 
-        # Construct the payload for the LiteLLM proxy's /v1/audio/speech endpoint
-        litellm_payload = {
-            "model": request_body.model_alias, # Use the alias as the model name for the proxy
-            "input": request_body.input,
-            "voice": request_body.voice,
-            "response_format": request_body.response_format,
-            "speed": request_body.speed,
-            # Add other parameters as needed
-        }
+        # TextToSpeechRequest doesn't currently have extra_body.
+        # If it needs to support extra_body, it should be added to its Pydantic model.
+        extra_body_payload = getattr(request_body, 'extra_body', None)
+
+        logger.info(f"Calling synthesize_speech_advanced service for model_alias: {request_body.model_alias}")
+
+        audio_stream_generator, media_type = await llm_registry.synthesize_speech_advanced(
+            model_alias=request_body.model_alias,
+            input_text=request_body.input,
+            voice=request_body.voice,
+            response_format=request_body.response_format,
+            speed=request_body.speed,
+            extra_body=extra_body_payload
+            # request_timeout can be passed if desired, using service default for now
+        )
         
-        # Remove None values from the payload
-        litellm_payload = {k: v for k, v in litellm_payload.items() if v is not None}
-
-        logger.info(f"Sending text-to-speech request to LiteLLM proxy: {LITELLM_PROXY_URL}/v1/audio/speech")
-        
-        headers = {}
-        if LITELLM_PROXY_API_KEY:
-            headers["Authorization"] = f"Bearer {LITELLM_PROXY_API_KEY}"
-
-        async with httpx.AsyncClient(timeout=120.0) as client: # Use httpx to call the proxy
-            # Use stream=True to get a streaming response from httpx
-            response = await client.post(
-                f"{LITELLM_PROXY_URL}/v1/audio/speech",
-                json=litellm_payload,
-                headers=headers,
-                stream=True # Enable streaming
-            )
-            response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-            
-            # Determine media type based on response_format
-            media_type_map = {
-                "mp3": "audio/mpeg",
-                "opus": "audio/opus",
-                "aac": "audio/aac",
-                "flac": "audio/flac",
-                # Add other formats if supported by LiteLLM/providers
-            }
-            media_type = media_type_map.get(request_body.response_format, "application/octet-stream")
-            
-            # Define an async generator function to yield chunks from the httpx stream
-            async def stream_audio_chunks():
-                try:
-                    async for chunk in response.aiter_bytes():
-                        yield chunk
-                except Exception as e_stream:
-                    logger.error(f"Error during TTS audio streaming from proxy: {e_stream}", exc_info=True)
-                    # This error won't be sent to client if headers already sent. Log it.
-                finally:
-                    await response.aclose() # Ensure the httpx response is closed
-
-            # Return a StreamingResponse
-            # The filename for download can be set in Content-Disposition
-            output_filename = f"speech_{int(time.time())}.{request_body.response_format}"
-            return StreamingResponse(
-                stream_audio_chunks(), 
-                media_type=media_type,
-                headers={"Content-Disposition": f"attachment; filename=\"{output_filename}\""}
-            )
+        output_filename = f"speech_{int(time.time())}.{request_body.response_format}"
+        return StreamingResponse(
+            audio_stream_generator,
+            media_type=media_type,
+            headers={"Content-Disposition": f"attachment; filename=\"{output_filename}\""}
+        )
 
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error calling LiteLLM proxy text-to-speech endpoint ({e.request.url}): {e.response.status_code} - {e.response.text}", exc_info=True)
-        error_detail = f"LLM proxy returned an HTTP error: {e.response.status_code}"
+        logger.error(f"HTTP error from LLM service during text-to-speech ({e.request.url}): {e.response.status_code} - {e.response.text}", exc_info=True)
+        error_detail = f"LLM service returned an HTTP error: {e.response.status_code}"
         try:
+            # TTS errors might not be JSON, but attempt parsing just in case
             error_response_data = e.response.json()
             if "error" in error_response_data and isinstance(error_response_data["error"], dict):
-                 error_detail += f" - {error_response_data['error'].get('message', 'Unknown error from proxy')}"
+                 error_detail += f" - {error_response_data['error'].get('message', 'Unknown error from LLM service')}"
             elif "detail" in error_response_data:
                  error_detail += f" - {error_response_data['detail']}"
             else:
-                 error_detail += f" - {e.response.text}" # Fallback to raw text
+                 error_detail += f" - {e.response.text[:200]}" # Limit length
         except json.JSONDecodeError:
-            error_detail += f" - {e.response.text}" # Fallback to raw text if JSON parsing fails
-            
+            error_detail += f" - {e.response.text[:200]}"
         raise HTTPException(status_code=e.response.status_code, detail=error_detail)
     except httpx.RequestError as e:
-        logger.error(f"Request error calling LiteLLM proxy text-to-speech endpoint ({e.request.url}): {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to connect to LLM proxy: {e}")
-    except Exception as e:
-        logger.error(f"Unexpected error during text-to-speech generation for model_alias {request_body.model_alias}: {e}", exc_info=True)
+        logger.error(f"Request error connecting to LLM service during text-to-speech ({e.request.url}): {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail=f"Failed to connect to LLM service: {str(e)}") # 503 Service Unavailable
+    except Exception as e: # Catch-all for other unexpected errors
+        logger.error(f"Unexpected error during text-to-speech for model_alias {request_body.model_alias}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 @router.post("/llm/vision-analyze", response_model=ChatCompletionResponse, tags=["LLM Endpoints"]) # Reusing ChatCompletionResponse
@@ -888,65 +794,50 @@ async def create_vision_analysis(
                 # tool_calls are not typically used in direct vision analysis, but ChatMessage supports it
             })
         
-        # Construct the payload for the LiteLLM proxy's /v1/chat/completions endpoint (vision models use this)
-        litellm_payload = {
-            "model": request_body.model_alias, # Use the alias as the model name for the proxy
-            "messages": messages_for_litellm,
-            "max_tokens": request_body.max_tokens,
-            "temperature": request_body.temperature,
-            # user=request_body.user
-            # Add other parameters as needed
-        }
-        
-        # Remove None values from the payload
-        litellm_payload = {k: v for k, v in litellm_payload.items() if v is not None}
+        # VisionAnalysisRequest doesn't currently have extra_body.
+        # If it needs to support extra_body, it should be added to its Pydantic model.
+        extra_body_payload = getattr(request_body, 'extra_body', None)
 
-        logger.info(f"Sending vision analysis request to LiteLLM proxy: {LITELLM_PROXY_URL}/v1/chat/completions")
+        logger.info(f"Calling analyze_vision_advanced service for model_alias: {request_body.model_alias}")
         
-        headers = {}
-        if LITELLM_PROXY_API_KEY:
-            headers["Authorization"] = f"Bearer {LITELLM_PROXY_API_KEY}"
+        service_response_dict = await llm_registry.analyze_vision_advanced(
+            model_alias=request_body.model_alias,
+            messages=messages_for_litellm, # Pass the processed messages
+            max_tokens=request_body.max_tokens,
+            temperature=request_body.temperature,
+            extra_body=extra_body_payload
+            # request_timeout can be passed if desired, using service default for now
+        )
 
-        async with httpx.AsyncClient(timeout=120.0) as client: # Use httpx to call the proxy
-            response = await client.post(
-                f"{LITELLM_PROXY_URL}/v1/chat/completions",
-                json=litellm_payload,
-                headers=headers
-            )
-            response.raise_for_status() # Raise an exception for bad status codes (4xx or 5xx)
-            
-            litellm_response_data = response.json()
-
-        # Map LiteLLM's response structure to our ChatCompletionResponse Pydantic model.
-        # LiteLLM's response should be compatible with OpenAI's ChatCompletionResponse.
-        # We can directly use the Pydantic model's parsing capabilities.
-        
+        # The service_response_dict should contain the 'model' field as returned by LiteLLM.
+        # ChatCompletionResponse Pydantic model will validate this.
         # Ensure the 'model' field in the response is the actual model used by LiteLLM
-        actual_model_used = litellm_response_data.get("model", request_body.model_alias)
-        litellm_response_data['model'] = actual_model_used # Ensure our model uses the actual model ID
-
-        # Use the Pydantic model to parse the response data
-        return ChatCompletionResponse(**litellm_response_data)
+        actual_model_used = service_response_dict.get("model", request_body.model_alias)
+        service_response_dict['model'] = actual_model_used
+        
+        return ChatCompletionResponse(**service_response_dict)
 
     except httpx.HTTPStatusError as e:
-        logger.error(f"HTTP error calling LiteLLM proxy vision endpoint ({e.request.url}): {e.response.status_code} - {e.response.text}", exc_info=True)
-        error_detail = f"LLM proxy returned an HTTP error: {e.response.status_code}"
+        logger.error(f"HTTP error from LLM service during vision analysis ({e.request.url}): {e.response.status_code} - {e.response.text}", exc_info=True)
+        error_detail = f"LLM service returned an HTTP error: {e.response.status_code}"
         try:
             error_response_data = e.response.json()
             if "error" in error_response_data and isinstance(error_response_data["error"], dict):
-                 error_detail += f" - {error_response_data['error'].get('message', 'Unknown error from proxy')}"
+                 error_detail += f" - {error_response_data['error'].get('message', 'Unknown error from LLM service')}"
             elif "detail" in error_response_data:
                  error_detail += f" - {error_response_data['detail']}"
             else:
-                 error_detail += f" - {e.response.text}" # Fallback to raw text
+                 error_detail += f" - {e.response.text[:200]}" # Limit length
         except json.JSONDecodeError:
-            error_detail += f" - {e.response.text}" # Fallback to raw text if JSON parsing fails
-            
+            error_detail += f" - {e.response.text[:200]}"
         raise HTTPException(status_code=e.response.status_code, detail=error_detail)
     except httpx.RequestError as e:
-        logger.error(f"Request error calling LiteLLM proxy vision endpoint ({e.request.url}): {e}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Failed to connect to LLM proxy: {e}")
-    except Exception as e:
+        logger.error(f"Request error connecting to LLM service during vision analysis ({e.request.url}): {e}", exc_info=True)
+        raise HTTPException(status_code=503, detail=f"Failed to connect to LLM service: {str(e)}") # 503 Service Unavailable
+    except json.JSONDecodeError as e: # If service returns non-JSON or ChatCompletionResponse parsing fails
+        logger.error(f"JSON decode error processing response from LLM service for vision analysis: {e.msg}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Invalid JSON response from LLM service: {e.msg}")
+    except Exception as e: # Catch-all for other unexpected errors
         logger.error(f"Unexpected error during vision analysis for model_alias {request_body.model_alias}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
