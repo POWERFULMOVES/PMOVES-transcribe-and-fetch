@@ -394,6 +394,7 @@ To ensure the reliability, performance, and maintainability of the PMOVES Agent 
 - ✅ **Comprehensive Search System**: Vector, keyword, and hybrid search across all content types
 - ✅ **Content Management**: Advanced upserter with markdown, HTML, media, and video processing
 - ✅ **Multi-Provider LLM Integration**: OpenAI, Groq, Anthropic with registry-based routing
+- ✅ **Refactored LLM Interaction**: Centralized LiteLLM proxy calls within `LLMRegistryService` for improved consistency and maintainability. Implemented advanced helper methods for all LLM capabilities (chat, embeddings, vision, TTS, transcription, image generation) with comprehensive unit tests. Refactored `/llm/chat` endpoint to use the new service method. (Ongoing refactoring for other LLM routes).
 - ✅ **Real-time Processing**: SSE endpoints for live status updates and streaming responses
 - ✅ **File Management**: Secure upload, validation, PDF generation, and storage
 - ✅ **Crawl4AI Integration**: Advanced web scraping with Docker containerization
