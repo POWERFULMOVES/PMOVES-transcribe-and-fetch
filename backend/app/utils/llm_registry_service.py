@@ -5,7 +5,7 @@ import time
 
 logger = logging.getLogger(__name__) # Define logger at the top
 from datetime import datetime, timezone, timedelta
-from typing import Optional, List, Dict, Any, AsyncGenerator
+from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union # Consolidated and sorted
 
 import httpx
 from pydantic import BaseModel, Field, field_validator
