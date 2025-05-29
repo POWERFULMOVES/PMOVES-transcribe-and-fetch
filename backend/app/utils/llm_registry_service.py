@@ -298,11 +298,13 @@ class LLMRegistryService:
                 # Remove keys with None values, as Supabase might not like them for JSONB or other fields unless nullable
                 model_dict = {k: v for k, v in model_dict.items() if v is not None}
 
-
-                response = await supabase_client.table("llm_models").upsert(
-                    model_dict,
-                    on_conflict="model_id" 
-                ).execute()
+                # Correctly wrap the synchronous Supabase call
+                response = await asyncio.to_thread(
+                    supabase_client.table("llm_models").upsert(
+                        model_dict,
+                        on_conflict="model_id"
+                    ).execute
+                )
 
                 if response.data:
                     logger.debug(f"Successfully upserted model '{model.model_id}' to Supabase.")
@@ -337,7 +339,8 @@ class LLMRegistryService:
                     if provider_filter:
                         query = query.eq("provider", provider_filter)
                     
-                    response = await query.execute()
+                    # Correctly wrap the synchronous Supabase call
+                    response = await asyncio.to_thread(query.execute)
 
                     if response.data:
                         db_models: List[StandardizedLLM] = []
@@ -431,7 +434,15 @@ class LLMRegistryService:
             if supabase_client:
                 logger.debug(f"Attempting to fetch model details for '{model_id}' from Supabase.")
                 try:
-                    response = await supabase_client.table("llm_models").select("*").eq("model_id", model_id).eq("status", "active").maybe_single().execute()
+                    # Correctly wrap the synchronous Supabase call
+                    response = await asyncio.to_thread(
+                        supabase_client.table("llm_models")
+                        .select("*")
+                        .eq("model_id", model_id)
+                        .eq("status", "active")
+                        .maybe_single() # Use maybe_single() if expecting one or zero results
+                        .execute
+                    )
                     if response.data:
                         row = response.data
                         capabilities_data = row.get("capabilities", [])
