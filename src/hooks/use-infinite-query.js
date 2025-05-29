@@ -33,9 +33,11 @@ function createStore(props) {
 
   const fetchPage = async (skip) => {
     // Prevent fetching if already fetching, or if initial fetch done and no more items
-    if (state.isFetching || (state.hasInitialFetch && state.count <= state.data.length)) {
+    if (state.isFetching || (state.hasInitialFetch && state.count > 0 && state.count <= state.data.length)) {
+      console.log('[useInfiniteQuery] fetchPage: SKIPPING fetch. isFetching:', state.isFetching, 'hasInitialFetch:', state.hasInitialFetch, 'count:', state.count, 'data.length:', state.data.length);
       return;
     }
+    console.log('[useInfiniteQuery] fetchPage: Called. skip:', skip, 'current data.length:', state.data.length, 'current count:', state.count);
 
     setState({ isFetching: true })
 
@@ -71,14 +73,15 @@ function createStore(props) {
     const { data: newData, count, error } = await query.range(skip, skip + pageSize - 1)
 
     if (error) {
-      console.error('An unexpected error occurred:', error)
+      console.error('[useInfiniteQuery] fetchPage: An unexpected error occurred:', error)
       setState({ error })
     } else {
+      console.log('[useInfiniteQuery] fetchPage: Fetched data. Received count:', count, 'newData items:', newData ? newData.length : 0);
       const deduplicatedData = ((newData || [])).filter((item) => !state.data.find((old) => old.id === item.id))
 
       setState({
         data: [...state.data, ...deduplicatedData],
-        count: count || 0,
+        count: count || 0, // Ensure count is updated based on Supabase response
         isSuccess: true,
         error: null,
       })
@@ -92,16 +95,22 @@ function createStore(props) {
   }
 
   const initialize = async (newProps) => {
+    console.log('[useInfiniteQuery] initialize: Called. newProps:', newProps);
     // Update store's internal filters/sortOptions if new ones are passed
-    if (newProps) {
+    if (newProps && newProps.filters) { // Check if newProps and filters exist
         setState({
-            currentFilters: newProps.filters || {},
-            currentSortOptions: newProps.sortOptions || { column: 'fetch_date', ascending: false },
+            currentFilters: newProps.filters,
+        });
+    }
+    if (newProps && newProps.sortOptions) { // Check if newProps and sortOptions exist
+         setState({
+            currentSortOptions: newProps.sortOptions,
         });
     }
     setState({ isLoading: true, isSuccess: false, data: [], count: 0, error: null, hasInitialFetch: false }) // Reset data and count
     await fetchPage(0) // Fetch first page
     setState({ isLoading: false, hasInitialFetch: true })
+    console.log('[useInfiniteQuery] initialize: Finished.');
   }
   
   // Expose a way to update filters/sort and re-fetch
@@ -160,32 +169,43 @@ function useInfiniteQuery(props) {
     const currentStoreState = storeRef.current.getState();
     const propsFilters = props.filters || {};
     const propsSortOptions = props.sortOptions || { column: 'fetch_date', ascending: false };
+    
+    console.log('[useInfiniteQuery] useEffect: Running. hasInitialFetch:', state.hasInitialFetch);
+    console.log('[useInfiniteQuery] useEffect: Current props.filters:', JSON.stringify(propsFilters));
+    console.log('[useInfiniteQuery] useEffect: Current store.currentFilters:', JSON.stringify(currentStoreState.currentFilters));
+    console.log('[useInfiniteQuery] useEffect: Current props.sortOptions:', JSON.stringify(propsSortOptions));
+    console.log('[useInfiniteQuery] useEffect: Current store.currentSortOptions:', JSON.stringify(currentStoreState.currentSortOptions));
 
-    // Check if tableName, columns, pageSize, filters, or sortOptions have changed
-    if (
-      // Basic prop changes that require full store re-creation
-      props.tableName !== storeRef.current.getState()._internalTableName || // Assuming we store original props in state
-      props.columns !== storeRef.current.getState()._internalColumns ||
-      props.pageSize !== storeRef.current.getState()._internalPageSize ||
-      // Filter or sort changes
-      JSON.stringify(propsFilters) !== JSON.stringify(currentStoreState.currentFilters) ||
-      JSON.stringify(propsSortOptions) !== JSON.stringify(currentStoreState.currentSortOptions)
-    ) {
+    const filtersChanged = JSON.stringify(propsFilters) !== JSON.stringify(currentStoreState.currentFilters);
+    const sortOptionsChanged = JSON.stringify(propsSortOptions) !== JSON.stringify(currentStoreState.currentSortOptions);
+
+    // Check if tableName, columns, pageSize have changed or if filters/sortOptions have actually changed
+    // We also need to consider if the store itself was just created and needs its internal props set.
+    const fundamentalPropsChanged = props.tableName !== (currentStoreState._internalTableName || props.tableName) ||
+                                 props.columns !== (currentStoreState._internalColumns || props.columns) ||
+                                 props.pageSize !== (currentStoreState._internalPageSize || props.pageSize);
+
+    if (fundamentalPropsChanged || filtersChanged || sortOptionsChanged) {
+      console.log('[useInfiniteQuery] useEffect: Condition to re-create store MET. FundamentalPropsChanged:', fundamentalPropsChanged, 'FiltersChanged:', filtersChanged, 'SortOptionsChanged:', sortOptionsChanged);
       // If fundamental props like tableName change, or if filters/sort change, re-create and initialize.
       // We pass the latest props to createStore.
       storeRef.current = createStore({
-        ...props,
+        ...props, // Pass all current props through
         filters: propsFilters,
         sortOptions: propsSortOptions,
-        // Store original props for comparison
+        // Store original props for comparison in the new store instance
         _internalTableName: props.tableName,
         _internalColumns: props.columns,
         _internalPageSize: props.pageSize,
       });
+      // Initialize the new store with the current filters and sort options
       storeRef.current.initialize({ filters: propsFilters, sortOptions: propsSortOptions });
     } else if (!state.hasInitialFetch && typeof window !== 'undefined') {
-      // Initial fetch if not already done
+      console.log('[useInfiniteQuery] useEffect: Condition for INITIAL fetch MET (state.hasInitialFetch is false).');
+      // Initial fetch if not already done, and we are on the client side
       storeRef.current.initialize({ filters: propsFilters, sortOptions: propsSortOptions });
+    } else {
+      console.log('[useInfiniteQuery] useEffect: NO condition met to re-create store or perform initial fetch.');
     }
   }, [props.tableName, props.columns, props.pageSize, props.filters, props.sortOptions, state.hasInitialFetch]);
 

@@ -300,6 +300,7 @@ try:
         router as fetch_history_router,
     )  # Added this line
     from .routes.llm_routes import router as llm_router  # Added for new LLM endpoints
+    from .routes import configurations_routes, agent_registry_routes # Added for new system config/agent routes
     from .monitoring.sse_monitor import sse_monitoring_middleware
     from .monitoring.routes import router as monitoring_router
     from .utils.llm_logging import log_llm_call  # Added for LLM call logging
@@ -4004,8 +4005,11 @@ if PROJECT_MODULES_LOADED:
     if "llm_router" in locals() and llm_router:  # Added for new LLM endpoints
         try:
             app.include_router(llm_router, prefix="/api/v1", tags=["LLM Endpoints"])
+            # Add new routers here, near other /api/v1 routes
+            app.include_router(configurations_routes.router, prefix="/api/v1/configurations", tags=["App Configurations"])
+            app.include_router(agent_registry_routes.router, prefix="/api/v1/agent-registry", tags=["Agent Registry"])
         except Exception as e:
-            logger.warning(f"Failed to include llm_router: {e}")
+            logger.warning(f"Failed to include llm_router or new system routers: {e}")
 
     if "metrics_router" in locals() and metrics_router:
         try:
@@ -4036,12 +4040,12 @@ if PROJECT_MODULES_LOADED:
             )
         except Exception as e:
             logger.warning(f"Failed to include search_config_router: {e}")
-
+            
 # --- Include Debug Endpoints ---
 try:
     from .debug_endpoints import router as debug_router
 
-    app.include_router(debug_router)
+    app.include_router(debug_router) # Typically included without a prefix for broader access
     logger.info("Debug endpoints included.")
 except Exception as e:
     logger.warning(f"Failed to include debug endpoints: {e}")

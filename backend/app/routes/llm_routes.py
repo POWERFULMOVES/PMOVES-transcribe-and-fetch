@@ -277,7 +277,7 @@ async def get_registered_models(
     Each model entry is a dictionary conforming to the StandardizedLLM Pydantic model.
     """
     try:
-        models = llm_registry.get_available_models()
+        models = await llm_registry.get_available_models()
         if not models:
             # This case might occur if the cache is empty and fetch failed,
             # or if no models are genuinely available from the proxy.

@@ -4,12 +4,19 @@ import logging
 import time
 
 logger = logging.getLogger(__name__) # Define logger at the top
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone, timedelta 
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union # Consolidated and sorted
 
 import httpx
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, ValidationError
 import json # Added for parsing FALLBACK_MODELS_JSON
+
+# Attempt to import get_client for Supabase interactions
+try:
+    from ..db.database import get_client
+except ImportError:
+    logger.warning("Supabase client 'get_client' not found at ..db.database. Supabase functionalities will be disabled.")
+    get_client = None # Allow module to load, but disable Supabase features
 
 # --- Configuration ---
 try:
@@ -42,11 +49,11 @@ class StandardizedLLM(BaseModel):
     family: Optional[str] = None
     context_window: Optional[int] = None
     capabilities: List[ModelCapability] = Field(default_factory=list)
-    status: Optional[str] = "active"
-    last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    additional_metadata: Optional[Dict[str, Any]] = None
-    pricing: Optional[Dict[str, Any]] = None
-    rate_limits: Optional[Dict[str, Any]] = None
+    status: Optional[str] = "active", # Corresponds to llm_models.status
+    last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc)), # Used for cache logic, not directly in llm_models table (which has created_at, updated_at, last_synced_at)
+    additional_metadata: Optional[Dict[str, Any]] = None, # Potentially for future use, not directly in llm_models
+    pricing: Optional[Dict[str, Any]] = None, # Corresponds to llm_models.pricing (JSONB)
+    rate_limits: Optional[Dict[str, Any]] = None # Corresponds to llm_models.rate_limits (JSONB)
     # For LiteLLM, the 'id' field in their /v1/models response is usually the full model name like "openai/gpt-3.5-turbo"
     # We will use this as our primary model_id and also populate crawl4ai_compatible_id if needed.
 
@@ -242,6 +249,9 @@ class LLMRegistryService:
                      logger.error("Failed to fetch models from proxy and no fallback models available. Cache remains empty.")
                 else: # Subsequent fetch failed, keep stale cache
                      logger.warning("Failed to fetch models from proxy. Retaining stale cache.")
+                
+                # After updating self._cached_models, sync to Supabase
+                await self._sync_models_to_supabase(self._cached_models)
 
             except Exception as e:
                 logger.error(f"Error during model refresh: {e}", exc_info=True)
@@ -249,28 +259,150 @@ class LLMRegistryService:
                     self._cached_models = self._fallback_models_loaded
                     self._cache_timestamp = now
                     logger.warning(f"Using {len(self._fallback_models_loaded)} fallback models due to refresh error.")
+                    # Also sync fallbacks if they are now the source of truth for the cache
+                    await self._sync_models_to_supabase(self._cached_models)
                 elif not self._cached_models:
                      logger.error("Cache remains empty after refresh error and no fallbacks.")
 
+    async def _sync_models_to_supabase(self, models: List[StandardizedLLM]):
+        """
+        Synchronizes a list of StandardizedLLM models to the Supabase 'llm_models' table.
+        """
+        if not get_client:
+            logger.warning("Supabase client not available. Skipping sync of models to Supabase.")
+            return
 
-    def get_available_models(
+        supabase_client = get_client()
+        if not supabase_client:
+            logger.error("Failed to get Supabase client instance. Skipping sync.")
+            return
+
+        logger.info(f"Starting sync of {len(models)} models to Supabase 'llm_models' table.")
+        upsert_count = 0
+        error_count = 0
+
+        for model in models:
+            try:
+                model_dict = {
+                    "model_id": model.model_id,
+                    "display_name": model.display_name,
+                    "provider": model.provider,
+                    "family": model.family,
+                    "context_window": model.context_window,
+                    "capabilities": [cap.model_dump() for cap in model.capabilities] if model.capabilities else [],
+                    "status": model.status or 'active', # Ensure status has a default
+                    "pricing": model.pricing,
+                    "rate_limits": model.rate_limits,
+                    "last_synced_at": datetime.now(timezone.utc).isoformat(),
+                }
+                # Remove keys with None values, as Supabase might not like them for JSONB or other fields unless nullable
+                model_dict = {k: v for k, v in model_dict.items() if v is not None}
+
+
+                response = await supabase_client.table("llm_models").upsert(
+                    model_dict,
+                    on_conflict="model_id" 
+                ).execute()
+
+                if response.data:
+                    logger.debug(f"Successfully upserted model '{model.model_id}' to Supabase.")
+                    upsert_count +=1
+                else: # response.error or no data
+                    error_detail = response.error.message if response.error else "No data returned"
+                    logger.error(f"Failed to upsert model '{model.model_id}' to Supabase. Error: {error_detail}. Data: {model_dict}")
+                    error_count += 1
+            except Exception as e:
+                logger.error(f"Exception during Supabase upsert for model '{model.model_id}': {e}", exc_info=True)
+                error_count += 1
+        
+        logger.info(f"Supabase sync completed. Successfully upserted: {upsert_count}, Errors: {error_count}")
+
+
+    async def get_available_models(
         self,
         provider_filter: Optional[str] = None,
         capability_filter: Optional[str] = None # e.g., "text_generation", "embedding"
     ) -> List[StandardizedLLM]:
         """
-        Returns a list of available standardized LLM models from the cache.
+        Returns a list of available standardized LLM models.
+        Attempts to fetch from Supabase first, then falls back to in-memory cache.
         Optionally filters by provider or capability type.
         """
+        if get_client:
+            supabase_client = get_client()
+            if supabase_client:
+                logger.debug("Attempting to fetch models from Supabase.")
+                try:
+                    query = supabase_client.table("llm_models").select("*").eq("status", "active") # Only fetch active models
+                    if provider_filter:
+                        query = query.eq("provider", provider_filter)
+                    
+                    response = await query.execute()
+
+                    if response.data:
+                        db_models: List[StandardizedLLM] = []
+                        for row in response.data:
+                            try:
+                                # Convert capabilities from list of dicts to List[ModelCapability]
+                                capabilities_data = row.get("capabilities", [])
+                                parsed_capabilities = [ModelCapability(**cap_data) for cap_data in capabilities_data]
+                                
+                                # Prepare data for StandardizedLLM, handling potential missing fields
+                                model_data_for_pydantic = {
+                                    "provider": row.get("provider"),
+                                    "model_id": row.get("model_id"),
+                                    "display_name": row.get("display_name"),
+                                    "crawl4ai_compatible_id": row.get("model_id"), # Assuming model_id is compatible
+                                    "family": row.get("family"),
+                                    "context_window": row.get("context_window"),
+                                    "capabilities": parsed_capabilities,
+                                    "status": row.get("status", "active"),
+                                    # last_updated is for cache staleness, not directly from this table field
+                                    # additional_metadata is not stored in llm_models directly
+                                    "pricing": row.get("pricing"),
+                                    "rate_limits": row.get("rate_limits")
+                                }
+                                # Filter out None values before passing to Pydantic model if they are not Optional in model
+                                model_data_for_pydantic_cleaned = {k:v for k,v in model_data_for_pydantic.items() if v is not None or k in StandardizedLLM.model_fields}
+
+
+                                db_models.append(StandardizedLLM(**model_data_for_pydantic_cleaned))
+                            except ValidationError as ve:
+                                logger.error(f"Validation error converting Supabase row to StandardizedLLM for model_id '{row.get('model_id')}': {ve}", exc_info=True)
+                            except Exception as e_row_parse:
+                                logger.error(f"Error parsing row from Supabase for model_id '{row.get('model_id')}': {e_row_parse}", exc_info=True)
+                        
+                        if db_models:
+                            logger.info(f"Successfully fetched {len(db_models)} models from Supabase.")
+                            # Apply capability filter if present (provider filter was done in query)
+                            if capability_filter:
+                                db_models = [
+                                    m for m in db_models
+                                    if any(cap.type.lower() == capability_filter.lower() for cap in m.capabilities)
+                                ]
+                            # Update cache with Supabase data if it's more recent or cache is empty
+                            # For simplicity, we'll just use this as the source of truth if available
+                            # A more sophisticated cache update logic could be added here.
+                            # self._cached_models = db_models # Optionally update cache
+                            # self._cache_timestamp = datetime.now(timezone.utc)
+                            return db_models
+                except Exception as e_supabase:
+                    logger.error(f"Error fetching models from Supabase: {e_supabase}", exc_info=True)
+                    # Fall through to cache logic
+            else:
+                logger.debug("Supabase client not initialized. Falling back to cache.")
+        else:
+            logger.debug("Supabase client not configured. Falling back to cache.")
+
+        # Fallback to in-memory cache if Supabase fetch fails or is not available
+        logger.info("Falling back to in-memory cache for get_available_models.")
         if not self._cached_models:
             logger.warning("Model cache is empty. Consider running refresh_available_models() or checking logs.")
-            # Potentially trigger a synchronous refresh here if absolutely needed, but be careful with blocking.
-            # For now, just return empty or fallbacks if any.
-            return list(self._fallback_models_loaded) # Return a copy
+            return list(self._fallback_models_loaded) 
 
-        models_to_return = list(self._cached_models) # Return a copy
+        models_to_return = list(self._cached_models) 
 
-        if provider_filter:
+        if provider_filter: # Provider filter already applied if from Supabase
             models_to_return = [m for m in models_to_return if m.provider.lower() == provider_filter.lower()]
 
         if capability_filter:
@@ -279,31 +411,73 @@ class LLMRegistryService:
                 if any(cap.type.lower() == capability_filter.lower() for cap in m.capabilities)
             ]
 
-        logger.debug(f"Returning {len(models_to_return)} models after filters (provider: {provider_filter}, capability: {capability_filter}).")
+        logger.debug(f"Returning {len(models_to_return)} models from cache after filters (provider: {provider_filter}, capability: {capability_filter}).")
         return models_to_return
 
-    def get_model_details(self, model_id: str) -> Optional[StandardizedLLM]:
+    async def get_model_details(self, model_id: str) -> Optional[StandardizedLLM]:
         """
-        Returns details for a specific model (by its full ID like 'openai/gpt-4o') from the cache.
+        Returns details for a specific model (by its full ID like 'openai/gpt-4o').
+        Attempts to fetch from Supabase first, then falls back to in-memory cache.
         """
         if not model_id:
             return None
 
+        if not model_id:
+            return None
+
+        # Try Supabase first
+        if get_client:
+            supabase_client = get_client()
+            if supabase_client:
+                logger.debug(f"Attempting to fetch model details for '{model_id}' from Supabase.")
+                try:
+                    response = await supabase_client.table("llm_models").select("*").eq("model_id", model_id).eq("status", "active").maybe_single().execute()
+                    if response.data:
+                        row = response.data
+                        capabilities_data = row.get("capabilities", [])
+                        parsed_capabilities = [ModelCapability(**cap_data) for cap_data in capabilities_data]
+                        
+                        model_data_for_pydantic = {
+                            "provider": row.get("provider"),
+                            "model_id": row.get("model_id"),
+                            "display_name": row.get("display_name"),
+                            "crawl4ai_compatible_id": row.get("model_id"),
+                            "family": row.get("family"),
+                            "context_window": row.get("context_window"),
+                            "capabilities": parsed_capabilities,
+                            "status": row.get("status", "active"),
+                            "pricing": row.get("pricing"),
+                            "rate_limits": row.get("rate_limits")
+                        }
+                        model_data_for_pydantic_cleaned = {k:v for k,v in model_data_for_pydantic.items() if v is not None or k in StandardizedLLM.model_fields}
+                        
+                        logger.info(f"Successfully fetched model details for '{model_id}' from Supabase.")
+                        return StandardizedLLM(**model_data_for_pydantic_cleaned)
+                except ValidationError as ve:
+                    logger.error(f"Validation error converting Supabase row to StandardizedLLM for model_id '{model_id}': {ve}", exc_info=True)
+                except Exception as e_supabase_detail:
+                    logger.error(f"Error fetching model details for '{model_id}' from Supabase: {e_supabase_detail}", exc_info=True)
+            else:
+                 logger.debug(f"Supabase client not initialized. Falling back to cache for model '{model_id}'.")
+        else:
+            logger.debug(f"Supabase client not configured. Falling back to cache for model '{model_id}'.")
+        
+        # Fallback to cache
+        logger.info(f"Falling back to in-memory cache for model details of '{model_id}'.")
         for model in self._cached_models:
             if model.model_id == model_id:
                 return model
-
-        # If not found in primary cache, check fallbacks (though primary cache should contain them if loaded)
-        for model in self._fallback_models_loaded:
+        
+        for model in self._fallback_models_loaded: # Check fallbacks if not in primary cache
             if model.model_id == model_id:
-                logger.warning(f"Model '{model_id}' found in fallback list but not in main cache.")
+                logger.warning(f"Model '{model_id}' found in fallback list but not in main cache during get_model_details.")
                 return model
 
-        logger.warning(f"Model with ID '{model_id}' not found in cache.")
+        logger.warning(f"Model with ID '{model_id}' not found in cache or Supabase.")
         return None
 
-    def get_cache_status(self) -> Dict[str, Any]:
-        """Returns information about the current cache state."""
+    def get_cache_status(self) -> Dict[str, Any]: # This reflects in-memory cache, not Supabase state
+        """Returns information about the current in-memory cache state."""
         return {
             "last_updated": self._cache_timestamp.isoformat() if self._cache_timestamp else None,
             "number_of_models": len(self._cached_models),

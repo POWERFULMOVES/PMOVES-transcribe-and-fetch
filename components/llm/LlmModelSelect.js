@@ -8,24 +8,23 @@ import { BACKEND_URL } from '@/lib/constants'; // Assuming BACKEND_URL is define
 // This should match the structure returned by GET /llm/models
 // Based on backend/app/routes/llm_routes.py comment about StandardizedLLM
 // We might expect fields like 'id', 'alias', 'provider', 'capabilities', 'description'
-// For now, we'll use 'alias' and 'description' and display 'alias'.
-// We use type Any for flexibility if the exact structure isn't known/standardized yet.
+// For now, we'll use 'model_id' and 'display_name'.
+// Based on backend StandardizedLLM, which has model_id, display_name, provider, capabilities.
 // type StandardizedLLM = {
-//   id: string;
-//   alias: string;
-//   provider: string;
-//   capabilities: string[]; // e.g., ['text', 'chat', 'embeddings', 'vision', 'tool_calling']
-//   description?: string;
+//   model_id: string; // e.g., "openai/gpt-3.5-turbo"
+//   display_name: string; // e.g., "GPT-3.5 Turbo (OpenAI)"
+//   provider: string; // e.g., "openai"
+//   capabilities: Array<{ type: string, description: string }>; // e.g., [{type: 'text', description: '...'}, ...]
 //   [key: string]: any; // Allow other fields
 // };
 
 // This component fetches available LLM models from the backend registry
 // and provides a Select dropdown for the user to choose a model.
-// It uses the /llm/models endpoint.
+// It uses the /api/v1/models endpoint.
 export default function LlmModelSelect({
   label = "LLM Model", // Label for the select input
-  selectedModelAlias, // The currently selected model alias (controlled from parent)
-  onModelSelect, // Callback function when a model is selected (receives alias)
+  selectedModelAlias, // The currently selected model ID (prop name will be updated later)
+  onModelSelect, // Callback function when a model is selected (receives model_id)
   disabled = false, // Disable the select input
   filterCapabilities, // Optional array of required capabilities (e.g., ['text', 'vision'])
   ...props // Pass any other props to the Select component
@@ -39,8 +38,8 @@ export default function LlmModelSelect({
       try {
         setIsLoading(true);
         setError(null);
-        // Assuming the endpoint is at /llm/models relative to BACKEND_URL
-        const response = await fetch(`${BACKEND_URL}/llm/models`);
+        // Fetch from the new endpoint /api/v1/models
+        const response = await fetch(`${BACKEND_URL}/api/v1/models`);
 
         if (!response.ok) {
           const errorData = await response.json().catch(() => ({ detail: "Failed to parse error response" }));
@@ -48,12 +47,13 @@ export default function LlmModelSelect({
         }
 
         const data = await response.json();
+        console.log("Fetched models:", data); // Inspect the structure of fetched models
 
         // Filter models based on required capabilities if filterCapabilities is provided
         const filteredModels = filterCapabilities && Array.isArray(filterCapabilities) && filterCapabilities.length > 0
-          ? data.filter(model => 
-              model.capabilities && Array.isArray(model.capabilities) && 
-              filterCapabilities.every(cap => model.capabilities.includes(cap))
+          ? data.filter(model =>
+              model.capabilities && Array.isArray(model.capabilities) &&
+              filterCapabilities.every(cap => model.capabilities.map(c => c.type).includes(cap))
             )
           : data; // No filtering needed if no filterCapabilities provided
 
@@ -87,12 +87,12 @@ export default function LlmModelSelect({
   }
 
   return (
-    <div className="space-y-2" {...props}> {/* Use a div to apply props like className */}
+    <div className="space-y-2" {...props}>
       <Label>{label}</Label>
-      <TooltipProvider delayDuration={300}> {/* Wrap with TooltipProvider */}
+      <TooltipProvider delayDuration={300}>
         <Select
-          value={selectedModelAlias || ''} // Ensure controlled component
-          onValueChange={handleValueChange}
+          value={selectedModelAlias || ''} // Compare with model.model_id
+          onValueChange={handleValueChange} // Passes model_id to callback
           disabled={disabled || isLoading || models.length === 0}
         >
           <SelectTrigger>
@@ -101,21 +101,27 @@ export default function LlmModelSelect({
           <SelectContent>
             {isLoading && <SelectItem value="" disabled>Loading models...</SelectItem>}
             {models.map(model => (
-               <Tooltip key={model.alias}> {/* Wrap SelectItem content with Tooltip */}
+              <Tooltip key={model.model_id}> {/* Use model.model_id as key */}
                 <TooltipTrigger asChild>
-                  {/* SelectItem value must be the model alias string */}
-                  <SelectItem value={model.alias} disabled={!model.alias || !model.capabilities || !filterCapabilities.every(cap => model.capabilities.includes(cap))}> {/* Disable if missing alias or capabilities mismatch */}
-                      {/* Display alias or a user-friendly name if available */}
-                      {model.alias || model.id || "Unnamed Model"}
+                  {/* SelectItem value is model.model_id */}
+                  <SelectItem 
+                    value={model.model_id} 
+                    disabled={
+                      !model.model_id || 
+                      (filterCapabilities && Array.isArray(filterCapabilities) && filterCapabilities.length > 0 &&
+                       !(model.capabilities && Array.isArray(model.capabilities) && filterCapabilities.every(cap => model.capabilities.map(c => c.type).includes(cap)))
+                      )
+                    }
+                  >
+                    {model.display_name || model.model_id || "Unnamed Model"} {/* Display model.display_name */}
                   </SelectItem>
                 </TooltipTrigger>
                 <TooltipContent>
-                   {/* Display full details in tooltip */}
-                   <p>{model.alias || model.id || "Unnamed Model"}</p>
-                   {model.description && <p>{model.description}</p>}
-                   {model.provider && <p>Provider: {model.provider}</p>}
-                   {model.capabilities && Array.isArray(model.capabilities) && 
-                    <p>Capabilities: {model.capabilities.join(', ')}</p>}
+                  <p><strong>{model.display_name || model.model_id}</strong></p>
+                  {model.provider && <p>Provider: {model.provider}</p>}
+                  <p>ID: {model.model_id}</p>
+                  {model.capabilities && Array.isArray(model.capabilities) && model.capabilities.length > 0 &&
+                    <p>Capabilities: {model.capabilities.map(c => c.type).join(', ')}</p>}
                 </TooltipContent>
               </Tooltip>
             ))}
@@ -124,4 +130,4 @@ export default function LlmModelSelect({
       </TooltipProvider>
     </div>
   );
-} 
+}
