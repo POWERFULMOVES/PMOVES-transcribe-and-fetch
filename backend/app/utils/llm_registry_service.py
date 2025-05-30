@@ -225,12 +225,8 @@ class LLMRegistryService:
 
     async def refresh_available_models(self, force_refresh: bool = False):
         """
-        Refreshes the in-memory cache of available LLM models from the LiteLLM proxy.
-        
-        If the cache is still fresh and `force_refresh` is not set, the refresh is skipped. On failure to fetch from the proxy, falls back to previously cached or fallback models if available. After updating the cache, synchronizes the models to Supabase if possible.
-        
-        Args:
-            force_refresh: If True, forces a refresh regardless of cache age.
+        Fetches models from the LiteLLM proxy and updates the cache.
+        Uses a lock to prevent concurrent refreshes.
         """
         async with self._cache_lock:
             now = datetime.now(timezone.utc)
@@ -270,9 +266,7 @@ class LLMRegistryService:
 
     async def _sync_models_to_supabase(self, models: List[StandardizedLLM]):
         """
-        Synchronizes a list of LLM models to the Supabase 'llm_models' table.
-        
-        Each model is upserted based on its model ID. Models with missing required fields are skipped, and errors during upsert are logged. If the Supabase client is unavailable, the operation is skipped.
+        Synchronizes a list of StandardizedLLM models to the Supabase 'llm_models' table.
         """
         if not get_client:
             logger.warning("Supabase client not available. Skipping sync of models to Supabase.")
@@ -332,16 +326,9 @@ class LLMRegistryService:
         capability_filter: Optional[str] = None # e.g., "text_generation", "embedding"
     ) -> List[StandardizedLLM]:
         """
-        Retrieves a list of available standardized LLM models, optionally filtered by provider or capability.
-        
-        Attempts to fetch active models from Supabase if available; otherwise, falls back to the in-memory cache or fallback models. Applies capability filtering after retrieval if specified.
-        
-        Args:
-            provider_filter: If provided, limits results to models from the specified provider.
-            capability_filter: If provided, limits results to models supporting the specified capability (e.g., "text_generation", "embedding").
-        
-        Returns:
-            A list of StandardizedLLM instances matching the specified filters.
+        Returns a list of available standardized LLM models.
+        Attempts to fetch from Supabase first, then falls back to in-memory cache.
+        Optionally filters by provider or capability type.
         """
         if get_client:
             supabase_client = get_client()
@@ -357,34 +344,62 @@ class LLMRegistryService:
 
                     if response.data:
                         db_models: List[StandardizedLLM] = []
-                        for row in response.data:
+                        for model_data_from_db in response.data: # Renamed row to model_data_from_db for clarity
                             try:
-                                # Convert capabilities from list of dicts to List[ModelCapability]
-                                capabilities_data = row.get("capabilities", [])
-                                parsed_capabilities = [ModelCapability(**cap_data) for cap_data in capabilities_data]
+                                model_data_for_pydantic = dict(model_data_from_db) # Create a mutable copy
 
-                                # Prepare data for StandardizedLLM, handling potential missing fields
-                                model_data_for_pydantic = {
-                                    "provider": row.get("provider"),
-                                    "model_id": row.get("model_id"),
-                                    "display_name": row.get("display_name"),
-                                    "crawl4ai_compatible_id": row.get("model_id"), # Assuming model_id is compatible
-                                    "family": row.get("family"),
-                                    "context_window": row.get("context_window"),
-                                    "capabilities": parsed_capabilities,
-                                    "status": row.get("status", "active"),
-                                    # last_updated is for cache staleness, not directly from this table field
-                                    # additional_metadata is not stored in llm_models directly
-                                    "pricing": row.get("pricing"),
-                                    "rate_limits": row.get("rate_limits")
+                                # Clean up 'pricing' field
+                                pricing_value = model_data_for_pydantic.get('pricing')
+                                if isinstance(pricing_value, list) and len(pricing_value) == 1 and pricing_value[0] is None:
+                                    model_data_for_pydantic['pricing'] = None
+                                elif pricing_value is None:
+                                    model_data_for_pydantic['pricing'] = None
+
+                                # Clean up 'rate_limits' field
+                                rate_limits_value = model_data_for_pydantic.get('rate_limits')
+                                if isinstance(rate_limits_value, list) and len(rate_limits_value) == 1 and rate_limits_value[0] is None:
+                                    model_data_for_pydantic['rate_limits'] = None
+                                elif rate_limits_value is None:
+                                    model_data_for_pydantic['rate_limits'] = None
+
+                                # Ensure 'capabilities' is correctly parsed
+                                capabilities_value = model_data_for_pydantic.get('capabilities')
+                                parsed_capabilities_list = []
+                                if isinstance(capabilities_value, str):
+                                    try:
+                                        loaded_caps = json.loads(capabilities_value)
+                                        if isinstance(loaded_caps, list):
+                                            parsed_capabilities_list = [ModelCapability(**cap_data) for cap_data in loaded_caps]
+                                        else:
+                                            logger.warning(f"Parsed capabilities JSON is not a list for model {model_data_for_pydantic.get('model_id')}")
+                                    except json.JSONDecodeError:
+                                        logger.warning(f"Failed to parse capabilities JSON string for model {model_data_for_pydantic.get('model_id')}: {capabilities_value}")
+                                elif isinstance(capabilities_value, list): # Already a list of dicts
+                                    parsed_capabilities_list = [ModelCapability(**cap_data) for cap_data in capabilities_value]
+                                elif capabilities_value is None:
+                                    pass # Defaults to empty list via Pydantic model
+
+                                model_data_for_pydantic['capabilities'] = parsed_capabilities_list
+
+                                # Prepare data for StandardizedLLM, ensuring all keys are present or handled by Pydantic defaults
+                                # Fields from DB: provider, model_id, display_name, family, context_window, status, pricing, rate_limits
+                                # Plus processed 'capabilities'. 'crawl4ai_compatible_id' defaults to model_id.
+                                final_model_data = {
+                                    "provider": model_data_for_pydantic.get("provider"),
+                                    "model_id": model_data_for_pydantic.get("model_id"),
+                                    "display_name": model_data_for_pydantic.get("display_name"),
+                                    "crawl4ai_compatible_id": model_data_for_pydantic.get("model_id"),
+                                    "family": model_data_for_pydantic.get("family"),
+                                    "context_window": model_data_for_pydantic.get("context_window"),
+                                    "capabilities": model_data_for_pydantic.get("capabilities", []), # Ensure it's a list
+                                    "status": model_data_for_pydantic.get("status", "active"),
+                                    "pricing": model_data_for_pydantic.get("pricing"),
+                                    "rate_limits": model_data_for_pydantic.get("rate_limits")
                                 }
-                                # Filter out None values before passing to Pydantic model if they are not Optional in model
-                                model_data_for_pydantic_cleaned = {k:v for k,v in model_data_for_pydantic.items() if v is not None or k in StandardizedLLM.model_fields}
-
-
-                                db_models.append(StandardizedLLM(**model_data_for_pydantic_cleaned))
+                                # Pydantic model will handle optional fields being None
+                                db_models.append(StandardizedLLM(**final_model_data))
                             except ValidationError as ve:
-                                logger.error(f"Validation error converting Supabase row to StandardizedLLM for model_id '{row.get('model_id')}': {ve}", exc_info=True)
+                                logger.error(f"Validation error converting Supabase row to StandardizedLLM for model_id '{model_data_from_db.get('model_id')}': {ve}", exc_info=True)
                             except Exception as e_row_parse:
                                 logger.error(f"Error parsing row from Supabase for model_id '{row.get('model_id')}': {e_row_parse}", exc_info=True)
 
@@ -432,15 +447,8 @@ class LLMRegistryService:
 
     async def get_model_details(self, model_id: str) -> Optional[StandardizedLLM]:
         """
-        Retrieves detailed information for a specific model by its full ID.
-        
-        Attempts to fetch the model details from Supabase if available; if not found or Supabase is unavailable, falls back to the in-memory cache and then to fallback models. Returns `None` if the model is not found.
-        
-        Args:
-            model_id: The full identifier of the model (e.g., 'openai/gpt-4o').
-        
-        Returns:
-            A `StandardizedLLM` instance with model details if found, otherwise `None`.
+        Returns details for a specific model (by its full ID like 'openai/gpt-4o').
+        Attempts to fetch from Supabase first, then falls back to in-memory cache.
         """
         if not model_id:
             return None
@@ -464,26 +472,59 @@ class LLMRegistryService:
                         .execute
                     )
                     if response.data:
-                        row = response.data
-                        capabilities_data = row.get("capabilities", [])
-                        parsed_capabilities = [ModelCapability(**cap_data) for cap_data in capabilities_data]
+                        model_data_from_db = response.data # Renamed row
 
-                        model_data_for_pydantic = {
-                            "provider": row.get("provider"),
-                            "model_id": row.get("model_id"),
-                            "display_name": row.get("display_name"),
-                            "crawl4ai_compatible_id": row.get("model_id"),
-                            "family": row.get("family"),
-                            "context_window": row.get("context_window"),
-                            "capabilities": parsed_capabilities,
-                            "status": row.get("status", "active"),
-                            "pricing": row.get("pricing"),
-                            "rate_limits": row.get("rate_limits")
+                        model_data_for_pydantic = dict(model_data_from_db) # Mutable copy
+
+                        # Clean up 'pricing' field
+                        pricing_value = model_data_for_pydantic.get('pricing')
+                        if isinstance(pricing_value, list) and len(pricing_value) == 1 and pricing_value[0] is None:
+                            model_data_for_pydantic['pricing'] = None
+                        elif pricing_value is None:
+                             model_data_for_pydantic['pricing'] = None
+
+                        # Clean up 'rate_limits' field
+                        rate_limits_value = model_data_for_pydantic.get('rate_limits')
+                        if isinstance(rate_limits_value, list) and len(rate_limits_value) == 1 and rate_limits_value[0] is None:
+                            model_data_for_pydantic['rate_limits'] = None
+                        elif rate_limits_value is None:
+                            model_data_for_pydantic['rate_limits'] = None
+
+                        # Ensure 'capabilities' is correctly parsed
+                        capabilities_value = model_data_for_pydantic.get('capabilities')
+                        parsed_capabilities_list = []
+                        if isinstance(capabilities_value, str):
+                            try:
+                                loaded_caps = json.loads(capabilities_value)
+                                if isinstance(loaded_caps, list):
+                                     parsed_capabilities_list = [ModelCapability(**cap_data) for cap_data in loaded_caps]
+                                else:
+                                    logger.warning(f"Parsed capabilities JSON is not a list for model {model_data_for_pydantic.get('model_id')}")
+                            except json.JSONDecodeError:
+                                logger.warning(f"Failed to parse capabilities JSON string for model {model_data_for_pydantic.get('model_id')}: {capabilities_value}")
+                        elif isinstance(capabilities_value, list):
+                             parsed_capabilities_list = [ModelCapability(**cap_data) for cap_data in capabilities_value]
+                        elif capabilities_value is None:
+                            pass # Defaults to empty list via Pydantic model
+
+                        model_data_for_pydantic['capabilities'] = parsed_capabilities_list
+
+                        # Prepare final data for Pydantic model
+                        final_model_data = {
+                            "provider": model_data_for_pydantic.get("provider"),
+                            "model_id": model_data_for_pydantic.get("model_id"),
+                            "display_name": model_data_for_pydantic.get("display_name"),
+                            "crawl4ai_compatible_id": model_data_for_pydantic.get("model_id"),
+                            "family": model_data_for_pydantic.get("family"),
+                            "context_window": model_data_for_pydantic.get("context_window"),
+                            "capabilities": model_data_for_pydantic.get("capabilities", []),
+                            "status": model_data_for_pydantic.get("status", "active"),
+                            "pricing": model_data_for_pydantic.get("pricing"),
+                            "rate_limits": model_data_for_pydantic.get("rate_limits")
                         }
-                        model_data_for_pydantic_cleaned = {k:v for k,v in model_data_for_pydantic.items() if v is not None or k in StandardizedLLM.model_fields}
 
                         logger.info(f"Successfully fetched model details for '{model_id}' from Supabase.")
-                        return StandardizedLLM(**model_data_for_pydantic_cleaned)
+                        return StandardizedLLM(**final_model_data)
                 except ValidationError as ve:
                     logger.error(f"Validation error converting Supabase row to StandardizedLLM for model_id '{model_id}': {ve}", exc_info=True)
                 except Exception as e_supabase_detail:

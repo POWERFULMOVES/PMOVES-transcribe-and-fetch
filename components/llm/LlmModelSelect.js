@@ -20,22 +20,7 @@ import { BACKEND_URL } from '@/lib/constants'; // Assuming BACKEND_URL is define
 
 // This component fetches available LLM models from the backend registry
 // and provides a Select dropdown for the user to choose a model.
-/**
- * Renders a dropdown select input for choosing a Large Language Model (LLM) from a dynamically fetched list, with optional filtering by required capabilities.
- *
- * Fetches available models from the backend `/api/v1/models` endpoint and displays them as selectable options. Each model option includes a tooltip with detailed metadata. The select input can be disabled, and models can be filtered to only those supporting all specified capabilities.
- *
- * @param {string} [label] - The label text for the select input.
- * @param {string} selectedModelAlias - The currently selected model's ID.
- * @param {function} onModelSelect - Callback invoked with the selected model's ID when a selection is made.
- * @param {boolean} [disabled] - Whether the select input is disabled.
- * @param {string[]} [filterCapabilities] - Optional array of required capability types; only models supporting all listed capabilities are shown.
- *
- * @returns {JSX.Element} The rendered select input with model options and tooltips.
- *
- * @remark
- * If fetching models fails and no models are loaded, an error message is displayed instead of the select input.
- */
+// It uses the /api/v1/models endpoint.
 export default function LlmModelSelect({
   label = "LLM Model", // Label for the select input
   selectedModelAlias, // The currently selected model ID (prop name will be updated later)

@@ -163,10 +163,7 @@ async def delete_configuration(
     supabase_client = Depends(get_client)
 ):
     """
-    Deletes an application configuration by its UUID.
-    
-    Raises:
-        HTTPException: If the configuration does not exist (404) or deletion fails (500).
+    Delete a configuration by its UUID.
     """
     try:
         # First, check if the item exists to provide a 404 if it doesn't
