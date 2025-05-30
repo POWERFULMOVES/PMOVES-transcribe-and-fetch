@@ -225,8 +225,12 @@ class LLMRegistryService:
 
     async def refresh_available_models(self, force_refresh: bool = False):
         """
-        Fetches models from the LiteLLM proxy and updates the cache.
-        Uses a lock to prevent concurrent refreshes.
+        Refreshes the in-memory cache of available LLM models from the LiteLLM proxy.
+        
+        If the cache is still fresh and `force_refresh` is not set, the refresh is skipped. On failure to fetch from the proxy, falls back to previously cached or fallback models if available. After updating the cache, synchronizes the models to Supabase if possible.
+        
+        Args:
+            force_refresh: If True, forces a refresh regardless of cache age.
         """
         async with self._cache_lock:
             now = datetime.now(timezone.utc)
@@ -266,7 +270,9 @@ class LLMRegistryService:
 
     async def _sync_models_to_supabase(self, models: List[StandardizedLLM]):
         """
-        Synchronizes a list of StandardizedLLM models to the Supabase 'llm_models' table.
+        Synchronizes a list of LLM models to the Supabase 'llm_models' table.
+        
+        Each model is upserted based on its model ID. Models with missing required fields are skipped, and errors during upsert are logged. If the Supabase client is unavailable, the operation is skipped.
         """
         if not get_client:
             logger.warning("Supabase client not available. Skipping sync of models to Supabase.")
@@ -326,9 +332,16 @@ class LLMRegistryService:
         capability_filter: Optional[str] = None # e.g., "text_generation", "embedding"
     ) -> List[StandardizedLLM]:
         """
-        Returns a list of available standardized LLM models.
-        Attempts to fetch from Supabase first, then falls back to in-memory cache.
-        Optionally filters by provider or capability type.
+        Retrieves a list of available standardized LLM models, optionally filtered by provider or capability.
+        
+        Attempts to fetch active models from Supabase if available; otherwise, falls back to the in-memory cache or fallback models. Applies capability filtering after retrieval if specified.
+        
+        Args:
+            provider_filter: If provided, limits results to models from the specified provider.
+            capability_filter: If provided, limits results to models supporting the specified capability (e.g., "text_generation", "embedding").
+        
+        Returns:
+            A list of StandardizedLLM instances matching the specified filters.
         """
         if get_client:
             supabase_client = get_client()
@@ -419,8 +432,15 @@ class LLMRegistryService:
 
     async def get_model_details(self, model_id: str) -> Optional[StandardizedLLM]:
         """
-        Returns details for a specific model (by its full ID like 'openai/gpt-4o').
-        Attempts to fetch from Supabase first, then falls back to in-memory cache.
+        Retrieves detailed information for a specific model by its full ID.
+        
+        Attempts to fetch the model details from Supabase if available; if not found or Supabase is unavailable, falls back to the in-memory cache and then to fallback models. Returns `None` if the model is not found.
+        
+        Args:
+            model_id: The full identifier of the model (e.g., 'openai/gpt-4o').
+        
+        Returns:
+            A `StandardizedLLM` instance with model details if found, otherwise `None`.
         """
         if not model_id:
             return None

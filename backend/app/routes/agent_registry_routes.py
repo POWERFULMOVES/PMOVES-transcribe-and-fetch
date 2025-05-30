@@ -52,7 +52,16 @@ async def list_registered_agents(
     supabase_client = Depends(get_client)
 ):
     """
-    List all registered agents with pagination and optional filtering by type or status.
+    Retrieves a paginated list of registered agents, optionally filtered by type and status.
+    
+    Args:
+        limit: Maximum number of agents to return (default 20, min 1, max 100).
+        offset: Number of agents to skip before starting to collect the result set (default 0).
+        type_filter: Optional filter to return only agents of a specific type.
+        status_filter: Optional filter to return only agents with a specific status.
+    
+    Returns:
+        A list of AgentRegistry objects matching the provided filters and pagination.
     """
     try:
         query = supabase_client.table("agent_registry").select("*")
@@ -126,7 +135,12 @@ async def update_agent_registration(
     supabase_client = Depends(get_client)
 ):
     """
-    Update an agent's registration by its record UUID.
+    Updates an existing agent registration identified by its UUID.
+    
+    Performs a partial update using provided fields. Raises HTTP 404 if the agent does not exist, or HTTP 409 if the updated agent_id conflicts with another agent.
+    	
+    Returns:
+        The updated AgentRegistry model.
     """
     try:
         # Ensure agent_id is not being changed to one that already exists if part of update
@@ -165,7 +179,10 @@ async def delete_agent_registration(
     supabase_client = Depends(get_client)
 ):
     """
-    Delete an agent's registration by its record UUID.
+    Deletes an agent registration by its UUID record ID.
+    
+    Raises:
+        HTTPException: If the agent is not found (404) or if deletion fails (500).
     """
     try:
         # First, check if the item exists
