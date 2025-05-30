@@ -181,90 +181,13 @@ except Exception as e:
 async def startup_event():
     logger.info("Agent starting up...")
 
-    # Initialize SecurityMiddleware if it was added
-    if SecurityMiddleware:
-        # FastAPI stores middleware instances in app.user_middleware.
-        # The actual instance is wrapped, so we need to access it carefully.
-        # The instance is typically what's passed to add_middleware if it's a class.
-        # If add_middleware(MiddlewareClass, **options) is used, FastAPI creates app.build_middleware_stack()
-        # which instantiates MiddlewareClass(app, **options).
-        # We need to find this instance.
-        security_middleware_instance = None
-        for middleware in app.user_middleware:
-            if hasattr(middleware, "cls") and middleware.cls == SecurityMiddleware:
-                 # This is how Starlette structures it. The instance is often not directly exposed.
-                 # A common pattern for middleware needing async init is to make the instance available via app.state
-                 # or have the middleware class handle its own startup hook registration.
-                 # Given the current SecurityMiddleware structure, we assume it's been added and we need to call initialize.
-                 # This is a simplified approach: find the instance by type if possible.
-                 # This part is tricky because FastAPI/Starlette doesn't provide a simple way to get the instantiated middleware.
-                 # A robust way: SecurityMiddleware could register itself to app.state in its __init__.
-                 # For this task, let's assume the middleware added itself to app.state or we can iterate.
-                 # The most reliable way if the middleware doesn't self-register to app.state
-                 # is to instantiate it *before* adding, initialize it, and then add the *instance*.
-                 # However, `add_middleware` expects a class for non-ASGI3 middleware.
-                 #
-                 # Let's assume a simpler (but less robust) iteration for now, or that SecurityMiddleware
-                 # is designed to be found (e.g. by setting a flag on `app.state` in its `__init__`).
-                 # Given the prompt, the SecurityMiddleware has an `initialize` method that needs calling.
-                 # The provided SecurityMiddleware is a BaseHTTPMiddleware.
-                 # When added via `app.add_middleware(SecurityMiddleware, config=...)`,
-                 # FastAPI/Starlette instantiates it as `SecurityMiddleware(app=app, config=...)`.
-                 # We need to find this specific instance.
-                
-                # Hacky way to find the instance (not recommended for production):
-                # This relies on the order and that it's the last one of its type added.
-                # A better way is for SecurityMiddleware.__init__ to store `self` in `app.state.security_middleware`
-                
-                # Let's assume for this subtask, we will try to find it by iterating app.middleware("http")
-                # No, app.middleware is for ASGI apps. app.user_middleware is for BaseHTTPMiddleware.
-                # The instance passed to `dispatch` is `self`.
-                # The challenge is calling an async method on it *after* it's been added.
-                # Let's print middleware to see structure during a local test. For now, attempt to find it.
-                
-                # Simplified approach: If the middleware needs async init, it often handles it internally
-                # or provides a clear way to access the instance.
-                # The `pmoves-pipecat-agent` did:
-                # security_middleware = SecurityMiddleware(app, security_config)
-                # await security_middleware.initialize()
-                # This implies `app` is not using `app.add_middleware` for that one, but rather wrapping `app.asgi`
-                # This is complex.
-                #
-                # For this subtask, let's assume a simplified scenario:
-                # If SecurityMiddleware is present and has an 'initialize' method, call it.
-                # This requires the instance. The most straightforward way if `add_middleware` is used
-                # is that `SecurityMiddleware` itself hooks into the startup event or makes itself accessible.
-                #
-                # Fallback: If direct instance access is too complex, we'll note it.
-                # The `SecurityMiddleware(app, config)` pattern is for when you *don't* use `app.add_middleware`.
-                # If using `app.add_middleware`, the class is passed.
-                # The most direct way to make this work with `app.add_middleware` and an `initialize` method:
-                # In SecurityMiddleware.__init__(self, app, config):
-                #   ...
-                #   app.state.security_middleware_to_initialize = self 
-                #
-                # Then in startup:
-                # if hasattr(app.state, "security_middleware_to_initialize"):
-                #    await app.state.security_middleware_to_initialize.initialize()
-
-                # Given I cannot modify security.py in this step, I'll try to find it by iterating user_middleware.
-                # This is fragile.
-                for m_entry in app.user_middleware:
-                    if isinstance(m_entry.kwargs.get("middleware_class"), type) and \
-                       m_entry.kwargs.get("middleware_class") == SecurityMiddleware:
-                        # This is still not getting the instance.
-                        # Starlette's `Middleware` object wraps the class and options.
-                        # The actual instance is created when the ASGI app is built.
-                        logger.warning("SecurityMiddleware found, but direct initialization from startup event after using app.add_middleware(Class, ...) is complex. "
-                                       "The SecurityMiddleware should ideally handle its own async setup or be made available via app.state.")
-                        # Attempting a common pattern for such cases if the middleware supports it (it doesn't explicitly yet):
-                        if hasattr(app.state, 'security_middleware_instance') and \
-                           isinstance(app.state.security_middleware_instance, SecurityMiddleware):
-                           logger.info("Initializing SecurityMiddleware instance from app.state...")
-                           await app.state.security_middleware_instance.initialize()
-                           break
-                else:
-                    logger.warning("Could not reliably find SecurityMiddleware instance to initialize. Rate limiter Redis connection might not be active if it relies on this.")
+    # Initialize SecurityMiddleware if it was added and stored itself in app.state
+    if hasattr(app.state, 'security_middleware_instance') and \
+            isinstance(app.state.security_middleware_instance, SecurityMiddleware):
+        logger.info("Initializing SecurityMiddleware instance from app.state...")
+        await app.state.security_middleware_instance.initialize()
+    elif SecurityMiddleware: # If imported but not found in state (fallback warning)
+        logger.warning("SecurityMiddleware was imported but its instance was not found in app.state for initialization. Redis for rate limiting might not be connected.")
 
     # Start AgentFramework services (registration, heartbeats, LLM service init)
     await agent_framework.start_services()

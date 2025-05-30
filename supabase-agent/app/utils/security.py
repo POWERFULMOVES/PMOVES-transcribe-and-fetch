@@ -235,6 +235,9 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         if self.config.file_security_enabled:
             Path(config.quarantine_dir).mkdir(parents=True, exist_ok=True)
 
+        # Store instance on app.state for later initialization
+        app.state.security_middleware_instance = self
+
     async def initialize(self):
         """Initialize middleware components, particularly the rate limiter's Redis connection."""
         await self.rate_limiter.initialize()
