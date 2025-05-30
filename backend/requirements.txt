@@ -175,7 +175,7 @@ greenlet==3.2.2
     # via playwright
 groq==0.13.0
     # via pmoves-transcribe-and-fetch (pyproject.toml)
-h11==0.14.0
+h11==0.16.0
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   httpcore
@@ -347,7 +347,7 @@ pandas==2.2.3
     # via pmoves-transcribe-and-fetch (pyproject.toml)
 pdfkit==1.0.0
     # via pmoves-transcribe-and-fetch (pyproject.toml)
-pillow==10.4.0
+pillow==11.2.1
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   crawl4ai
@@ -594,7 +594,7 @@ tokenizers==0.21.0
     #   faster-whisper
     #   litellm
     #   transformers
-torch==2.5.1
+torch==2.7.0
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   torchaudio
