@@ -442,7 +442,39 @@ class PipecatAgentClient:
                 "litellm_url": os.getenv(
                     "LITELLM_PROXY_URL", "http://litellm-proxy:4000"
                 ),
+                # SupabaseAgent specific
+                "embedding_model": os.getenv("SUPABASE_AGENT_EMBEDDING_MODEL", "text-embedding-ada-002"),
+                # TranscribeAgent specific
+                "default_transcribe_provider": os.getenv("TRANSCRIBE_DEFAULT_PROVIDER", "groq"),
+                "transcribe_whisper_model_size": os.getenv("TRANSCRIBE_WHISPER_MODEL_SIZE", "base"),
+                "groq_transcription_model": os.getenv("TRANSCRIBE_GROQ_MODEL", "whisper-large-v3"),
+                "openai_transcription_model": os.getenv("TRANSCRIBE_OPENAI_MODEL", "whisper-1"),
+                "deepgram_transcription_model": os.getenv("TRANSCRIBE_DEEPGRAM_MODEL", "nova-2"),
+                # MultimodalAgent specific
+                "default_vision_provider": os.getenv("MULTIMODAL_DEFAULT_VISION_PROVIDER", "openai"),
+                "default_image_gen_provider": os.getenv("MULTIMODAL_DEFAULT_IMAGE_GEN_PROVIDER", "openai"),
+                "openai_vision_model": os.getenv("MULTIMODAL_OPENAI_VISION_MODEL", "gpt-4o"),
+                "anthropic_vision_model": os.getenv("MULTIMODAL_ANTHROPIC_VISION_MODEL", "claude-3-5-sonnet-20240620"),
+                "openai_image_gen_model": os.getenv("MULTIMODAL_OPENAI_IMAGE_GEN_MODEL", "dall-e-3"),
+                "stability_image_gen_model": os.getenv("MULTIMODAL_STABILITY_IMAGE_GEN_MODEL", "stable-diffusion-xl-base-1.0"),
+                "multimodal_whisper_model": os.getenv("MULTIMODAL_WHISPER_MODEL", "whisper-1"), # Renamed for clarity
+                "emotion_classification_model": os.getenv("MULTIMODAL_EMOTION_CLASSIFICATION_MODEL", "gpt-3.5-turbo"),
+                # Common for specialized agents if needed, or could be agent-specific
+                "max_file_size": int(os.getenv("AGENT_MAX_FILE_SIZE", str(100 * 1024 * 1024))), # General max file size
+                "temp_dir_base": os.getenv("AGENT_TEMP_DIR_BASE", "/tmp"), # Base for agent-specific temp dirs
             }
+            
+            # Adjust config keys to match Pydantic model fields in specialized agents
+            # For TranscribeAgent:
+            agent_config["whisper_model"] = agent_config.pop("transcribe_whisper_model_size") 
+            agent_config["default_provider"] = agent_config.pop("default_transcribe_provider")
+            
+            # For MultimodalAgent (some keys might be shared if names are identical like default_provider, handle carefully or make them unique)
+            # default_provider is used by Transcribe, so for Multimodal, ensure keys are distinct if passed in same dict
+            # The create_agent function in agents/__init__.py will select the correct config class.
+            # We need to ensure the keys in agent_config match the field names in those Pydantic models.
+            # For example, MultimodalConfig also has 'default_vision_provider', 'default_image_gen_provider'.
+            # The current structure passes all these keys; Pydantic will only pick what it needs.
 
             # Create specialized agent
             self.specialized_agent = create_agent(config["agent_type"], agent_config)
