@@ -4040,7 +4040,7 @@ if PROJECT_MODULES_LOADED:
             )
         except Exception as e:
             logger.warning(f"Failed to include search_config_router: {e}")
-            
+
 # --- Include Debug Endpoints ---
 try:
     from .debug_endpoints import router as debug_router

@@ -169,7 +169,7 @@ function useInfiniteQuery(props) {
     const currentStoreState = storeRef.current.getState();
     const propsFilters = props.filters || {};
     const propsSortOptions = props.sortOptions || { column: 'fetch_date', ascending: false };
-    
+
     console.log('[useInfiniteQuery] useEffect: Running. hasInitialFetch:', state.hasInitialFetch);
     console.log('[useInfiniteQuery] useEffect: Current props.filters:', JSON.stringify(propsFilters));
     console.log('[useInfiniteQuery] useEffect: Current store.currentFilters:', JSON.stringify(currentStoreState.currentFilters));

@@ -4,7 +4,7 @@ import logging
 import time
 
 logger = logging.getLogger(__name__) # Define logger at the top
-from datetime import datetime, timezone, timedelta 
+from datetime import datetime, timezone, timedelta
 from typing import Any, AsyncGenerator, Dict, List, Optional, Tuple, Union # Consolidated and sorted
 
 import httpx
@@ -249,7 +249,7 @@ class LLMRegistryService:
                      logger.error("Failed to fetch models from proxy and no fallback models available. Cache remains empty.")
                 else: # Subsequent fetch failed, keep stale cache
                      logger.warning("Failed to fetch models from proxy. Retaining stale cache.")
-                
+
                 # After updating self._cached_models, sync to Supabase
                 await self._sync_models_to_supabase(self._cached_models)
 
@@ -316,7 +316,7 @@ class LLMRegistryService:
             except Exception as e:
                 logger.error(f"Exception during Supabase upsert for model '{model.model_id}': {e}", exc_info=True)
                 error_count += 1
-        
+
         logger.info(f"Supabase sync completed. Successfully upserted: {upsert_count}, Errors: {error_count}")
 
 
@@ -338,7 +338,7 @@ class LLMRegistryService:
                     query = supabase_client.table("llm_models").select("*").eq("status", "active") # Only fetch active models
                     if provider_filter:
                         query = query.eq("provider", provider_filter)
-                    
+
                     # Correctly wrap the synchronous Supabase call
                     response = await asyncio.to_thread(query.execute)
 
@@ -349,7 +349,7 @@ class LLMRegistryService:
                                 # Convert capabilities from list of dicts to List[ModelCapability]
                                 capabilities_data = row.get("capabilities", [])
                                 parsed_capabilities = [ModelCapability(**cap_data) for cap_data in capabilities_data]
-                                
+
                                 # Prepare data for StandardizedLLM, handling potential missing fields
                                 model_data_for_pydantic = {
                                     "provider": row.get("provider"),
@@ -374,7 +374,7 @@ class LLMRegistryService:
                                 logger.error(f"Validation error converting Supabase row to StandardizedLLM for model_id '{row.get('model_id')}': {ve}", exc_info=True)
                             except Exception as e_row_parse:
                                 logger.error(f"Error parsing row from Supabase for model_id '{row.get('model_id')}': {e_row_parse}", exc_info=True)
-                        
+
                         if db_models:
                             logger.info(f"Successfully fetched {len(db_models)} models from Supabase.")
                             # Apply capability filter if present (provider filter was done in query)
@@ -401,9 +401,9 @@ class LLMRegistryService:
         logger.info("Falling back to in-memory cache for get_available_models.")
         if not self._cached_models:
             logger.warning("Model cache is empty. Consider running refresh_available_models() or checking logs.")
-            return list(self._fallback_models_loaded) 
+            return list(self._fallback_models_loaded)
 
-        models_to_return = list(self._cached_models) 
+        models_to_return = list(self._cached_models)
 
         if provider_filter: # Provider filter already applied if from Supabase
             models_to_return = [m for m in models_to_return if m.provider.lower() == provider_filter.lower()]
@@ -447,7 +447,7 @@ class LLMRegistryService:
                         row = response.data
                         capabilities_data = row.get("capabilities", [])
                         parsed_capabilities = [ModelCapability(**cap_data) for cap_data in capabilities_data]
-                        
+
                         model_data_for_pydantic = {
                             "provider": row.get("provider"),
                             "model_id": row.get("model_id"),
@@ -461,7 +461,7 @@ class LLMRegistryService:
                             "rate_limits": row.get("rate_limits")
                         }
                         model_data_for_pydantic_cleaned = {k:v for k,v in model_data_for_pydantic.items() if v is not None or k in StandardizedLLM.model_fields}
-                        
+
                         logger.info(f"Successfully fetched model details for '{model_id}' from Supabase.")
                         return StandardizedLLM(**model_data_for_pydantic_cleaned)
                 except ValidationError as ve:
@@ -472,13 +472,13 @@ class LLMRegistryService:
                  logger.debug(f"Supabase client not initialized. Falling back to cache for model '{model_id}'.")
         else:
             logger.debug(f"Supabase client not configured. Falling back to cache for model '{model_id}'.")
-        
+
         # Fallback to cache
         logger.info(f"Falling back to in-memory cache for model details of '{model_id}'.")
         for model in self._cached_models:
             if model.model_id == model_id:
                 return model
-        
+
         for model in self._fallback_models_loaded: # Check fallbacks if not in primary cache
             if model.model_id == model_id:
                 logger.warning(f"Model '{model_id}' found in fallback list but not in main cache during get_model_details.")

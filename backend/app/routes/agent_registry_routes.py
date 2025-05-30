@@ -60,7 +60,7 @@ async def list_registered_agents(
             query = query.eq("type", type_filter)
         if status_filter:
             query = query.eq("status", status_filter)
-        
+
         response = await asyncio.to_thread(
             query.limit(limit).offset(offset).execute
         )
@@ -132,7 +132,7 @@ async def update_agent_registration(
         # Ensure agent_id is not being changed to one that already exists if part of update
         # This is complex with unique constraints and might be better handled by DB error.
         # For simplicity, direct update is shown. DB will error on unique constraint violation for agent_id.
-        
+
         update_data = agent_update.model_dump(exclude_unset=True, exclude_none=True) # For partial updates
 
         response = await asyncio.to_thread(
@@ -147,10 +147,10 @@ async def update_agent_registration(
             )
             if not check_exists_response.data:
                 raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Agent with record ID '{agent_record_id}' not found.")
-            
+
             error_msg = response.error.message if response.error else "Update failed or resource not found"
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to update agent registration: {error_msg}")
-        
+
         return AgentRegistry(**response.data[0])
     except HTTPException:
         raise
@@ -188,7 +188,7 @@ async def delete_agent_registration(
         )
         if response.error:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete agent registration: {response.error.message}")
-        
+
         return None # No content
     except HTTPException:
         raise

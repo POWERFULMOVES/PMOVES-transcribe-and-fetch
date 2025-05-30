@@ -11,7 +11,7 @@ except ImportError:
     # Fallback for environments where this specific path might not be resolvable
     # during local development or testing outside the full app context.
     # In a real deployment, this path should be correct.
-    from psearchworking_export import get_client # type: ignore 
+    from psearchworking_export import get_client # type: ignore
 
 from ..models.system_models import AppConfiguration, AppConfigurationCreate
 
@@ -187,9 +187,9 @@ async def delete_configuration(
         # Delete doesn't typically return data in response.data for Supabase, check for error
         if response.error:
             raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to delete configuration: {response.error.message}")
-        
+
         # No content to return on successful delete
-        return None 
+        return None
     except HTTPException:
         raise
     except Exception as e:
