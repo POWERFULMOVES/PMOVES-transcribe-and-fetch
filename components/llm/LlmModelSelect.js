@@ -104,10 +104,10 @@ export default function LlmModelSelect({
               <Tooltip key={model.model_id}> {/* Use model.model_id as key */}
                 <TooltipTrigger asChild>
                   {/* SelectItem value is model.model_id */}
-                  <SelectItem 
-                    value={model.model_id} 
+                  <SelectItem
+                    value={model.model_id}
                     disabled={
-                      !model.model_id || 
+                      !model.model_id ||
                       (filterCapabilities && Array.isArray(filterCapabilities) && filterCapabilities.length > 0 &&
                        !(model.capabilities && Array.isArray(model.capabilities) && filterCapabilities.every(cap => model.capabilities.map(c => c.type).includes(cap)))
                       )
