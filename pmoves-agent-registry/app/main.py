@@ -1,5 +1,5 @@
 from fastapi import FastAPI, HTTPException
-from typing import List
+from typing import List, Optional # Added Optional
 from .schemas import AgentRegistration, AgentMetadata, AgentHeartbeat
 from .registry import agent_store
 from datetime import datetime
@@ -7,8 +7,18 @@ from datetime import datetime
 app = FastAPI(title="PMOVES Agent Registry Service")
 
 @app.get("/agents", response_model=List[AgentMetadata])
-def list_agents():
-    return agent_store.list()
+def list_agents(
+    capability: Optional[str] = None,
+    status: Optional[str] = None,
+    name: Optional[str] = None,
+    tag: Optional[str] = None,
+):
+    return agent_store.list(
+        capability=capability,
+        status=status,
+        name=name,
+        tag=tag
+    )
 
 @app.get("/agents/{agent_id}", response_model=AgentMetadata)
 def get_agent(agent_id: str):

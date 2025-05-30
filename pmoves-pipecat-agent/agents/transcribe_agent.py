@@ -81,6 +81,11 @@ class TranscribeConfig(BaseModel):
         default=5, description="Max concurrent transcription jobs"
     )
 
+    # Model configurations
+    groq_transcription_model: str = Field(default="whisper-large-v3", description="Groq model for transcription")
+    openai_transcription_model: str = Field(default="whisper-1", description="OpenAI model for transcription")
+    deepgram_transcription_model: str = Field(default="nova-2", description="Deepgram model for transcription")
+
 
 class TranscriptionRequest(BaseModel):
     """Transcription request model"""
@@ -619,7 +624,7 @@ class TranscribeAgent:
             # Prepare transcription parameters
             transcription_params = {
                 "file": (audio_path.name, audio_data, "audio/wav"),
-                "model": "whisper-large-v3",
+                "model": self.config.groq_transcription_model,
                 "response_format": "verbose_json",
                 "timestamp_granularities": ["segment"],
             }
@@ -668,7 +673,7 @@ class TranscribeAgent:
                 segments=segments,
                 full_text=full_text,
                 metadata={
-                    "model": "whisper-large-v3",
+                    "model": self.config.groq_transcription_model,
                     "file_size": len(audio_data),
                     "file_name": audio_path.name,
                 },
@@ -713,7 +718,7 @@ class TranscribeAgent:
             # Prepare transcription parameters
             transcription_params = {
                 "file": (audio_path.name, audio_data, "audio/wav"),
-                "model": "whisper-1",
+                "model": self.config.openai_transcription_model,
                 "response_format": "verbose_json",
                 "timestamp_granularities": ["segment"],
             }
@@ -762,7 +767,7 @@ class TranscribeAgent:
                 segments=segments,
                 full_text=full_text,
                 metadata={
-                    "model": "whisper-1",
+                    "model": self.config.openai_transcription_model,
                     "file_size": len(audio_data),
                     "file_name": audio_path.name,
                 },
@@ -800,7 +805,7 @@ class TranscribeAgent:
             }
 
             params = {
-                "model": "nova-2",
+                "model": self.config.deepgram_transcription_model,
                 "smart_format": "true",
                 "punctuate": "true",
                 "diarize": "true" if request.enable_diarization else "false",
@@ -882,7 +887,7 @@ class TranscribeAgent:
                 full_text=full_text,
                 speakers=speakers,
                 metadata={
-                    "model": "nova-2",
+                    "model": self.config.deepgram_transcription_model,
                     "file_size": len(audio_data),
                     "file_name": audio_path.name,
                     "deepgram_metadata": metadata,

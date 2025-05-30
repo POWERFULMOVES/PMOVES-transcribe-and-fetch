@@ -42,6 +42,7 @@ class SupabaseConfig(BaseModel):
     max_query_size: int = Field(
         default=10000, description="Max query size in characters"
     )
+    embedding_model: str = Field(default="text-embedding-ada-002", description="Default model for text embeddings.")
 
 
 class DatabaseQuery(BaseModel):
@@ -582,7 +583,7 @@ class SupabaseAgent:
                     response = await client.post(
                         f"{litellm_url}/embeddings",
                         json={
-                            "model": "text-embedding-ada-002",
+                            "model": self.config.embedding_model,
                             "input": text[:8000],
                         },  # Limit text length
                         headers={

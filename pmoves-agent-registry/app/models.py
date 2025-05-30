@@ -1,10 +1,13 @@
 import os
 import json
+import logging # Added
 from typing import Dict, Optional, List
 from supabase import create_client, Client
 from supabase.lib.client_options import PostgrestAPIError # For error handling
 from .schemas import AgentMetadata, AgentRegistration
 from datetime import datetime
+
+logger = logging.getLogger(__name__) # Added
 
 # Supabase Table Schema for 'agents' table
 # CREATE TABLE public.agents (
@@ -48,8 +51,7 @@ class AgentStore:
         try:
             self.db: Client = create_client(self.supabase_url, self.supabase_key)
         except Exception as e:
-            # Log error appropriately in a real application
-            print(f"Error initializing Supabase client: {e}")
+            logger.error("Error initializing Supabase client: %s", e, exc_info=True) # Modified
             raise
 
     def _serialize_agent_data(self, agent_data: dict) -> dict:
@@ -70,9 +72,8 @@ class AgentStore:
                 try:
                     data[field] = json.loads(data[field])
                 except json.JSONDecodeError:
-                    # Keep as string if not valid JSON, or handle error
-                    print(f"Warning: Could not decode JSON for field {field} for agent {data.get('agent_id')}")
-                    pass # Or set to None, or raise error
+                    logger.warning("Could not decode JSON for field %s for agent %s", field, data.get('agent_id')) # Modified
+                    pass 
         if 'last_heartbeat' in data and isinstance(data['last_heartbeat'], str):
             data['last_heartbeat'] = datetime.fromisoformat(data['last_heartbeat'])
         return data
@@ -91,14 +92,13 @@ class AgentStore:
             response = self.db.table("agents").upsert(data_to_insert).execute()
             if response.data:
                 return AgentMetadata(**self._deserialize_agent_data(response.data[0]))
-            # Handle cases where response.data might be empty or indicate an error not caught by PostgrestAPIError
-            print(f"Warning: Supabase upsert for agent {reg.agent_id} returned no data or an unexpected response: {response}")
+            logger.warning("Supabase upsert for agent %s returned no data or an unexpected response: %s", reg.agent_id, response) # Modified
             return None
         except PostgrestAPIError as e:
-            print(f"Error registering agent {reg.agent_id}: {e.message}")
+            logger.error("Error registering agent %s: %s", reg.agent_id, getattr(e, 'message', str(e)), exc_info=True) # Modified
             return None
         except Exception as e:
-            print(f"An unexpected error occurred during agent registration {reg.agent_id}: {e}")
+            logger.error("Unexpected error during agent registration %s: %s", reg.agent_id, e, exc_info=True) # Modified
             return None
 
     def get(self, agent_id: str) -> Optional[AgentMetadata]:
@@ -108,23 +108,54 @@ class AgentStore:
                 return AgentMetadata(**self._deserialize_agent_data(response.data[0]))
             return None
         except PostgrestAPIError as e:
-            print(f"Error fetching agent {agent_id}: {e.message}")
+            logger.error("Error fetching agent %s: %s", agent_id, getattr(e, 'message', str(e)), exc_info=True) # Modified
             return None
         except Exception as e:
-            print(f"An unexpected error occurred while fetching agent {agent_id}: {e}")
+            logger.error("Unexpected error while fetching agent %s: %s", agent_id, e, exc_info=True) # Modified
             return None
 
-    def list(self) -> List[AgentMetadata]:
+    def list(
+        self,
+        capability: Optional[str] = None,
+        status: Optional[str] = None,
+        name: Optional[str] = None,
+        tag: Optional[str] = None,
+    ) -> List[AgentMetadata]:
         try:
-            response = self.db.table("agents").select("*").execute()
+            query = self.db.table("agents").select("*")
+
+            if capability:
+                # Assumes 'capabilities' is a JSONB array of strings.
+                # Supabase/PostgREST `cs` operator means "contains specified element(s)".
+                # For a single string element in a JSON array: capabilities.cs."element"
+                # The Python client might represent this as: .cs("capabilities", f'{{"{capability}"}}') if it expects a JSON literal
+                # or more simply if it handles string elements in arrays directly.
+                # Given the schema comments (List[str]), `cs` with the direct string value is likely correct.
+                query = query.cs("capabilities", capability)
+
+            if status:
+                query = query.eq("status", status)
+
+            if name:
+                # Use 'ilike' for case-insensitive partial match (e.g., %name%)
+                query = query.ilike("name", f"%{name}%")
+
+            if tag:
+                # Assumes 'tags' is a JSONB array of strings
+                query = query.cs("tags", tag)
+            
+            response = query.execute()
+
             if response.data:
                 return [AgentMetadata(**self._deserialize_agent_data(agent_data)) for agent_data in response.data]
             return []
         except PostgrestAPIError as e:
-            print(f"Error listing agents: {e.message}")
+            # Replace print with structured logging later
+            logger.error("Error listing agents with filters: %s", getattr(e, 'message', str(e)), exc_info=True) # Modified
             return []
         except Exception as e:
-            print(f"An unexpected error occurred while listing agents: {e}")
+            # Replace print with structured logging later
+            logger.error("Unexpected error while listing agents with filters: %s", e, exc_info=True) # Modified
             return []
 
     def heartbeat(self, agent_id: str, timestamp: datetime) -> Optional[AgentMetadata]:
@@ -142,16 +173,16 @@ class AgentStore:
             # For now, if no data, means agent likely not found or update failed silently for some reason.
             existing_agent = self.get(agent_id)
             if not existing_agent:
-                 print(f"Warning: Heartbeat for non-existent agent {agent_id}.")
+                 logger.warning("Heartbeat for non-existent agent %s.", agent_id) # Modified
                  return None
             # If agent exists but update returned no data, this is unusual.
-            print(f"Warning: Supabase heartbeat update for agent {agent_id} returned no data. Current data: {existing_agent}")
+            logger.warning("Supabase heartbeat update for agent %s returned no data. Current data: %s", agent_id, existing_agent) # Modified
             return existing_agent # Return current state if update had issues but agent exists
         except PostgrestAPIError as e:
-            print(f"Error updating heartbeat for agent {agent_id}: {e.message}")
+            logger.error("Error updating heartbeat for agent %s: %s", agent_id, getattr(e, 'message', str(e)), exc_info=True) # Modified
             return None
         except Exception as e:
-            print(f"An unexpected error occurred during heartbeat for agent {agent_id}: {e}")
+            logger.error("Unexpected error during heartbeat for agent %s: %s", agent_id, e, exc_info=True) # Modified
             return None
 
     def deregister(self, agent_id: str) -> bool:
@@ -164,11 +195,11 @@ class AgentStore:
             # If no data, it might mean the agent_id didn't exist.
             # To be certain, we can check if it exists first, but that's an extra query.
             # For now, if response.data is empty, assume it was not found or already deleted.
-            # print(f"Info: Deregister agent {agent_id}: Agent not found or already deleted. Response: {response}")
+            # logger.info("Deregister agent %s: Agent not found or already deleted. Response: %s", agent_id, response) # Example of an info log
             return False
         except PostgrestAPIError as e:
-            print(f"Error deregistering agent {agent_id}: {e.message}")
+            logger.error("Error deregistering agent %s: %s", agent_id, getattr(e, 'message', str(e)), exc_info=True) # Modified
             return False
         except Exception as e:
-            print(f"An unexpected error occurred during deregistration of agent {agent_id}: {e}")
+            logger.error("Unexpected error during deregistration of agent %s: %s", agent_id, e, exc_info=True) # Modified
             return False

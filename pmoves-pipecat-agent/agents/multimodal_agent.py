@@ -86,6 +86,14 @@ class MultimodalConfig(BaseModel):
     rate_limit_requests: int = Field(default=30, description="Requests per minute")
     max_concurrent_jobs: int = Field(default=3, description="Max concurrent jobs")
 
+    # Model configurations
+    openai_vision_model: str = Field(default="gpt-4o", description="OpenAI model for vision analysis")
+    anthropic_vision_model: str = Field(default="claude-3-5-sonnet-20240620", description="Anthropic model for vision analysis")
+    openai_image_gen_model: str = Field(default="dall-e-3", description="OpenAI model for image generation")
+    stability_image_gen_model: str = Field(default="stable-diffusion-xl-base-1.0", description="Stability AI model for image generation")
+    whisper_model_transcription: str = Field(default="whisper-1", description="Whisper model for audio transcription by multimodal agent")
+    emotion_classification_model: str = Field(default="gpt-3.5-turbo", description="Model for emotion/classification tasks")
+
 
 class VisionRequest(BaseModel):
     """Vision analysis request model"""

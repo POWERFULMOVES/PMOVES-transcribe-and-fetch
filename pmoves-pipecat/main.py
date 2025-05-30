@@ -42,17 +42,32 @@ try:
     from pipecat.transports.services.websocket import WebsocketTransport
     from pipecat.processors.aggregators.llm_response import LLMResponseAggregator
     from pipecat.processors.aggregators.sentence import SentenceAggregator
+    from pipecat.processors.frameworks.processor import FrameProcessor
+    from pipecat.pipeline.frames import FrameDirection
 
     print("[INFO] Pipecat core imports successful")
 except ImportError as e:
     print(f"[WARNING] Pipecat imports failed: {e}")
 
+
+# Attempt to import LiteLLMPipecatService and related backend services
+try:
+    from src.pipecat.services.litellm_service import LiteLLMPipecatService
+    from backend.app.utils.llm_registry_service import LLMRegistryService
+    print("[INFO] LiteLLMPipecatService and LLMRegistryService imported.")
+except ImportError as e:
+    LiteLLMPipecatService = None
+    LLMRegistryService = None
+    print(f"[WARNING] Failed to import LiteLLMPipecatService or LLMRegistryService: {e}")
+
+
 # LiteLLM integration
 try:
     import litellm
-    from litellm import completion
-
-    print("[INFO] LiteLLM integration available")
+    # from litellm import completion # completion is not directly used, Router is.
+    if not hasattr(litellm, 'Router'):
+        print("[WARNING] litellm.Router not available, LiteLLM integration might be limited.")
+    print("[INFO] LiteLLM integration components available")
 except ImportError:
     litellm = None
     print("[WARNING] LiteLLM not available")
@@ -113,16 +128,21 @@ config = load_config()
 
 # Agent management with multimodal capabilities
 class AgentInstance:
-    def __init__(self, agent_id: str, agent_type: str, agent_config: Dict[str, Any]):
+    def __init__(self, agent_id: str, agent_type: str, agent_config: Dict[str, Any], 
+                 llm_registry_service: Optional[Any] = None, 
+                 litellm_router: Optional[Any] = None):
         self.agent_id = agent_id
         self.agent_type = agent_type
         self.config = agent_config
+        self.llm_registry_service = llm_registry_service
+        self.litellm_router = litellm_router
         self.pipeline: Optional[Pipeline] = None
         self.runner: Optional[PipelineRunner] = None
         self.transport: Optional[Any] = None
         self.websocket_connections: List[WebSocket] = []
         self.status = "initializing"
         self.capabilities = self._determine_capabilities()
+        self.output_queue = asyncio.Queue()
 
     def _determine_capabilities(self) -> List[str]:
         """Determine agent capabilities based on type and available services"""
@@ -152,14 +172,26 @@ class AgentInstance:
             # Create services based on capabilities
             services = []
 
-            # LLM Service (via LiteLLM)
-            if litellm:
-                # This would be a custom LiteLLM service for Pipecat
-                # For now, we'll use OpenAI as fallback
-                llm_service = OpenAILLMService(
-                    api_key=os.getenv("OPENAI_API_KEY", ""), model="gpt-4o"
+            # LLM Service (using LiteLLMPipecatService)
+            if LiteLLMPipecatService and self.llm_registry_service and self.litellm_router:
+                preferred_model_alias = self.config.get("llm_model_alias", "gpt-4o-mini") # Default model
+                llm_service = LiteLLMPipecatService(
+                    llm_registry_service=self.llm_registry_service,
+                    litellm_router=self.litellm_router,
+                    preferred_model_alias=preferred_model_alias
                 )
                 services.append(llm_service)
+                print(f"[INFO] LiteLLMPipecatService configured for agent {self.agent_id} with model {preferred_model_alias}")
+            elif litellm: # Fallback to OpenAI if custom service or its deps are missing
+                print(f"[WARNING] LiteLLMPipecatService not available or not configured for agent {self.agent_id}. Falling back to OpenAILLMService.")
+                llm_service = OpenAILLMService(
+                    api_key=os.getenv("OPENAI_API_KEY", "YOUR_OPENAI_API_KEY"), # Ensure a default key or handle missing
+                    model=self.config.get("llm_model_alias", "gpt-4o-mini") # Use alias or default
+                )
+                services.append(llm_service)
+            else:
+                print(f"[ERROR] No LLM service configured for agent {self.agent_id}")
+
 
             # TTS Service
             if config.elevenlabs_api_key and "tts" in self.capabilities:
@@ -176,6 +208,9 @@ class AgentInstance:
 
             # Aggregators
             services.extend([SentenceAggregator(), LLMResponseAggregator()])
+            
+            # Add custom output processor
+            services.append(OutputQueueProcessor(self.output_queue))
 
             # Create pipeline
             pipeline = Pipeline(services)
@@ -256,38 +291,119 @@ class AgentInstance:
         except Exception as e:
             print(f"[ERROR] Failed to stop agent {self.agent_id}: {e}")
 
-    async def process_frame(self, frame: Frame) -> Optional[Frame]:
-        """Process a frame through the agent's pipeline"""
-        if self.pipeline and self.runner:
-            try:
-                # This would be implemented based on Pipecat's frame processing
-                return frame
-            except Exception as e:
-                print(f"[ERROR] Frame processing failed for agent {self.agent_id}: {e}")
-        return None
+    async def process_frame(self, frame: Frame) -> Optional[TextFrame]:
+        """Process a frame through the agent's pipeline and get a single TextFrame response."""
+        if not self.pipeline:
+            print(f"[ERROR] Pipeline not available for agent {self.agent_id}")
+            return TextFrame(text="Error: Pipeline not available")
+
+        try:
+            # Ensure the queue is empty before processing a new frame
+            while not self.output_queue.empty():
+                self.output_queue.get_nowait()
+
+            # Push the frame into the pipeline for processing.
+            # The direction is DOWNSTREAM as it's going from the client into the pipeline.
+            await self.pipeline.process_frame(frame, FrameDirection.DOWNSTREAM)
+
+            # Wait for the OutputQueueProcessor to put the result into the queue.
+            # This assumes the pipeline produces a single TextFrame as a result.
+            processed_frame = await asyncio.wait_for(self.output_queue.get(), timeout=30.0)  # 30s timeout
+
+            if isinstance(processed_frame, TextFrame):
+                return processed_frame
+            else:
+                print(f"[WARNING] Unexpected output frame type for agent {self.agent_id}: {type(processed_frame)}")
+                return TextFrame(text=f"Error: Unexpected output type: {type(processed_frame)}")
+
+        except asyncio.TimeoutError:
+            print(f"[ERROR] Frame processing timed out for agent {self.agent_id}")
+            return TextFrame(text="Error: Processing timed out")
+        except Exception as e:
+            print(f"[ERROR] Frame processing in pipeline failed for agent {self.agent_id}: {e}")
+            return TextFrame(text=f"Error: {str(e)}")
+
+
+# Custom FrameProcessor to capture output frames
+class OutputQueueProcessor(FrameProcessor):
+    def __init__(self, queue: asyncio.Queue):
+        super().__init__()
+        self.queue = queue
+
+    async def process_frame(self, frame: Frame, direction: FrameDirection):
+        await super().process_frame(frame, direction)
+        # Capture TextFrames moving UPSTREAM (i.e., results from the pipeline)
+        if isinstance(frame, TextFrame) and direction == FrameDirection.UPSTREAM:
+            await self.queue.put(frame)
+        
+        # Always push the frame so it continues through the pipeline if needed (e.g. to a transport)
+        # However, for this specific request-response, we capture and stop it here via the queue.
+        # If this processor is the absolute last, pushing is more for standard pipeline completion.
+        # If other sinks/transports rely on this, ensure frame continues.
+        # For now, we assume this is the primary mechanism for getting the response for process_frame.
+        # To prevent frames from going to a transport if this is a direct call,
+        # this processor might conditionally not push, or be added only for such calls.
+        # For simplicity, let's assume it pushes, and the WebsocketTransport (if active)
+        # would also get it but process_frame gets its copy first.
+        await self.push_frame(frame, direction)
 
 
 class PipecatOrchestrator:
     def __init__(self):
         self.agents: Dict[str, AgentInstance] = {}
-        self.litellm_client = None
+        self.litellm_client = None # This might be redundant if router is primary interaction point
         self.supabase_client = None
         self.realtime_client = None
         self.chat_channels: Dict[str, Any] = {}
+        self.llm_registry_service = None
+        self.litellm_router = None
 
     async def initialize(self):
         """Initialize the orchestrator"""
-        # Initialize LiteLLM client
-        if litellm:
+        # Initialize LLMRegistryService
+        if LLMRegistryService:
             try:
-                # Configure LiteLLM to use the proxy
-                litellm.api_base = config.litellm_proxy_url
-                self.litellm_client = litellm
-                print(
-                    f"[INFO] LiteLLM client initialized with proxy: {config.litellm_proxy_url}"
-                )
+                # The base URL for LLMRegistryService should be the backend app's URL
+                # Example: "http://backend:8000" if agent_registry_url is "http://backend:8000/agents"
+                backend_base_url = config.agent_registry_url.rsplit('/', 1)[0] if '/agents' in config.agent_registry_url else config.agent_registry_url
+                self.llm_registry_service = LLMRegistryService(base_url=backend_base_url)
+                print(f"[INFO] LLMRegistryService initialized with base_url: {backend_base_url}")
             except Exception as e:
-                print(f"[ERROR] Failed to initialize LiteLLM client: {e}")
+                print(f"[ERROR] Failed to initialize LLMRegistryService: {e}")
+        else:
+            print("[WARNING] LLMRegistryService not available.")
+
+        # Initialize LiteLLM Router
+        if litellm and hasattr(litellm, 'Router'):
+            try:
+                # Basic model list - ideally fetched from LLMRegistryService or config
+                # Ensure this list is compatible with how LiteLLMPipecatService expects to find models via router
+                example_model_list = [{
+                    "model_name": "gpt-4o-mini", # This is an alias LiteLLMPipecatService will use
+                    "litellm_params": {          # Params LiteLLM Router uses to call the model
+                        "model": "gpt-4o-mini",  # Actual model identifier for LiteLLM
+                        # "api_base": config.litellm_proxy_url, # Proxy URL for this specific model
+                        # "api_key": os.getenv("OPENAI_API_KEY") # Specific key if needed, else proxy handles
+                    }
+                }]
+                # Router can be configured to use the proxy globally or per model.
+                # If all models go via the same proxy, setting litellm.api_base might be enough.
+                # However, LiteLLMPipecatService is designed to work with a router that has models from potentially multiple sources.
+                
+                self.litellm_router = litellm.Router(
+                    model_list=example_model_list, # Populated dynamically in a real scenario
+                    # Fallbacks can be configured here if needed
+                    routing_strategy="simple-shuffle", # Or another strategy
+                    # set_verbose=True # For debugging router behavior
+                )
+                # Set the general api_base for litellm to use the proxy for any calls not specifying it.
+                litellm.api_base = config.litellm_proxy_url 
+                self.litellm_client = litellm # Keep for direct calls if any, or phase out
+                print(f"[INFO] LiteLLM Router initialized. Global api_base: {config.litellm_proxy_url}")
+            except Exception as e:
+                print(f"[ERROR] Failed to initialize LiteLLM Router: {e}")
+        else:
+            print("[WARNING] LiteLLM Router not available.")
 
         # Initialize Supabase client
         if config.supabase_url and config.supabase_key:
@@ -404,7 +520,13 @@ class PipecatOrchestrator:
             raise HTTPException(status_code=429, detail="Maximum agents reached")
 
         agent_id = f"{agent_type}_{len(self.agents) + 1}"
-        agent = AgentInstance(agent_id, agent_type, agent_config)
+        agent = AgentInstance(
+            agent_id, 
+            agent_type, 
+            agent_config,
+            llm_registry_service=self.llm_registry_service,
+            litellm_router=self.litellm_router
+        )
 
         await agent.start()
         self.agents[agent_id] = agent
@@ -523,7 +645,8 @@ async def health():
         "service": "pmoves-pipecat-core",
         "agents_count": len(orchestrator.agents),
         "max_agents": config.max_agents,
-        "litellm_available": orchestrator.litellm_client is not None,
+        "litellm_router_available": orchestrator.litellm_router is not None,
+        "llm_registry_service_available": orchestrator.llm_registry_service is not None,
         "supabase_available": orchestrator.supabase_client is not None,
         "realtime_available": orchestrator.realtime_client is not None,
         "a2a_available": a2a is not None,
@@ -602,16 +725,34 @@ async def send_chat_message(request: ChatMessageRequest):
 
 @app.get("/models")
 async def list_models():
-    """List available models from LiteLLM"""
-    if not orchestrator.litellm_client:
-        raise HTTPException(status_code=503, detail="LiteLLM not available")
+    """List available models from LiteLLM (via Router or direct proxy call if router not specific)"""
+    if orchestrator.litellm_router and orchestrator.litellm_router.get_model_names:
+        # This gets model names known to the router instance
+        # Note: get_model_names() might not be an async method.
+        # Also, this returns aliases, not necessarily full model info.
+        # For full info as provided by /models endpoint of proxy, direct call is better.
+        # return {"router_models": orchestrator.litellm_router.get_model_names()}
+        pass # Fall through to direct proxy call for more complete info for now
 
+    # Fallback or preferred method: query the LiteLLM proxy's /models endpoint
+    if not config.litellm_proxy_url:
+        raise HTTPException(status_code=503, detail="LiteLLM proxy URL not configured")
+    
     try:
         async with httpx.AsyncClient() as client:
-            response = await client.get(f"{config.litellm_proxy_url}/models")
+            # Preferentially use the router's /models endpoint if it has one,
+            # or the general proxy /models endpoint.
+            # For now, directly query the proxy as before.
+            models_url = f"{config.litellm_proxy_url.rstrip('/')}/models"
+            response = await client.get(models_url)
+            response.raise_for_status() # Raise an exception for bad status codes
             return response.json()
+    except httpx.RequestError as e:
+        raise HTTPException(status_code=503, detail=f"Failed to connect to LiteLLM proxy: {e}")
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(status_code=e.response.status_code, detail=f"Error from LiteLLM proxy: {e.response.text}")
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch models: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to fetch models: {str(e)}")
 
 
 # WebSocket endpoint for agent communication
@@ -646,27 +787,56 @@ async def websocket_endpoint(websocket: WebSocket, agent_id: str):
                     frame = TextFrame(text=data)
 
                 # Process through agent pipeline
-                response_frame = await agent.process_frame(frame)
+                response_frame = await agent.process_frame(frame) # Ensure this is awaited
 
-                if response_frame:
+                if response_frame and isinstance(response_frame, TextFrame):
                     response_data = {
-                        "type": response_frame.__class__.__name__.lower().replace(
-                            "frame", ""
-                        ),
+                        "type": "text", # We expect TextFrame back
                         "agent_id": agent_id,
-                        "data": response_frame.text
-                        if hasattr(response_frame, "text")
-                        else str(response_frame),
+                        "data": response_frame.text,
+                    }
+                    await websocket.send_text(json.dumps(response_data))
+                elif response_frame: # Some other frame type, or error frame
+                     response_data = {
+                        "type": response_frame.__class__.__name__.lower().replace("frame",""),
+                        "agent_id": agent_id,
+                        "data": response_frame.text if hasattr(response_frame, "text") else "Error: Non-text response or error processing frame",
+                     }
+                     await websocket.send_text(json.dumps(response_data))
+                else: # No response_frame
+                    response_data = {
+                        "type": "error",
+                        "agent_id": agent_id,
+                        "data": "Error: No response from agent processing",
                     }
                     await websocket.send_text(json.dumps(response_data))
 
-            except json.JSONDecodeError:
-                # Handle plain text
-                frame = TextFrame(text=data)
-                response_frame = await agent.process_frame(frame)
 
-                if response_frame:
-                    await websocket.send_text(f"Agent {agent_id} processed: {data}")
+            except json.JSONDecodeError:
+                # Handle plain text if JSON decoding fails
+                frame = TextFrame(text=data)
+                response_frame = await agent.process_frame(frame) # Ensure this is awaited
+
+                if response_frame and isinstance(response_frame, TextFrame):
+                    # For plain text, we can send back a simpler response or wrap it like JSON
+                    await websocket.send_text(json.dumps({
+                        "type": "text",
+                        "agent_id": agent_id,
+                        "data": response_frame.text
+                    }))
+                elif response_frame:
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "agent_id": agent_id,
+                        "data": response_frame.text if hasattr(response_frame, "text") else "Error: Non-text response or error processing frame"
+                    }))
+                else:
+                    await websocket.send_text(json.dumps({
+                        "type": "error",
+                        "agent_id": agent_id,
+                        "data": f"Agent {agent_id} processed plain text but no TextFrame response."
+                    }))
+
 
     except WebSocketDisconnect:
         print(f"[INFO] WebSocket disconnected for agent {agent_id}")
