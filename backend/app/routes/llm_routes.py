@@ -6,7 +6,7 @@ from fastapi.responses import StreamingResponse # Added for TTS
 from pydantic import BaseModel, Field, HttpUrl
 
 import httpx # Added for making HTTP requests (still needed for error types)
-from ..utils.llm_registry_service import get_llm_registry_service, LLMRegistryService
+from ..utils.llm_registry_service import get_llm_registry_service, LLMRegistryService, StandardizedLLM
 
 # Imports for Tool Calling API Endpoints
 from ..services.tool_calling.tool_schema_manager import ToolSchemaManager
@@ -268,13 +268,13 @@ async def get_llm_status():
     """
     return {"status": "LLM routes are active"}
 
-@router.get("/models", response_model=List[Dict[str, Any]], tags=["LLM Endpoints", "LLM Registry"])
+@router.get("/models", response_model=List[StandardizedLLM], tags=["LLM Endpoints", "LLM Registry"])
 async def get_registered_models(
     llm_registry: LLMRegistryService = Depends(get_llm_registry_service)
 ):
     """
     Get the list of available (registered and cached) LLM models.
-    Each model entry is a dictionary conforming to the StandardizedLLM Pydantic model.
+    Each model entry is a StandardizedLLM Pydantic model.
     """
     try:
         models = await llm_registry.get_available_models()
@@ -285,7 +285,7 @@ async def get_registered_models(
             # Return empty list, or could raise HTTPException 404 if preferred.
             # For a model list, an empty list is often a valid response.
             return []
-        return [model.model_dump() for model in models] # Convert each model to a dict
+        return models
     except Exception as e:
         logger.error(f"Error retrieving models from LLMRegistryService: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail="Failed to retrieve LLM models from the registry.")
