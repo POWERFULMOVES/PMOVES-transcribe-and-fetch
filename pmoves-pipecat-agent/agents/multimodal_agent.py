@@ -786,7 +786,7 @@ class MultimodalAgent:
             # Use LiteLLM proxy for OpenAI requests
             async with httpx.AsyncClient(timeout=60.0) as client:
                 payload = {
-                    "model": "gpt-4o",
+                    "model": self.config.openai_vision_model,
                     "messages": [
                         {
                             "role": "user",
@@ -835,7 +835,7 @@ class MultimodalAgent:
                         provider="openai",
                         generated_content=content,
                         metadata={
-                            "model": "gpt-4o",
+                            "model": self.config.openai_vision_model,
                             "tokens_used": result_data.get("usage", {}).get(
                                 "total_tokens", 0
                             ),
@@ -875,7 +875,7 @@ class MultimodalAgent:
             # Use LiteLLM proxy for Anthropic requests
             async with httpx.AsyncClient(timeout=60.0) as client:
                 payload = {
-                    "model": "claude-3-5-sonnet-20241022",
+                    "model": self.config.anthropic_vision_model,
                     "messages": [
                         {
                             "role": "user",
@@ -925,7 +925,7 @@ class MultimodalAgent:
                         provider="anthropic",
                         generated_content=content,
                         metadata={
-                            "model": "claude-3-5-sonnet-20241022",
+                            "model": self.config.anthropic_vision_model,
                             "tokens_used": result_data.get("usage", {}).get(
                                 "total_tokens", 0
                             ),
@@ -995,7 +995,7 @@ class MultimodalAgent:
             # Use LiteLLM proxy for OpenAI requests
             async with httpx.AsyncClient(timeout=120.0) as client:
                 payload = {
-                    "model": "dall-e-3",
+                    "model": self.config.openai_image_gen_model,
                     "prompt": request.prompt,
                     "size": request.size,
                     "quality": request.quality,
@@ -1047,7 +1047,7 @@ class MultimodalAgent:
                         provider="openai",
                         file_path=str(image_path),
                         metadata={
-                            "model": "dall-e-3",
+                            "model": self.config.openai_image_gen_model,
                             "size": request.size,
                             "quality": request.quality,
                             "revised_prompt": result_data["data"][0].get(
@@ -1089,7 +1089,7 @@ class MultimodalAgent:
 
             # Prepare request data for Stability AI
             generation_data = {
-                "model": "stable-diffusion-xl-base-1.0",
+                "model": self.config.stability_image_gen_model,
                 "prompt": request.prompt,
                 "width": width,
                 "height": height,
@@ -1174,11 +1174,11 @@ class MultimodalAgent:
                                 "negative_prompt": request.negative_prompt,
                                 "size": f"{width}x{height}",
                                 "style": request.style,
-                                "model": "stable-diffusion-xl-base-1.0",
+                                "model": self.config.stability_image_gen_model,
                             },
                             metadata={
                                 "provider": "stability",
-                                "model": "stable-diffusion-xl-base-1.0",
+                                "model": self.config.stability_image_gen_model,
                                 "generation_params": generation_data,
                                 "image_count": len(generated_images),
                             },
@@ -1333,7 +1333,7 @@ class MultimodalAgent:
                 with open(audio_path, "rb") as audio_file:
                     files = {"file": (audio_path.name, audio_file, "audio/wav")}
                     data = {
-                        "model": "whisper-1",
+                        "model": self.config.whisper_model_transcription,
                         "response_format": "json",
                         "language": "en",
                     }
@@ -1369,7 +1369,7 @@ class MultimodalAgent:
                             metadata={
                                 "audio_file": str(audio_path),
                                 "file_size": audio_path.stat().st_size,
-                                "model": "whisper-1",
+                                "model": self.config.whisper_model_transcription,
                             },
                         )
                     else:
@@ -1444,7 +1444,7 @@ class MultimodalAgent:
                 response = await client.post(
                     f"{self.config.litellm_url}/v1/chat/completions",
                     json={
-                        "model": "gpt-3.5-turbo",
+                        "model": self.config.emotion_classification_model,
                         "messages": [
                             {
                                 "role": "system",
@@ -1489,7 +1489,7 @@ class MultimodalAgent:
                                 "file_size": audio_path.stat().st_size,
                             },
                         },
-                        metadata={"model": "gpt-3.5-turbo", "analysis_type": "emotion"},
+                        metadata={"model": self.config.emotion_classification_model, "analysis_type": "emotion"},
                     )
                 else:
                     error_msg = f"Emotion analysis failed: {response.status_code}"
@@ -1588,7 +1588,7 @@ class MultimodalAgent:
                 response = await client.post(
                     f"{self.config.litellm_url}/v1/chat/completions",
                     json={
-                        "model": "gpt-3.5-turbo",
+                        "model": self.config.emotion_classification_model,
                         "messages": [
                             {
                                 "role": "system",
@@ -1639,7 +1639,7 @@ class MultimodalAgent:
                             },
                         },
                         metadata={
-                            "model": "gpt-3.5-turbo",
+                            "model": self.config.emotion_classification_model,
                             "analysis_type": "classification",
                         },
                     )
