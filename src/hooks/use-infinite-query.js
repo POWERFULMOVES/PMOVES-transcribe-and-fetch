@@ -151,6 +151,26 @@ const initialState = {
   currentSortOptions: { column: 'fetch_date', ascending: false },
 }
 
+/**
+ * React hook for infinite scrolling data fetching from a Supabase table with filtering, sorting, and pagination.
+ *
+ * Initializes and manages a store that handles fetching, deduplication, and state management for infinite queries. Automatically re-creates the store and re-initializes data when core query parameters, filters, or sort options change. Ensures state synchronization with React components and avoids hydration errors by initializing with an empty state.
+ *
+ * @param {Object} props - Query configuration, including `tableName`, `columns`, `pageSize`, optional `filters`, `sortOptions`, and an optional `trailingQuery` function.
+ * @returns {Object} An object containing:
+ *   - `data`: Array of fetched data.
+ *   - `count`: Total number of items matching the filters.
+ *   - `isSuccess`: Whether the last fetch was successful.
+ *   - `isLoading`: Whether the initial fetch is in progress.
+ *   - `isFetching`: Whether a fetch is currently in progress.
+ *   - `error`: Any error encountered during fetching.
+ *   - `hasMore`: Whether more data can be fetched.
+ *   - `fetchNextPage`: Function to fetch the next page of data.
+ *   - `initialize`: Function to reinitialize the store with new or existing props.
+ *
+ * @remark
+ * The hook automatically re-creates the internal store and re-fetches data when `tableName`, `columns`, `pageSize`, `filters`, or `sortOptions` change. Deduplication is performed by `id` to prevent duplicate entries.
+ */
 function useInfiniteQuery(props) {
   // Initialize storeRef with props including filters and sortOptions
   const storeRef = useRef(createStore({
