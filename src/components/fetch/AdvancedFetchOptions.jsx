@@ -28,6 +28,7 @@ import { InfoCircledIcon } from '@radix-ui/react-icons'; // Or any other suitabl
 import ExtractionStrategyConfigurator from './ExtractionStrategyConfigurator';
 import DeepCrawlStrategyConfigurator from './DeepCrawlStrategyConfigurator';
 import LlmModelSelect from '@/components/llm/LlmModelSelect'; // Import the dedicated LLM model select component
+import LlmConfiguration from '@/components/llm/LlmConfiguration'; // <<< ADDED IMPORT
 
 const AdvancedFetchOptions = ({
   fetchingEngine, // New prop
@@ -156,12 +157,6 @@ const AdvancedFetchOptions = ({
   crawl4aiLogPageConsoleOutput,
   setCrawl4aiLogPageConsoleOutput,
   // New crawl4ai LLM config props
-  crawl4aiLlmProviderModel,
-  setCrawl4aiLlmProviderModel,
-  crawl4aiLlmApiToken,
-  setCrawl4aiLlmApiToken,
-  crawl4aiLlmBaseUrl,
-  setCrawl4aiLlmBaseUrl,
   crawl4aiMarkdownGenerator,
   setCrawl4aiMarkdownGenerator,
   // New crawl4ai Expert Options props
@@ -180,6 +175,15 @@ const AdvancedFetchOptions = ({
   onCrawl4aiExtractionConfigChange,
   crawl4aiDeepCrawlConfig,
   onCrawl4aiDeepCrawlConfigChange,
+  // Props for LlmConfiguration (passed down from page.js)
+  llmProvider,
+  setLlmProvider,
+  llmApiToken,
+  setLlmApiToken,
+  llmBaseUrl,
+  setLlmBaseUrl,
+  availableLlmModels,
+  isLoadingLlmModels,
 }) => {
   console.log('[AdvancedFetchOptions] Rendering. Engine:', fetchingEngine);
 
@@ -1561,35 +1565,17 @@ const AdvancedFetchOptions = ({
           <AccordionItem value="crawl4ai-llm-config" key={`c4ai-llm-config-${fetchingEngine}`}>
             <AccordionTrigger>crawl4ai - LLM Configuration</AccordionTrigger>
             <AccordionContent className="space-y-4 p-2">
-              <LlmModelSelect
-                value={crawl4aiLlmProviderModel}
-                onModelChange={setCrawl4aiLlmProviderModel}
-                label="LLM Provider/Model"
-                tooltipContent="Select the LLM model to be used for crawl4ai features like LLM extraction or image captioning."
-                required
+              <LlmConfiguration
+                llmProvider={llmProvider}
+                setLlmProvider={setLlmProvider}
+                llmApiToken={llmApiToken}
+                setLlmApiToken={setLlmApiToken}
+                llmBaseUrl={llmBaseUrl}
+                setLlmBaseUrl={setLlmBaseUrl}
+                availableLlmModels={availableLlmModels}
+                isLoadingLlmModels={isLoadingLlmModels}
+                showCrawl4aiMarkdownGenerator={false}
               />
-
-              <div>
-                <Label htmlFor="crawl4ai-llm-api-token">LLM API Token (Optional)</Label>
-                <Input
-                  id="crawl4ai-llm-api-token"
-                  type="password"
-                  placeholder="Enter API Token"
-                  value={crawl4aiLlmApiToken}
-                  onChange={(e) => setCrawl4aiLlmApiToken(e.target.value)}
-                />
-              </div>
-
-              <div>
-                <Label htmlFor="crawl4ai-llm-base-url">LLM Base URL (Optional)</Label>
-                <Input
-                  id="crawl4ai-llm-base-url"
-                  type="text"
-                  placeholder="Enter Base URL (e.g., http://localhost:11434)"
-                  value={crawl4aiLlmBaseUrl}
-                  onChange={(e) => setCrawl4aiLlmBaseUrl(e.target.value)}
-                />
-              </div>
 
               <div>
                 <Label htmlFor="crawl4ai-markdown-generator">Markdown Generator</Label>

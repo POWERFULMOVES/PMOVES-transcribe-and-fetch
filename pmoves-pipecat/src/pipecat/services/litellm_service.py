@@ -5,443 +5,614 @@
 #
 
 import asyncio
-import os
-import litellm
-from litellm.exceptions import (
-    APIConnectionError,
-    BadRequestError,
-    ContextWindowExceededError,
-    NotFoundError,
-    PermissionDeniedError,
-    ServiceUnavailableError,
-    Timeout,
-    AuthenticationError,
-    RateLimitError,
-    APIError
-)
+import json
 import logging
-import httpx
-import uuid # Added
-import json # Added for dumping assembled args
-from typing import Dict, Any # Added for type hinting
+from typing import Any, Dict, List, Optional, Callable # Added Callable
 
+import httpx
+
+# Pipecat imports
 from pipecat.frames.frames import (
     Frame,
+    ErrorFrame,
+    LLMMessagesFrame,
     LLMFullResponseEndFrame,
     LLMFullResponseStartFrame,
-    LLMMessagesFrame,
-    LLMTextFrame,
+    LLMResponseStartFrame,
+    # LLMToolCallChunkFrame, # Unused
+    LLMToolCallFrame,
     FunctionCallInProgressFrame,
-    ErrorFrame,
+    FunctionCallResultFrame,
+    TextFrame  # Added TextFrame import
 )
-from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
+from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.llm_service import LLMService
+# from pipecat.vad.vad_analyzer import VADAnalyzer # Unused
 
-# Import the LLMRegistryService
+# Argument Accumulator Service (AAS) imports
+from backend.app.services.tool_calling.argument_accumulator_service import (
+    ArgumentAccumulatorService,
+    SubmitArgumentChunkRequest,
+    ToolCallStatus,
+)
+from backend.app.services.tool_calling.tool_schema_manager import ToolSchemaManager
 from backend.app.utils.llm_registry_service import LLMRegistryService
 
-# Imports for Tool Calling Integration
-from backend.app.models.tool_calling_models import ( # Added
-    ToolCallStatus,
-    InitiateToolCallRequest,
-    SubmitArgumentChunkRequest
-)
-from backend.app.services.tool_calling.argument_accumulator_service import ArgumentAccumulatorService # Added
-from backend.app.services.tool_calling.tool_schema_manager import ToolSchemaManager # Added
-from backend.app.services.tool_calling.tool_call_state_store import ToolCallStateStore # Added
-from backend.app.services.tool_calling.validation_service import ValidationService # Added
+# LiteLLM imports (handle potential errors)
+try:
+    import litellm
+    from litellm.exceptions import (
+        Timeout, APIConnectionError, NotFoundError,
+        PermissionDeniedError, ServiceUnavailableError,
+        ContextWindowExceededError, BadRequestError,
+        AuthenticationError, RateLimitError, APIError
+    )
+except ImportError:
+    litellm = None
+    # Define dummy exceptions if litellm is not installed
+    class LiteLLMBaseError(Exception):
+        def __init__(self, message, llm_provider=None, model=None, request=None, response=None):
+            super().__init__(message)
+            self.llm_provider = llm_provider
+            self.model = model
+            self.request = request
+            self.response = response
+
+    Timeout = APIConnectionError = NotFoundError = PermissionDeniedError = ServiceUnavailableError = APIError = LiteLLMBaseError
+    ContextWindowExceededError = BadRequestError = AuthenticationError = RateLimitError = LiteLLMBaseError
+    print("[WARN] LiteLLM not found. Using dummy exceptions.")
 
 
 logger = logging.getLogger(__name__)
 
 class LiteLLMPipecatService(LLMService):
     """
-    A Pipecat LLM Service that uses LiteLLM for interacting with various LLMs.
-    Handles streaming responses from LiteLLM and pushes them as Pipecat frames.
-    Integrates with the LLMRegistryService for dynamic model selection.
-    Integrates with ArgumentAccumulatorService for robust tool call argument handling.
+    A Pipecat service that uses LiteLLM to interact with various LLM providers,
+    integrating with an LLMRegistryService for model configuration and an
+    ArgumentAccumulatorService for handling streamed tool calls.
+
+    This service:
+    - Fetches model details (API key, base URL) from LLMRegistryService.
+    - Uses a LiteLLM Router instance for making `acompletion` calls.
+    - Supports streaming responses, including text and tool call chunks.
+    - Accumulates tool argument chunks via ArgumentAccumulatorService.
+    - Listens for argument completion events to trigger (placeholder) tool execution.
+    - Manages a ToolSchemaManager to provide tool schemas to the LLM.
     """
 
-    def __init__(self, llm_registry_service: LLMRegistryService, preferred_model_alias: str, litellm_router: litellm.Router, **kwargs):
-        """
-        Initializes the LiteLLMPipecatService.
-
-        Args:
-            llm_registry_service: An instance of the LLMRegistryService.
-            preferred_model_alias: The alias of the preferred model from the registry.
-            litellm_router: An initialized LiteLLM Router instance.
-            **kwargs: Additional keyword arguments for the base LLMService.
-        """
+    def __init__(self, llm_registry_service: LLMRegistryService, 
+                 preferred_model_alias: str, 
+                 litellm_router: litellm.Router, 
+                 **kwargs):
         super().__init__(**kwargs)
-        self._llm_registry_service = llm_registry_service
-        self._preferred_model_alias = preferred_model_alias
-        self._litellm_router = litellm_router
-        self._model_id = None
-        self._messages = []
+        self._llm_registry_service: LLMRegistryService = llm_registry_service
+        self._preferred_model_alias: str = preferred_model_alias
+        self._litellm_router: litellm.Router = litellm_router
+        self._model_id: Optional[str] = None  # Actual model ID like 'openai/gpt-4o-mini'
+        self._model_config: Optional[Dict[str, Any]] = None # Full config from registry
+        self._messages: List[Dict[str, Any]] = []
+        self._tool_schema_manager = ToolSchemaManager() # Initialize with default schemas
         
-        # Tool Calling Integration Initialization
-        self._tool_schema_manager = ToolSchemaManager()
-        self._tool_call_state_store = ToolCallStateStore()
-        # Start the cleanup worker for the state store.
-        # Note: If LiteLLMPipecatService instances are short-lived, this might repeatedly start/stop.
-        # Ideally, ToolCallStateStore would be a longer-lived singleton.
-        # Consider a more robust lifecycle management for state_store if this service is frequently created/destroyed.
-        asyncio.create_task(self._tool_call_state_store.start_cleanup_worker())
+        try:
+            self._argument_accumulator_service = ArgumentAccumulatorService()
+            logger.info(
+                "ArgumentAccumulatorService initialized successfully "
+                "within LiteLLMPipecatService.")
+        except Exception as e_aas:
+            logger.error(
+                f"Failed to initialize ArgumentAccumulatorService: {e_aas}", 
+                exc_info=True)
+            self._argument_accumulator_service = None
 
-        self._validation_service = ValidationService()
-        self._argument_accumulator_service = ArgumentAccumulatorService(
-            state_store=self._tool_call_state_store,
-            schema_manager=self._tool_schema_manager,
-            validation_service=self._validation_service
-        )
         self._active_tool_call_streams: Dict[str, Dict[str, Any]] = {}
-
+        self._worker_stop_event = asyncio.Event()
+        self._completion_handler_tasks: List[asyncio.Task] = []
+        self._tool_handlers: Dict[str, Callable] = {} # Added
 
     async def cleanup(self):
+        """Gracefully stop the argument completion worker and other resources."""
+        logger.info("Cleaning up LiteLLMPipecatService...")
+        self._worker_stop_event.set()
+        if self._argument_accumulator_service:
+            pass
+        
+        for task in self._completion_handler_tasks:
+            if not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    logger.info(f"Completion handler task {task.get_name()} cancelled.")
+                except Exception as e:
+                    logger.error(
+                        f"Error during cancellation of task {task.get_name()}: {e}")
+        self._completion_handler_tasks.clear()
+        logger.info("LiteLLMPipecatService cleanup complete.")
+
+    def register_tool_handler(self, tool_name: str, handler: Callable):
         """
-        Clean up resources, like stopping the ToolCallStateStore worker.
-        This method might be called if the Pipecat pipeline has a teardown phase.
+        Registers an asynchronous handler for a given tool name.
+
+        Args:
+            tool_name: The name of the tool (must match the name in the schema).
+            handler: An async function that takes tool_call_id (str) and 
+                     arguments (dict) as input and returns a JSON-serializable result.
         """
-        logger.info("Cleaning up LiteLLMPipecatService, stopping ToolCallStateStore worker.")
-        if self._tool_call_state_store:
-            await self._tool_call_state_store.stop_cleanup_worker()
-        await super().cleanup()
+        if not asyncio.iscoroutinefunction(handler):
+            raise ValueError(f"Tool handler for '{tool_name}' must be an async function.")
+        self._tool_handlers[tool_name] = handler
+        logger.info(f"Registered tool handler for: {tool_name}")
 
     async def process_frame(self, frame: Frame, direction: FrameDirection):
-        """
-        Processes incoming frames and triggers LLM calls for messages.
-        """
-        # Process incoming frames (e.g., user messages)
         await super().process_frame(frame, direction)
 
-        if isinstance(frame, LLMMessagesFrame) and direction == FrameDirection.DOWNSTREAM:
-            # Assuming LLMMessagesFrame contains the message history
+        if isinstance(frame, LLMMessagesFrame):
             self._messages = frame.messages
+            await self._fetch_litellm_config() 
+            if not self._model_id or not self._model_config:
+                logger.error(
+                    f"Failed to configure model for alias '{self._preferred_model_alias}'. "
+                    "Cannot proceed.")
+                await self.push_frame(
+                    ErrorFrame(f"LLM model '{self._preferred_model_alias}' not configured."))
+                return
+            
+            if not self._argument_accumulator_service:
+                logger.error(
+                    "ArgumentAccumulatorService is not available. "
+                    "Tool calling will be disabled.")
 
-            # Fetch LiteLLM config (specifically model_id) from registry before triggering LLM call
-            await self._fetch_litellm_config()
+            self._active_tool_call_streams.clear()
+            for task in self._completion_handler_tasks:
+                if not task.done():
+                    task.cancel()
+            self._completion_handler_tasks.clear()
 
-            if self._litellm_router and self._model_id:
-                # Trigger the LLM call
-                await self._get_llm_response_streaming()
-            else:
-                logger.error(f"Failed to fetch LiteLLM config for model alias: {self._preferred_model_alias}. Cannot process message.")
-                await self.push_frame(ErrorFrame(f"Failed to load model {self._preferred_model_alias}"), FrameDirection.DOWNSTREAM) # Ensure this is pushed downstream
-                return # Do not push the original frame if we error out here.
-
-        # Pass the frame along the pipeline
-        # Only push the original frame if it wasn't an LLMMessagesFrame causing an LLM call
-        # or if the LLM call was successfully initiated.
-        # If it was an LLMMessagesFrame, the response frames will be pushed by _get_llm_response_streaming
-        if not (isinstance(frame, LLMMessagesFrame) and direction == FrameDirection.DOWNSTREAM):
-            await self.push_frame(frame, direction)
-
+            await self._get_llm_response_streaming()
 
     async def _fetch_litellm_config(self):
         """
-        Fetches the LiteLLM model ID and other details from the LLMRegistryService
-        based on the preferred model alias.
+        Fetches the model configuration from the LLMRegistryService.
+        Updates self._model_id and self._model_config.
         """
         try:
-            model_info = self._llm_registry_service.get_model_details(self._preferred_model_alias)
-            if model_info:
-                # Assuming model_info.model_id is the identifier needed for router.acompletion
-                self._model_id = model_info.model_id
-                # You can potentially store other model_info details here if needed later
-
-                if not self._model_id:
-                     logger.error(f"Model ID not found in registry details for alias {self._preferred_model_alias}.")
+            logger.info(f"Fetching LLM config for alias: {self._preferred_model_alias}")
+            model_details = await self._llm_registry_service.get_model_details(
+                self._preferred_model_alias)
+            if model_details:
+                self._model_id = model_details.model_id
+                self._model_config = model_details.model_dump()
+                logger.info(
+                    f"Successfully fetched config for '{self._preferred_model_alias}'. "
+                    f"Mapped to model_id: '{self._model_id}'")
             else:
-                logger.error(f"Model alias {self._preferred_model_alias} not found in registry.")
-
+                logger.error(
+                    f"Model with alias '{self._preferred_model_alias}' not found "
+                    "in LLMRegistryService.")
+                self._model_id = None
+                self._model_config = None
         except Exception as e:
-            logger.error(f"Error fetching model details from registry for alias {self._preferred_model_alias}: {e}", exc_info=True)
-            self._model_id = None # Ensure model_id is None if fetching fails
-
+            logger.error(
+                f"Error fetching LiteLLM config for alias '{self._preferred_model_alias}': {e}",
+                exc_info=True)
+            self._model_id = None
+            self._model_config = None
 
     async def _get_llm_response_streaming(self):
-        """
-        Makes a streaming call to LiteLLM and pushes response chunks as frames.
-        """
-        if not self._messages or not self._litellm_router or not self._model_id:
-            logger.error("Attempted to get LLM response without messages, router, or model ID.")
+        if not self._model_id or not self._litellm_router:
+            await self.push_frame(ErrorFrame(
+                f"LiteLLMPipecatService not properly configured. "
+                f"Model ID: {self._model_id}, Router Available: {self._litellm_router is not None}"
+            ))
             return
-
-        logger.debug(f"Making LiteLLM streaming call with model ID: {self._model_id}")
-        self._active_tool_call_streams.clear() # Clear for new LLM response processing
+        
+        self._active_tool_call_streams.clear()
 
         try:
+            logger.info(
+                f"Getting LLM stream from LiteLLM Router for model: {self._model_id}")
+            await self.push_frame(LLMResponseStartFrame())
             await self.push_frame(LLMFullResponseStartFrame())
 
             stream_response = await self._litellm_router.acompletion(
                 model=self._model_id,
                 messages=self._messages,
                 stream=True,
-                # Ensure tools are passed if required by the model/LiteLLM setup
-                # tools=self._tool_schema_manager.get_all_schemas_for_llm() # Example
+                tools=self._tool_schema_manager.get_all_schemas_for_llm()
             )
 
             async for chunk in stream_response:
-                content = chunk.choices[0].delta.content or ""
-                if content:
-                    await self.push_frame(LLMTextFrame(content))
+                delta = chunk.choices[0].delta
 
-                tool_calls = getattr(chunk.choices[0].delta, 'tool_calls', None)
-                if tool_calls:
-                    for tool_call in tool_calls:
-                        tool_call_id = getattr(tool_call, 'id', None)
-                        function_name = getattr(tool_call.function, 'name', None)
-                        function_arguments_chunk = getattr(tool_call.function, 'arguments', None)
-                        # tool_call_index = getattr(tool_call, 'index', 0) # LiteLLM might provide this
+                if delta.content:
+                    await self.push_frame(TextFrame(delta.content))
+                
+                if delta.tool_calls:
+                    for tool_call_chunk in delta.tool_calls:
+                        tool_call_id = tool_call_chunk.id
+                        function_data = tool_call_chunk.function
+                        function_name = function_data.name
+                        function_arguments_chunk = function_data.arguments
 
-                        if tool_call_id and function_name and tool_call_id not in self._active_tool_call_streams:
-                            logger.info(f"First appearance of tool_call_id: {tool_call_id} for function: {function_name}")
+                        if tool_call_id not in self._active_tool_call_streams:
                             self._active_tool_call_streams[tool_call_id] = {
                                 'name': function_name,
                                 'current_arg_sequence': 0,
                                 'initiated': False
                             }
-                            # TODO: Extract schema from tool_call if provided by LiteLLM, else None.
-                            # Example: tool_schema = getattr(tool_call, 'schema', None)
-                            init_request = InitiateToolCallRequest(
-                                tool_name=function_name,
-                                tool_call_id=tool_call_id
-                                # tool_schema=tool_schema # Pass if available
-                            )
-                            try:
-                                await self._argument_accumulator_service.initiate_tool_call(init_request)
-                                self._active_tool_call_streams[tool_call_id]['initiated'] = True
-                                asyncio.create_task(self._handle_argument_completion(tool_call_id))
-                                logger.debug(f"Tool call initiated and listener started for {tool_call_id}")
-                            except Exception as e:
-                                logger.error(f"Error initiating tool call {tool_call_id} for {function_name}: {e}", exc_info=True)
-                                # Potentially push an error frame or mark as failed
-                                await self.push_frame(ErrorFrame(f"Failed to initiate tool call {function_name} ({tool_call_id}): {e}"))
-
-
-                        if tool_call_id and tool_call_id in self._active_tool_call_streams and function_arguments_chunk:
-                            if not self._active_tool_call_streams[tool_call_id]['initiated']:
-                                logger.warning(f"Received argument chunk for {tool_call_id} but not initiated. Skipping.")
-                                continue
+                            logger.info(
+                                f"New tool call initiated: ID {tool_call_id}, "
+                                f"Name: {function_name}")
+                            await self.push_frame(LLMToolCallFrame(
+                                tool_call_id=tool_call_id, 
+                                function_name=function_name,
+                                # arguments are streamed, so not available fully here
+                            ))
                             
-                            current_sequence = self._active_tool_call_streams[tool_call_id]['current_arg_sequence']
-                            chunk_request = SubmitArgumentChunkRequest(
-                                tool_call_id=tool_call_id,
-                                chunk_content=function_arguments_chunk,
-                                sequence_number=current_sequence,
-                                is_last_chunk=False # Will send a final True chunk later
-                            )
+                            if self._argument_accumulator_service:
+                                task = asyncio.create_task(
+                                    self._handle_argument_completion(tool_call_id))
+                                self._completion_handler_tasks.append(task)
+                            else:
+                                logger.warning(
+                                    f"No ArgumentAccumulatorService, cannot handle "
+                                    f"completion for {tool_call_id}")
+
+                        if function_arguments_chunk and self._argument_accumulator_service:
                             try:
-                                await self._argument_accumulator_service.submit_argument_chunk(chunk_request)
                                 self._active_tool_call_streams[tool_call_id]['current_arg_sequence'] += 1
-                                logger.debug(f"Submitted chunk {current_sequence} for {tool_call_id}")
-                                # Optionally push FunctionCallInProgressFrame with raw chunk for UI
-                                # await self.push_frame(FunctionCallInProgressFrame(
-                                #    function_name=self._active_tool_call_streams[tool_call_id]['name'],
-                                #    tool_call_id=tool_call_id,
-                                #    arguments=function_arguments_chunk, # Send only the current chunk
-                                #    is_final=False 
-                                # ))
+                                current_sequence = self._active_tool_call_streams[tool_call_id]['current_arg_sequence']
+                                
+                                chunk_request = SubmitArgumentChunkRequest(
+                                    tool_call_id=tool_call_id,
+                                    chunk_content=function_arguments_chunk,
+                                    sequence_number=current_sequence,
+                                    is_last_chunk=False
+                                )
+                                await self._argument_accumulator_service.submit_argument_chunk(chunk_request)
+                                self._active_tool_call_streams[tool_call_id]['initiated'] = True
                             except Exception as e:
-                                logger.error(f"Error submitting argument chunk for {tool_call_id}: {e}", exc_info=True)
-                                # Mark as failed or push error frame
-                                await self.push_frame(ErrorFrame(f"Failed to submit chunk for tool call {self._active_tool_call_streams[tool_call_id]['name']} ({tool_call_id}): {e}"))
+                                logger.error(
+                                    f"Error submitting argument chunk for {tool_call_id}: {e}", 
+                                    exc_info=True)
+                                await self.push_frame(ErrorFrame(
+                                    f"Failed to submit chunk for tool call "
+                                    f"{self._active_tool_call_streams[tool_call_id]['name']} "
+                                    f"({tool_call_id}): {e}"))
 
-
-            # After the stream, submit final chunks for all initiated tool calls
             for tool_call_id, data in self._active_tool_call_streams.items():
                 if data['initiated']:
                     logger.info(f"Submitting final empty chunk for tool_call_id: {tool_call_id}")
                     final_sequence_number = data['current_arg_sequence']
                     final_chunk_request = SubmitArgumentChunkRequest(
                         tool_call_id=tool_call_id,
-                        chunk_content="", # Empty content for the final signal
+                        chunk_content="",
                         sequence_number=final_sequence_number,
                         is_last_chunk=True
                     )
                     try:
                         await self._argument_accumulator_service.submit_argument_chunk(final_chunk_request)
                     except Exception as e:
-                        logger.error(f"Error submitting final chunk for {tool_call_id}: {e}", exc_info=True)
-                        # This error might mean the tool call won't complete correctly.
-                        # _handle_argument_completion might receive a FAILED/TIMEOUT from the accumulator.
-                        await self.push_frame(ErrorFrame(f"Failed to submit final signal for tool call {data['name']} ({tool_call_id}): {e}"))
+                        logger.error(
+                            f"Error submitting final chunk for {tool_call_id}: {e}", 
+                            exc_info=True)
+                        await self.push_frame(ErrorFrame(
+                            f"Failed to submit final signal for tool call "
+                            f"{data['name']} ({tool_call_id}): {e}"))
+
+            # All chunks processed, finalize.
+            # This will push LLMToolCallResultFrame for each completed tool call.
+            for tool_call_id, details in self._active_tool_call_streams.items():
+                if details.get('arguments_complete') and not details.get('result_pushed'):
+                    # This case should ideally be handled by the argument completion listener,
+                    # but as a fallback, ensure results are pushed.
+                    # This might indicate a race condition or an unhandled completion scenario.
+                    logger.warning(f"Fallback: Pushing presumed complete tool call result for {tool_call_id}")
+                    # We don't have the result here, so we push an empty one or signal error
+                    # For now, let's assume the handler should have pushed.
+                    # This part needs careful review of the tool call lifecycle.
+                    pass # Avoid pushing incomplete/erroneous results here.
 
             await self.push_frame(LLMFullResponseEndFrame())
+            logger.info("LLM stream finished.")
 
         except Timeout as e:
-            logger.error(f"LiteLLM Timeout error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            logger.error(
+                f"LiteLLM Timeout error for model {self._model_id} "
+                f"(Provider: {getattr(e, 'llm_provider', 'N/A')}, "
+                f"Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
             await self.push_frame(ErrorFrame(
-                f"LLM Request Timed Out: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+                f"LLM Request Timed Out: Model {self._model_id}, "
+                f"Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
             ))
         except APIConnectionError as e:
-            logger.error(f"LiteLLM API Connection error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            logger.error(
+                f"LiteLLM API Connection error for model {self._model_id} "
+                f"(Provider: {getattr(e, 'llm_provider', 'N/A')}, "
+                f"Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
             await self.push_frame(ErrorFrame(
-                f"LLM API Connection Error: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+                f"LLM API Connection Error: Model {self._model_id}, "
+                f"Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
             ))
         except NotFoundError as e:
-            logger.error(f"LiteLLM Not Found error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            logger.error(
+                f"LiteLLM Not Found error for model {self._model_id} "
+                f"(Provider: {getattr(e, 'llm_provider', 'N/A')}, "
+                f"Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
             await self.push_frame(ErrorFrame(
-                f"LLM Not Found Error (e.g., Invalid Model ID): Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+                f"LLM Not Found Error (e.g., Invalid Model ID): Model {self._model_id}, "
+                f"Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
             ))
         except PermissionDeniedError as e:
-            logger.error(f"LiteLLM Permission Denied error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            logger.error(
+                f"LiteLLM Permission Denied error for model {self._model_id} "
+                f"(Provider: {getattr(e, 'llm_provider', 'N/A')}, "
+                f"Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
             await self.push_frame(ErrorFrame(
-                f"LLM Permission Denied Error: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+                f"LLM Permission Denied Error: Model {self._model_id}, "
+                f"Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
             ))
         except ServiceUnavailableError as e:
-            logger.error(f"LiteLLM Service Unavailable error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            logger.error(
+                f"LiteLLM Service Unavailable error for model {self._model_id} "
+                f"(Provider: {getattr(e, 'llm_provider', 'N/A')}, "
+                f"Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
             await self.push_frame(ErrorFrame(
-                f"LLM Service Unavailable: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+                f"LLM Service Unavailable: Model {self._model_id}, "
+                f"Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
             ))
         except ContextWindowExceededError as e: 
-            logger.error(f"LiteLLM Context Window Exceeded error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            logger.error(
+                f"LiteLLM Context Window Exceeded error for model {self._model_id} "
+                f"(Provider: {getattr(e, 'llm_provider', 'N/A')}, "
+                f"Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
             await self.push_frame(ErrorFrame(
-                f"LLM Context Window Exceeded: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+                f"LLM Context Window Exceeded: Model {self._model_id}, "
+                f"Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
             ))
         except BadRequestError as e: 
-            logger.error(f"LiteLLM Bad Request error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            logger.error(
+                f"LiteLLM Bad Request error for model {self._model_id} "
+                f"(Provider: {getattr(e, 'llm_provider', 'N/A')}, "
+                f"Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
             await self.push_frame(ErrorFrame(
-                f"LLM Bad Request Error: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+                f"LLM Bad Request Error: Model {self._model_id}, "
+                f"Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
             ))
         except AuthenticationError as e: 
-            logger.error(f"LiteLLM Authentication error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            logger.error(
+                f"LiteLLM Authentication error for model {self._model_id} "
+                f"(Provider: {getattr(e, 'llm_provider', 'N/A')}, "
+                f"Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
             await self.push_frame(ErrorFrame(
-                f"LLM Authentication Error: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+                f"LLM Authentication Error: Model {self._model_id}, "
+                f"Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
             ))
         except RateLimitError as e: 
-            logger.error(f"LiteLLM Rate Limit error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+            logger.error(
+                f"LiteLLM Rate Limit error for model {self._model_id} "
+                f"(Provider: {getattr(e, 'llm_provider', 'N/A')}, "
+                f"Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
             await self.push_frame(ErrorFrame(
-                f"LLM Rate Limit Error: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+                f"LLM Rate Limit Error: Model {self._model_id}, "
+                f"Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
             ))
-        except APIError as e: 
-            logger.error(f"LiteLLM API error for model {self._model_id} (Provider: {getattr(e, 'llm_provider', 'N/A')}, Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
+        except APIError as e:
+            logger.error(
+                f"LiteLLM API error for model {self._model_id} "
+                f"(Provider: {getattr(e, 'llm_provider', 'N/A')}, "
+                f"Status: {getattr(e, 'status_code', 'N/A')}): {e}", exc_info=True)
             await self.push_frame(ErrorFrame(
-                f"LLM API Error: Model {self._model_id}, Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
+                f"LLM API Error: Model {self._model_id}, "
+                f"Provider: {getattr(e, 'llm_provider', 'N/A')}. Details: {e}"
             ))
-        except httpx.RequestError as e: 
-            logger.error(f"HTTP request error during LiteLLM streaming call for model {self._model_id}: {e}", exc_info=True)
+        except httpx.RequestError as e:
+            logger.error(
+                f"HTTP request error during LiteLLM streaming call for model {self._model_id}: {e}", 
+                exc_info=True)
             await self.push_frame(ErrorFrame(
                 f"Network Request Error for LLM: Model {self._model_id}. Details: {e}"
             ))
-        except Exception as e: 
-            logger.error(f"Unexpected error during LiteLLM streaming call for model {self._model_id}: {e}", exc_info=True)
+        except Exception as e:
+            logger.error(
+                f"Unexpected error during LiteLLM streaming call for model {self._model_id}: {e}", 
+                exc_info=True)
             await self.push_frame(ErrorFrame(
                 f"Unexpected Error during LLM streaming: Model {self._model_id}. Details: {e}"
             ))
         finally:
-            # Ensure active tool call streams are cleared if an error occurs mid-stream
-            # or if they are not processed fully by the end of the function.
-            # However, _handle_argument_completion tasks might still be running.
-            # A more robust cleanup of these tasks might be needed if an exception occurs.
-            # For now, clearing the dict prevents re-processing on a subsequent call.
             self._active_tool_call_streams.clear()
 
 
     async def _handle_argument_completion(self, tool_call_id: str):
-        """
-        Listens for argument accumulation completion events for a given tool_call_id.
-        """
+        logger.info(f"Waiting for argument completion for tool_call_id: {tool_call_id}")
         if not self._argument_accumulator_service:
-            logger.error(f"_handle_argument_completion: _argument_accumulator_service not initialized for {tool_call_id}")
+            logger.error("ArgumentAccumulatorService is not available. Cannot handle tool call completion.")
             return
 
         try:
-            queue = await self._argument_accumulator_service.subscribe_to_notifications(tool_call_id)
-            logger.info(f"Subscribed to argument completion for tool_call_id: {tool_call_id}")
+            # This call will block until the AAS signals completion or timeout
+            final_status_data = await self._argument_accumulator_service.wait_for_completion(tool_call_id)
             
-            event = await queue.get() # Wait for the final event
-            logger.info(f"Received argument completion event for {tool_call_id}: {event}")
+            if not final_status_data or final_status_data.status != ToolCallStatus.ARGUMENTS_COMPLETE:
+                logger.error(
+                    f"Argument accumulation did not complete successfully for {tool_call_id}. "
+                    f"Status: {final_status_data.status if final_status_data else 'N/A'}")
+                # Optionally push an error frame or handle this more gracefully
+                await self.push_frame(ErrorFrame(
+                    f"Tool call {tool_call_id} argument accumulation failed: "
+                    f"{final_status_data.status if final_status_data else 'Unknown AAS error'}"))
+                return
 
-            tool_data = self._active_tool_call_streams.get(tool_call_id, {})
-            tool_name = tool_data.get('name', 'unknown_tool')
+            tool_name = final_status_data.name
+            assembled_arguments_str = final_status_data.arguments_json_str
+            
+            logger.info(
+                f"Arguments complete for tool_call_id: {tool_call_id}, "
+                f"Tool: {tool_name}, Args: {assembled_arguments_str}"
+            )
 
-            if event and event.get("status") == ToolCallStatus.ARGUMENTS_COMPLETE:
-                assembled_args = event.get("data", {})
-                logger.info(f"Tool call {tool_call_id} ({tool_name}) arguments complete. Ready for dispatch.")
-                await self.push_frame(FunctionCallInProgressFrame(
-                    function_name=tool_name,
-                    tool_call_id=tool_call_id,
-                    arguments=json.dumps(assembled_args), # Arguments are now structured JSON
-                    is_final=True 
-                ))
-                # TODO: Trigger actual tool dispatch here or signal readiness to another component.
-            elif event:
-                error_message = event.get("error", "Unknown error during argument accumulation")
-                logger.error(f"Tool call {tool_call_id} ({tool_name}) argument accumulation failed or was cancelled/timed out: {error_message}")
-                await self.push_frame(ErrorFrame(f"Tool call {tool_call_id} ({tool_name}) failed: {error_message}"))
+            await self.push_frame(FunctionCallInProgressFrame(tool_call_id=tool_call_id, function_name=tool_name))
+
+            tool_result: Any # Declare tool_result type
+            assembled_args_dict: Dict[str, Any] = {}
+
+            try:
+                if assembled_arguments_str:
+                    assembled_args_dict = json.loads(assembled_arguments_str)
+            except json.JSONDecodeError as e_json:
+                logger.error(
+                    f"Failed to decode JSON arguments for {tool_call_id} ('{tool_name}'): {e_json}. "
+                    f"Raw args: {assembled_arguments_str}")
+                tool_result = {
+                    "error": f"Invalid JSON arguments provided: {str(e_json)}",
+                    "tool_name": tool_name,
+                    "tool_call_id": tool_call_id
+                }
             else:
-                logger.error(f"Received empty event for tool_call_id: {tool_call_id}. This should not happen.")
-                await self.push_frame(ErrorFrame(f"Tool call {tool_call_id} ({tool_name}) failed due to an unexpected empty event."))
+                if tool_name in self._tool_handlers:
+                    actual_tool_handler = self._tool_handlers[tool_name]
+                    logger.info(f"Executing registered handler for tool: {tool_name} (ID: {tool_call_id})")
+                    try:
+                        # Pass tool_call_id and the parsed arguments dictionary
+                        tool_result = await actual_tool_handler(tool_call_id, assembled_args_dict)
+                        logger.info(f"Tool {tool_name} (ID: {tool_call_id}) executed successfully.")
+                    except Exception as e_handler:
+                        logger.error(f"Error executing tool handler for {tool_name} (ID: {tool_call_id}): {e_handler}", exc_info=True)
+                        tool_result = {
+                            "error": f"Handler execution failed: {str(e_handler)}",
+                            "tool_name": tool_name,
+                            "tool_call_id": tool_call_id
+                        }
+                else:
+                    logger.error(f"No handler registered for tool: {tool_name} (ID: {tool_call_id}). Tool not implemented.")
+                    # Instead of placeholder, return an error object
+                    tool_result = {
+                        "error": f"Tool '{tool_name}' is not registered or implemented.",
+                        "tool_name": tool_name,
+                        "tool_call_id": tool_call_id,
+                        "status": "error_tool_not_found"
+                    }
 
-        except asyncio.CancelledError:
-            logger.info(f"Argument completion handler for {tool_call_id} was cancelled.")
+            # Push a frame indicating the function call result
+            # The result here should be the direct output from the tool, JSON-serializable
+            stringified_tool_result = ""
+            try:
+                stringified_tool_result = json.dumps(tool_result)
+            except TypeError as e_type:
+                logger.error(f"Failed to stringify tool result for {tool_name} (ID: {tool_call_id}): {e_type}. Result: {tool_result}")
+                stringified_tool_result = json.dumps({
+                    "error": f"Result serialization failed: {str(e_type)}", 
+                    "tool_name": tool_name, 
+                    "tool_call_id": tool_call_id
+                })
+
+            await self.push_frame(
+                FunctionCallResultFrame(
+                    tool_call_id=tool_call_id,
+                    function_name=tool_name,
+                    result=stringified_tool_result 
+                )
+            )
+
+            # Prepare message to send back to LLM
+            tool_result_message = {
+                "tool_call_id": tool_call_id,
+                "role": "tool",
+                "name": tool_name,
+                "content": stringified_tool_result, # Send stringified result back to LLM
+            }
+
+            # Update message history and re-prompt LLM
+            self._messages.append(tool_result_message)
+            logger.info(f"Appended tool result for {tool_name} (ID: {tool_call_id}) to messages. Re-prompting LLM.")
+            # Push messages to trigger next LLM call
+            await self.push_frame(LLMMessagesFrame(messages=self._messages)) 
+            # We expect the pipeline to route this frame back for another _get_llm_response_streaming call
+
+        except asyncio.TimeoutError:
+            logger.error(f"Timeout waiting for argument completion for tool_call_id: {tool_call_id}")
+            await self.push_frame(ErrorFrame(f"Timeout waiting for tool arguments: {tool_call_id}"))
         except Exception as e:
-            logger.error(f"Error in _handle_argument_completion for {tool_call_id}: {e}", exc_info=True)
-            tool_name_fallback = self._active_tool_call_streams.get(tool_call_id, {}).get('name', 'unknown_tool')
-            await self.push_frame(ErrorFrame(f"Error processing tool call {tool_call_id} ({tool_name_fallback}): {e}"))
+            logger.error(
+                f"An unexpected error occurred in _handle_argument_completion for {tool_call_id}: {e}", 
+                exc_info=True
+            )
+            await self.push_frame(ErrorFrame(f"Unexpected error handling tool {tool_call_id}: {str(e)}"))
         finally:
-            # Clean up from self._active_tool_call_streams if it's still there.
-            # This dict is primarily for the duration of one _get_llm_response_streaming call.
-            # If this handler outlives that, specific cleanup might be needed.
-            # However, _active_tool_call_streams.clear() at the start of _get_llm_response_streaming
-            # should handle most cases for subsequent LLM calls.
+            # Clean up the AAS state for this tool_call_id
+            if self._argument_accumulator_service:
+                await self._argument_accumulator_service.clear_tool_call_state(tool_call_id)
+            # Remove from active streams tracking within this service
             if tool_call_id in self._active_tool_call_streams:
-                 logger.debug(f"Tool call {tool_call_id} processing finished, removing from active streams if present.")
-                 # No, don't delete here, it's cleared at the start of the main streaming method.
-                 # If deleted here, subsequent chunks in the *same* LLM stream for other tools might have issues
-                 # if this handler finishes early. The main _get_llm_response_streaming owns the lifecycle of this dict.
+                del self._active_tool_call_streams[tool_call_id]
+            logger.debug(f"Finished handling and cleanup for tool_call_id: {tool_call_id}")
 
 
-# Example Usage (Conceptual):
-# Assuming you have your LiteLLM router initialized elsewhere
-# from your_app.litellm_setup import litellm_router # Example
-# from backend.app.utils.llm_registry_service import LLMRegistryService # Example
-# from pipecat.pipeline.pipeline import Pipeline # Example
-# from pipecat.transports.local.local_transport import LocalTransport # Example
+    # Example of how a tool schema might be defined and added (elsewhere, e.g. main.py)
+    # async def get_weather_handler(tool_call_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
+    #     location = args.get("location", "unknown")
+    #     unit = args.get("unit", "celsius")
+    #     # Actual weather fetching logic here
+    #     return {"location": location, "temperature": "25", "unit": unit, "condition": "Sunny"}
 
-# async def main_example():
-#     # Setup LLM Registry (example)
-#     registry = LLMRegistryService()
-#     registry.register_model(
-#         alias="gpt-4o-mini-test", 
-#         model_id="gpt-4o-mini", 
-#         # ... other params like api_key, base_url if needed by LiteLLM for this model
-#     )
-
-#     # Setup LiteLLM Router (example)
-#     # This would typically be more sophisticated, loading from config or registry details
-#     model_list = [{
-#         "model_name": "gpt-4o-mini-test", # Alias used in registry
-#         "litellm_params": {"model": "gpt-4o-mini", "api_key": os.getenv("OPENAI_API_KEY")}
-#     }]
-#     litellm_router = litellm.Router(model_list=model_list)
-
-
-#     # Initialize your transport (e.g., WebSocket, Daily, Local for testing)
-#     # transport = LocalTransport() # Using LocalTransport for this example
-
-#     # Create an instance of your custom LiteLLMPipecatService
-#     lite_llm_service = LiteLLMPipecatService(
-#         llm_registry_service=registry,
-#         litellm_router=litellm_router,
-#         preferred_model_alias="gpt-4o-mini-test" 
-#     )
+    # In your pipeline setup:
+    # litellm_service = LiteLLMPipecatService(...)
+    # litellm_service.tool_schema_manager.add_tool_schema({ ... schema for get_weather ... })
+    # litellm_service.register_tool_handler("get_weather", get_weather_handler)
     
-#     # Add a cleanup method to the service for graceful shutdown of the worker
-#     # pipeline.on_stop(lite_llm_service.cleanup) # If pipeline supports hooks
+# Example usage of LiteLLMPipecatService (conceptual, actual setup in main.py or bot.py)
+# async def main():
+#     # Assuming llm_registry_service and litellm_router are initialized
+#     # from backend.app.utils.llm_registry_service import LLMRegistryService
+#     # from litellm import Router
+#     # llm_registry = LLMRegistryService()
+#     # await llm_registry.refresh_models() # Populate models
+    
+#     # router_instance = Router(model_list=llm_registry.get_model_list_for_router())
 
-#     # Build your Pipecat pipeline
-#     # pipeline = Pipeline([
-#     #     transport.input(),
-#     #     # ... other processors 
-#     #     lite_llm_service, 
-#     #     # ... other processors
-#     #     transport.output()
+#     # service = LiteLLMPipecatService(
+#     #     llm_registry_service=llm_registry,
+#     #     preferred_model_alias="openai/gpt-4o-mini", # Example alias
+#     #     litellm_router=router_instance 
+#     # )
+
+#     # # Define a tool schema (OpenAI format)
+#     # weather_tool_schema = {
+#     #     "type": "function",
+#     #     "function": {
+#     #         "name": "get_current_weather",
+#     #         "description": "Get the current weather in a given location",
+#     #         "parameters": {
+#     #             "type": "object",
+#     #             "properties": {
+#     #                 "location": {"type": "string", "description": "The city and state, e.g. San Francisco, CA"},
+#     #                 "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]}
+#     #             },
+#     #             "required": ["location"]
+#     #         }
+#     #     }
+#     # }
+#     # service.tool_schema_manager.add_tool_schema(weather_tool_schema)
+
+#     # # Define a handler
+#     # async def my_weather_handler(tool_call_id: str, args: Dict[str, Any]) -> Dict[str, Any]:
+#     #     logger.info(f"Handler my_weather_handler called with ID: {tool_call_id}, Args: {args}")
+#     #     # Simulate API call
+#     #     await asyncio.sleep(1)
+#     #     return {"temperature": "30", "unit": args.get("unit", "celsius"), "condition": "Sunny"}
+    
+#     # service.register_tool_handler("get_current_weather", my_weather_handler)
+
+#     # # Simulate receiving an LLMMessagesFrame
+#     # messages_frame = LLMMessagesFrame(messages=[
+#     #     {"role": "user", "content": "What's the weather in Boston?"}
 #     # ])
+#     # await service.process_frame(messages_frame, FrameDirection.DOWNSTREAM)
 
-#     # Run the pipeline
-#     # await pipeline.run_async()
+#     # # ... more pipeline logic to push frames and see results ...
+#     # await service.cleanup()
 
-# # if __name__ == "__main__":
-# #    asyncio.run(main_example())
+# if __name__ == "__main__":
+#     logging.basicConfig(level=logging.INFO)
+#     # asyncio.run(main())

@@ -44,15 +44,7 @@ const LlmModelSelect = ({
       setError(null);
       try {
         // Use the dedicated backend endpoint
-        const apiKey = process.env.NEXT_PUBLIC_BACKEND_API_KEY; // Or your method of accessing the API key
-        const headers = {};
-        if (apiKey) {
-          headers['Authorization'] = `Bearer ${apiKey}`;
-        } else {
-          console.warn("[LlmModelSelect] API key is not available. Requests to protected endpoints might fail.");
-        }
-
-        const response = await fetch(`${BACKEND_URL}/api/v1/models`, { headers });
+        const response = await fetch(`${BACKEND_URL}/api/v1/models`);
         if (!response.ok) {
           // Attempt to read error body if available, otherwise use status text
           const errorBody = await response.text().catch(() => 'Unknown Error');

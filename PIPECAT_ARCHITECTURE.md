@@ -20,6 +20,13 @@ The PMOVES Pipecat system follows a **core service + agent instances** architect
   - **Multimodal pipelines** (text, audio, video, images)
   - **Supabase Realtime integration** for chat
   - **TTS/STT services** (ElevenLabs, Deepgram)
+  - **Advanced Tool-Calling**: The custom `LiteLLMPipecatService` enables robust tool-calling. It leverages LiteLLM's native support for OpenAI-compatible tool calling by passing tool schemas (managed by `ToolSchemaManager`) directly to the LLM via the `tools` parameter in `acompletion` calls. The execution flow is as follows:
+    1. The LLM indicates its intent to use a tool in its response.
+    2. `LiteLLMPipecatService` detects this tool request (e.g., via `LLMToolCallFrame`).
+    3. Streamed tool arguments are accumulated using `ArgumentAccumulatorService`.
+    4. The service dispatches to the appropriate registered asynchronous tool handler (via `register_tool_handler` and the `_tool_handlers` dictionary) for modular execution.
+    5. The tool's result is then packaged into a "tool" role message and sent back to the LLM in a subsequent `acompletion` call to obtain the final, user-facing response.
+    (Note: While LiteLLM provides a callback system, e.g., `CustomLogger`, it is primarily for observability and does not currently offer a direct hook for intercepting and executing tool calls mid-turn, necessitating the described multi-step process.)
 
 ### 2. Agent Instances (`pmoves-pipecat-agent`)
 **Purpose**: Lightweight agent clients with multimodal capabilities
@@ -31,6 +38,14 @@ The PMOVES Pipecat system follows a **core service + agent instances** architect
   - Chat integration via Supabase Realtime
   - Agent-specific command processing
   - Multimodal frame processing (text, audio, video, images)
+  - **Image Processing**: Image frame support in pipelines
+  - **Frame Types**: TextFrame, AudioFrame, VideoFrame, ImageFrame, LLMMessagesFrame
+  - **Tool-Related Frames**: Utilizes `LLMToolCallFrame` (LLM requests a tool), `FunctionCallInProgressFrame` (tool execution started), and `FunctionCallResultFrame` (result of tool execution) to manage the tool-calling lifecycle within pipelines.
+  - `LLMMessagesFrame`: Carries the history of messages for the LLM.
+  - `LLMToolCallFrame`: Indicates the LLM's intent to call a specific tool, including its name and (streamed) arguments.
+  - `FunctionCallInProgressFrame`: Signals that a requested tool call is actively being processed.
+  - `FunctionCallResultFrame`: Contains the outcome (data or error) of an executed tool call, ready to be sent back to the LLM as part of the multi-step tool execution flow.
+  - `ToolsFrame` (Conceptual/Managed by `ToolSchemaManager`): Represents the collection of tool schemas. These are managed by `ToolSchemaManager` and provided directly to LiteLLM's `acompletion` function (in the `tools` parameter), rather than being pushed as a distinct frame through the Pipecat pipeline by the `LiteLLMPipecatService` itself.
 
 ## Communication Flow
 
@@ -163,7 +178,14 @@ PIPECAT_WS_URL=ws://pipecat:8081
 
 ## WebSocket Frame Protocol
 
-### Supported Frame Types
+### Supported Frame Types (Expanded)
+Pipecat uses a variety of frame types to manage data flow. In addition to basic types like `TextFrame`, `AudioFrame`, `ImageFrame`, and `VideoFrame`, the system heavily relies on specialized frames for LLM interaction and tool-calling:
+- `LLMMessagesFrame`: Carries the history of messages for the LLM.
+- `LLMToolCallFrame`: Indicates the LLM's intent to call a specific tool, including its name and (streamed) arguments.
+- `FunctionCallInProgressFrame`: Signals that a requested tool call is actively being processed.
+- `FunctionCallResultFrame`: Contains the outcome (data or error) of an executed tool call, ready to be sent back to the LLM as part of the multi-step tool execution flow.
+- `ToolsFrame` (Conceptual/Managed by `ToolSchemaManager`): Represents the collection of tool schemas. These are managed by `ToolSchemaManager` and provided directly to LiteLLM's `acompletion` function (in the `tools` parameter), rather than being pushed as a distinct frame through the Pipecat pipeline by the `LiteLLMPipecatService` itself.
+
 ```json
 {
   "type": "text",

@@ -139,7 +139,7 @@ from fastapi import (
     status,
     Query,
     Depends,
-    Security,  # Added Security for potential API key auth
+    # Security, # This was in original main.py, but APIKeyHeader is used directly in middleware
 )
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse  # Added FileResponse
@@ -278,7 +278,7 @@ try:
         generate_pdf_from_markdown_string,  # Added for PDF generation
     )
     from .fetch_content import fetch_content_from_url, generate_unique_filename
-    from .crawl4ai_fetcher import fetch_with_crawl4ai  # Added for crawl4ai
+    from .crawl4ai_docker_fetcher import fetch_with_crawl4ai_docker as fetch_with_crawl4ai # Use docker fetcher
     from .app_config import WORKSPACE_ROOT, SUBFOLDERS
     from .psearchworking import (
         search_all,
@@ -313,6 +313,8 @@ try:
     from .ollama_initializer import (
         ensure_ollama_model_loaded,
     )  # Import the Ollama initializer
+    # Add the new security middleware import
+    from .middleware.security_middleware import APIKeySecurityMiddleware
 
     PROJECT_MODULES_LOADED = True
 except ImportError as e:
@@ -814,8 +816,7 @@ app = FastAPI(
     ],
 )
 
-# --- Configure CORS ---
-# (Keep existing CORS middleware - lines 605-615)
+# --- Configure CORS --- (Ensure this is early)
 allowed_origins = os.getenv(
     "CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
 ).split(",")
@@ -831,11 +832,16 @@ app.add_middleware(
         "Content-Type",
         "X-Content-Type-Options",
         "Content-Disposition",
-    ],  # Added Content-Disposition
+    ],
 )
 
 # --- Add Custom Middlewares ---
-# (Keep existing middlewares: SSE Monitoring, Error Handling, Request Logging - lines 618-669)
+
+# Add APIKeySecurityMiddleware FIRST
+# This ensures that authentication/authorization happens before other processing like logging or monitoring for protected routes.
+app.add_middleware(APIKeySecurityMiddleware)
+logger.info("APIKeySecurityMiddleware enabled.")
+
 # SSE Monitoring Middleware (if available)
 if (
     PROJECT_MODULES_LOADED
@@ -848,8 +854,8 @@ if (
     except Exception as e:
         logger.warning(f"Failed to enable SSE monitoring middleware: {e}")
 
-
-# Error Handling Middleware (should be early)
+# Error Handling Middleware (should be early, but after Auth if Auth can raise HTTPExceptions handled by it)
+# Given APIKeySecurityMiddleware returns Response directly, its placement relative to error handler is less critical for its own errors.
 @app.middleware("http")
 async def error_handling_middleware(request: Request, call_next):
     try:
@@ -875,8 +881,7 @@ async def error_handling_middleware(request: Request, call_next):
                 logger.error(f"Error handler itself failed: {handler_err}")
         return JSONResponse(status_code=status_code, content=error_details)
 
-
-# Request Logging Middleware (should be after error handling, before routes)
+# Request Logging Middleware (can be after Auth and Error Handling)
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = time.time()
@@ -890,6 +895,22 @@ async def log_requests(request: Request, call_next):
     logger.info(f"<-- {method} {path} - Status={status_code} ({process_time:.3f}s)")
     return response
 
+# --- Setup Monitoring (from monitoring/backend_integration.py) ---
+# This should be after other essential middleware like CORS and Auth, 
+# but before routes are defined if it adds any itself (like /metrics, /health).
+# The setup_backend_monitoring function from the guide adds its own middleware.
+if PROJECT_MODULES_LOADED: # Assuming monitoring setup depends on project modules
+    try:
+        from monitoring.backend_integration import setup_backend_monitoring
+        # The setup_backend_monitoring will add the PMOVESBackendMonitoring middleware
+        monitor = setup_backend_monitoring(app, "pmoves-backend") 
+        logger.info("Backend monitoring setup successfully.")
+    except ImportError as e_mon_import:
+        logger.error(f"Failed to import or setup monitoring: {e_mon_import}", exc_info=True)
+    except Exception as e_mon_setup:
+        logger.error(f"Error during monitoring setup: {e_mon_setup}", exc_info=True)
+else:
+    logger.warning("Project modules not loaded, skipping backend monitoring setup.")
 
 # --- Include Routers ---
 # Include routers for different parts of the API
@@ -951,11 +972,11 @@ async def startup_event():
                 logger.info("Initializing LLM model registry...")
                 # Directly call the imported functions
                 await initialize_llm_registry()  # Initial fetch
-                asyncio.create_task(
-                    schedule_llm_registry_refresh()
-                )  # Schedule periodic refresh
+                # asyncio.create_task(
+                #     schedule_llm_registry_refresh()
+                # )  # Schedule periodic refresh - COMMENTED OUT
                 logger.info(
-                    "LLM model registry initialized and periodic refresh scheduled."
+                    "LLM model registry initialized (periodic refresh disabled)." # UPDATED LOG
                 )
             except Exception as e_llm_reg:
                 logger.error(
@@ -2681,8 +2702,8 @@ async def fetch_content_endpoint(
         None, description="JSON string for extraction strategy configuration (crawl4ai)"
     ),  # ADDED
     extraction_strategy: Optional[str] = Query(
-        "markdown",
-        description="Content extraction strategy for crawl4ai (e.g., 'markdown', 'llm')",
+        None, # Changed default from "markdown" to None
+        description="Content extraction strategy for crawl4ai (e.g., 'llm', 'cosine', 'jsoncss', or None for default processing)",
     ),  # This was for Jina, now more general
     output_format: Optional[str] = Query(
         "markdown",
@@ -2709,16 +2730,17 @@ async def fetch_content_endpoint(
         False, description="Enable image captioning (crawl4ai with LLM, Jina)"
     ),
     llm_provider: Optional[str] = Query(
-        "openai",
-        description="LLM provider for crawl4ai (e.g., 'openai', 'groq', 'ollama/model')",
+        None,
+        alias="crawl4ai_llm_provider_model",
+        description="LLM provider and model for crawl4ai (e.g., 'gemini/gemini-pro', 'openai/gpt-3.5-turbo', 'ollama/mistral')"
     ),
     llm_api_key: Optional[str] = Query(
         None,
         description="API key for the LLM provider (use environment variables if None)",
     ),
-    llm_model_name: Optional[str] = Query(
-        "gpt-3.5-turbo", description="Specific LLM model name for crawl4ai"
-    ),
+    crawl4ai_llm_base_url: Optional[str] = Query( # ADDED
+        None, description="Base URL for the LLM provider (crawl4ai)" # ADDED
+    ), # ADDED
     llm_temperature: Optional[float] = Query(
         0.7, ge=0.0, le=2.0, description="LLM temperature for crawl4ai"
     ),
@@ -2835,7 +2857,7 @@ async def fetch_content_endpoint(
         "image_captioning": image_captioning,
         "llm_provider": llm_provider,
         "llm_api_key": llm_api_key,
-        "llm_model_name": llm_model_name,
+        "crawl4ai_llm_base_url": crawl4ai_llm_base_url, # ADDED
         "llm_temperature": llm_temperature,
         "llm_max_tokens": llm_max_tokens,
         "json_response": json_response,
@@ -3008,6 +3030,19 @@ async def fetch_content_endpoint(
                     yield format_sse_message(
                         "error", "Crawl4ai fetcher module not available."
                     )
+                    # Update history if possible
+                    if fetch_history_id and supabase_client_for_history and not terminal_status_written_to_db:
+                        error_update_data = {
+                            "status": "failed",
+                            "error_message": "Crawl4ai fetcher module not available on server.",
+                        }
+                        _, db_write_ok = await _update_fetch_history_record(
+                            supabase_client_for_history,
+                            fetch_history_id,
+                            error_update_data,
+                            all_request_params,
+                        )
+                        if db_write_ok: terminal_status_written_to_db = True
                     return
                 logger.info(f"Using crawl4ai engine for URL: {url}")
                 async for sse_event_json_str_from_fetcher in fetch_with_crawl4ai(
@@ -3038,8 +3073,6 @@ async def fetch_content_endpoint(
                                         f"Failed to log LLM call via utility: {e_log_llm}",
                                         exc_info=True,
                                     )
-                                    # Optionally, yield an error to client if this failure is critical for them to know
-                                    # yield format_sse_message("warning", "llm_log_failed", {"message": f"Failed to log LLM event: {str(e_log_llm)}"})
                             elif not llm_log_data:
                                 logger.warning(
                                     "llm_log_event received but 'data' payload was missing."
@@ -3051,18 +3084,49 @@ async def fetch_content_endpoint(
                             continue  # Skip yielding this event to the client
                         # --- End LLM Logging Integration ---
 
+                        # --- Populate fetched_data_dict if it's the main crawl result ---
+                        if event_data_from_fetcher.get("type") == "crawl_result":
+                            logger.info(f"Storing data from crawl_result event for URL: {event_data_from_fetcher.get('url')}")
+                            
+                            # Attempt to extract title
+                            current_title = event_data_from_fetcher.get("metadata", {}).get("title")
+                            if not current_title and event_data_from_fetcher.get("markdown"):
+                                # Try to get from H1 in markdown
+                                title_match_md = re.search(r"^#\s*(.+)", event_data_from_fetcher.get("markdown", ""), re.MULTILINE)
+                                if title_match_md:
+                                    current_title = title_match_md.group(1).strip()
+                            # Fallback title if none found from metadata or markdown H1
+                            if not current_title: 
+                                current_title = f"Content from {event_data_from_fetcher.get('url', url)}"
+
+                            # This variable is used after the loop for PDF/Supabase
+                            fetched_data_dict = {
+                                "url": event_data_from_fetcher.get("url", url),
+                                "title": current_title,
+                                "markdown": event_data_from_fetcher.get("markdown"),
+                                "content": event_data_from_fetcher.get("content"), # HTML content
+                                "text": event_data_from_fetcher.get("text"),
+                                "links": event_data_from_fetcher.get("links", []),
+                                "metadata": event_data_from_fetcher.get("metadata", {}),
+                                "screenshot_base64": event_data_from_fetcher.get("screenshot_base64"),
+                                "status_code": event_data_from_fetcher.get("status_code"),
+                                "error": event_data_from_fetcher.get("error_message") or event_data_from_fetcher.get("error"),
+                                # pdf_path will be added later by main.py if PDF generation is successful
+                            }
+                            logger.debug(f"Internal fetched_data_dict populated from crawl_result. Title: {fetched_data_dict.get('title')}, URL: {fetched_data_dict.get('url')}")
+                        
+                        # --- Construct the SSE event to send to the client ---
                         final_sse_event_dict = {
                             "type": event_data_from_fetcher.get("type"),
-                            "timestamp": datetime.now().isoformat(),
-                            "id": str(time.time()),
+                            "timestamp": datetime.now(timezone.utc).isoformat(), # Ensure UTC
+                            "id": str(uuid.uuid4().hex), # Use hex for shorter unique ID
                         }
                         if "status" in event_data_from_fetcher:
                             final_sse_event_dict["status"] = (
                                 event_data_from_fetcher.get("status")
                             )
 
-                        # Check for structured LLM error from crawl4ai_fetcher
-                        # This is distinct from llm_log_event, this is an error *during* an LLM call within crawl4ai
+                        # Populate message/details for error events for the client
                         if (
                             event_data_from_fetcher.get("type") == "error"
                             and "llm_error" in event_data_from_fetcher
@@ -3074,7 +3138,7 @@ async def fetch_content_endpoint(
                             )
                             final_sse_event_dict["llm_error"] = event_data_from_fetcher[
                                 "llm_error"
-                            ]  # Pass the structured LLM error
+                            ]
                             logger.error(
                                 f"LLM Error event from crawl4ai_fetcher: {json.dumps(event_data_from_fetcher['llm_error'])}"
                             )
@@ -3088,37 +3152,38 @@ async def fetch_content_endpoint(
                                 final_sse_event_dict["details"] = (
                                     event_data_from_fetcher.get("details")
                                 )
-                        else:
-                            # Non-error events (status, completed)
-                            content_payload_for_final_sse = {}
-                            if "message" in event_data_from_fetcher:
-                                content_payload_for_final_sse["message"] = (
-                                    event_data_from_fetcher.get("message")
-                                )
-                            if "data" in event_data_from_fetcher:
-                                content_payload_for_final_sse["data"] = (
-                                    event_data_from_fetcher.get("data")
-                                )
-                                if (
-                                    event_data_from_fetcher.get("type") == "completed"
-                                    or event_data_from_fetcher.get("status")
-                                    == "completed"
-                                ):
-                                    fetched_data_dict = event_data_from_fetcher.get(
-                                        "data"
-                                    )
+                        else: # Non-error events - populate 'content' for the client
+                            client_facing_content_payload = {}
+                            if "message" in event_data_from_fetcher: # Messages are always useful
+                                client_facing_content_payload["message"] = event_data_from_fetcher.get("message")
 
-                            if content_payload_for_final_sse:
-                                final_sse_event_dict["content"] = (
-                                    content_payload_for_final_sse
-                                )
-                            elif "message" in event_data_from_fetcher:
-                                final_sse_event_dict["content"] = (
-                                    event_data_from_fetcher.get("message")
-                                )
+                            # For crawl_result events, provide a summary/data subset to the client
+                            if event_data_from_fetcher.get("type") == "crawl_result" and fetched_data_dict: # Check fetched_data_dict to ensure it was populated
+                                client_facing_content_payload["data"] = {
+                                    "url": fetched_data_dict.get("url"),
+                                    "title": fetched_data_dict.get("title"), # Use consistent title
+                                    "status_code": fetched_data_dict.get("status_code"),
+                                    "error": fetched_data_dict.get("error"), # Pass error if present in main data
+                                    "markdown_preview": (fetched_data_dict.get("markdown") or "")[:250] + "..." if fetched_data_dict.get("markdown") else "No markdown content.",
+                                    "text_preview": (fetched_data_dict.get("text") or "")[:250] + "..." if fetched_data_dict.get("text") else "No text content.",
+                                    "has_screenshot": bool(fetched_data_dict.get("screenshot_base64")),
+                                    "links_count": len(fetched_data_dict.get("links", [])),
+                                }
+                            elif "data" in event_data_from_fetcher: # For other event types that might have a 'data' field (e.g. from Jina, or a 'completed' event with data)
+                                client_facing_content_payload["data"] = event_data_from_fetcher.get("data")
+                            
+                            if client_facing_content_payload:
+                                final_sse_event_dict["content"] = client_facing_content_payload
+                            elif "message" in event_data_from_fetcher: # Fallback if only a message
+                                final_sse_event_dict["content"] = event_data_from_fetcher.get("message")
+                        
+                        # Note: The original logic that set `fetched_data_dict` from a "completed" event's "data" field
+                        # is intentionally omitted here for the crawl4ai loop, as `crawl_result` is the definitive source.
+                        # If a "completed" event from crawl4ai were to have a "data" field with essential *additional* info
+                        # for `fetched_data_dict`, that would need separate handling, but current fetcher doesn't do that.
 
                         logger.info(
-                            f"About to yield for crawl4ai: {json.dumps(final_sse_event_dict)}"
+                            f"Yielding to client from crawl4ai loop: Type '{final_sse_event_dict.get('type')}', Status: '{final_sse_event_dict.get('status', 'N/A')}', ID: {final_sse_event_dict.get('id')}"
                         )
                         yield json.dumps(final_sse_event_dict)
 
@@ -3409,473 +3474,352 @@ async def fetch_content_endpoint(
                     )
                     return
 
+            # --- Final check for fetched_data_dict before proceeding (Mainly for crawl4ai path) ---
+            if not fetched_data_dict and engine.lower() == "crawl4ai":
+                logger.error(
+                    f"Failed to retrieve or process data using crawl4ai for {url}. No 'crawl_result' event populated the internal data dictionary."
+                )
+                yield format_sse_message(
+                    "error",
+                    "no_crawl_result_data",
+                    {
+                        "message": "Crawl4AI engine completed but no main data was processed internally. Check fetcher logs for 'crawl_result' event details."
+                    },
+                )
+                # Update history if not already done by an error event
+                if fetch_history_id and supabase_client_for_history and not terminal_status_written_to_db:
+                    final_error_update_data = {
+                        "status": "failed",
+                        "error_message": "Crawl4AI: No 'crawl_result' data processed by backend.",
+                        "output_type": "unknown",
+                    }
+                    _, db_write_ok = await _update_fetch_history_record(
+                        supabase_client_for_history,
+                        fetch_history_id,
+                        final_error_update_data,
+                        all_request_params,
+                    )
+                    if db_write_ok: terminal_status_written_to_db = True
+                return # Critical failure for crawl4ai if fetched_data_dict is still None
+
             # --- Post-fetch processing (PDF, Supabase) ---
-            if fetched_data_dict and not fetched_data_dict.get(
-                "error"
-            ):  # If no error at the top level of fetched_data_dict
+            # This block should now be reliably reached if crawl4ai produced a crawl_result or if Jina succeeded.
+            final_data_for_db_and_pdf: Dict[str, Any] = { # For final history update
+                "status": "processing_failed", # Default status if subsequent steps fail
+                "output_type": "unknown",
+                "error_message": None,
+                "content_summary": None,
+                "raw_content_path": None,
+                "processed_content_path": None, # e.g. PDF path
+                "supabase_content_id": None,
+            }
+
+
+            if fetched_data_dict and not (fetched_data_dict.get("error") and fetched_data_dict.get("status_code", 200) >= 400):  # If no critical error at the top level of fetched_data_dict
+                # Also check status_code if error is present but might be informational (e.g. error key for non-fatal issue)
+                # If error is present AND status_code indicates client/server error, then treat as failure.
+                
                 markdown_content = fetched_data_dict.get("markdown")
+                text_content_for_embedding = fetched_data_dict.get("text", markdown_content or "") # Prefer text, fallback to MD
                 title = fetched_data_dict.get("title", "Untitled")
                 fetched_url_actual = fetched_data_dict.get("url", url)
-                pdf_path_from_fetcher = fetched_data_dict.get("pdf_path")
+                pdf_path_from_fetcher = fetched_data_dict.get("pdf_path") # Jina might provide this
+                screenshot_base64_data = fetched_data_dict.get("screenshot_base64")
 
-                llm_extracted_content = fetched_data_dict.get(
-                    "extracted_content"
-                )  # Get potential LLM content
-                final_content_for_sse = (
-                    llm_extracted_content
-                    if llm_extracted_content is not None
-                    else markdown_content
+                # Determine primary content type for history
+                if markdown_content:
+                    final_data_for_db_and_pdf["output_type"] = "markdown"
+                elif fetched_data_dict.get("content"): # HTML
+                    final_data_for_db_and_pdf["output_type"] = "html"
+                elif text_content_for_embedding: # Plain text
+                     final_data_for_db_and_pdf["output_type"] = "text"
+                
+                # Create a summary (first ~300 chars of text or markdown)
+                summary_source = text_content_for_embedding if text_content_for_embedding else markdown_content
+                if summary_source:
+                    final_data_for_db_and_pdf["content_summary"] = (summary_source[:297] + "...") if len(summary_source) > 300 else summary_source
+
+
+                # --- Yield final content to client (if not already fully sent) ---
+                # This provides a consolidated result to the client, especially if PDF/Supabase steps are involved.
+                # The 'crawl_result' SSE from crawl4ai fetcher already sent detailed data.
+                # This is more of a "final processing summary" for main.py's own steps.
+                
+                yield format_sse_message(
+                    "status",
+                    "content_extracted",
+                    {
+                        "message": f"Content extracted for {fetched_url_actual}. Title: {title}",
+                        "title": title,
+                        "url": fetched_url_actual,
+                        "has_markdown": bool(markdown_content),
+                        "has_text": bool(text_content_for_embedding),
+                        "has_screenshot": bool(screenshot_base64_data),
+                        "output_type": final_data_for_db_and_pdf["output_type"],
+                    },
                 )
+                await asyncio.sleep(0.1)
 
-                if not final_content_for_sse:
-                    logger.warning(
-                        f"Engine {engine} returned no primary content (markdown or extracted) for URL: {url}"
-                    )
-                else:
-                    logger.info(
-                        f"Successfully fetched primary content using {engine} from {url}. Title: '{title}'. Length: {len(final_content_for_sse)}"
-                    )
 
-                if generate_pdf:
+                if not markdown_content and not text_content_for_embedding and not fetched_data_dict.get("content"):
+                    logger.warning(f"No markdown, text, or HTML content found in fetched_data_dict for {url}. PDF generation and Supabase upload might be skipped or fail.")
+                    final_data_for_db_and_pdf["status"] = "completed_no_content"
+                    final_data_for_db_and_pdf["error_message"] = "Fetcher returned no substantive content (markdown, text, or HTML)."
+                    final_data_for_db_and_pdf["output_type"] = "no_content"
                     yield format_sse_message(
-                        "status", "pdf_generation", {"message": "Generating PDF..."}
+                        "warning", 
+                        "no_substantive_content",
+                        {"message": "No substantive content (markdown, text, or HTML) was found to process further."}
                     )
-                    if final_content_for_sse and pdf_path_from_fetcher:
-                        pdf_relative_path = pdf_path_from_fetcher
-                        logger.info(
-                            f"Using PDF path from {engine} fetch: {pdf_relative_path} for {url}"
-                        )
-                        yield format_sse_message(
-                            "status",
-                            "pdf_generation_complete",
-                            {
-                                "message": f"PDF ready at {pdf_relative_path}",
-                                "pdf_path": pdf_relative_path,
-                            },
-                        )
-                    elif final_content_for_sse:
-                        try:
-                            unique_pdf_filename = generate_unique_filename(
-                                fetched_url_actual, "pdf"
-                            )
-                            output_pdf_filepath = (
-                                PDF_STORAGE_BASE_DIR / unique_pdf_filename
-                            )
 
-                            logger.info(
-                                f"Attempting PDF generation for {fetched_url_actual} to {output_pdf_filepath}"
+                else:
+                    # --- PDF Generation (if requested and has markdown) ---
+                    if generate_pdf:
+                        if markdown_content:
+                            yield format_sse_message(
+                                "status",
+                                "pdf_generation_starting",
+                                {"message": "Generating PDF from markdown..."},
                             )
-                            pdf_conversion_successful = (
-                                await generate_pdf_from_markdown_string(
-                                    final_content_for_sse, str(output_pdf_filepath)
+                            try:
+                                pdf_relative_path = await convert_md_to_pdf_util(
+                                    markdown_content, fetched_url_actual, title
                                 )
-                            )
+                                if pdf_relative_path:
+                                    final_data_for_db_and_pdf["processed_content_path"] = pdf_relative_path
+                                    # Update output_type if it was just markdown, now it's also PDF
+                                    if final_data_for_db_and_pdf["output_type"] == "markdown":
+                                        final_data_for_db_and_pdf["output_type"] = "markdown_and_pdf"
+                                    elif final_data_for_db_and_pdf["output_type"] == "html": # if MD was derived from HTML
+                                         final_data_for_db_and_pdf["output_type"] = "html_markdown_and_pdf"
+                                    else: # text, etc.
+                                        final_data_for_db_and_pdf["output_type"] = "pdf"
 
-                            if pdf_conversion_successful:
-                                base_storage_dir_name = PDF_STORAGE_BASE_DIR.name
-                                pdf_relative_path = (
-                                    Path(base_storage_dir_name) / unique_pdf_filename
-                                )
-                                pdf_relative_path = str(pdf_relative_path).replace(
-                                    "\\\\", "/"
-                                )
-                                logger.info(
-                                    f"PDF generated via main.py, relative path: {pdf_relative_path}"
-                                )
-                                yield format_sse_message(
-                                    "status",
-                                    "pdf_generation_complete",
-                                    {
-                                        "message": f"PDF generated at {pdf_relative_path}",
-                                        "pdf_path": pdf_relative_path,
-                                    },
-                                )
-                            else:
+
+                                    yield format_sse_message(
+                                        "status",
+                                        "pdf_generation_complete",
+                                        {
+                                            "message": f"PDF generated: {pdf_relative_path}",
+                                            "pdf_path": pdf_relative_path,
+                                            "pdf_url": f"/view-pdf?path={urllib.parse.quote(pdf_relative_path)}",
+                                            "download_url": f"/download-pdf?path={urllib.parse.quote(pdf_relative_path)}",
+                                        },
+                                    )
+                                else:
+                                    logger.error(f"PDF generation failed for {url}, no path returned.")
+                                    yield format_sse_message(
+                                        "warning",
+                                        "pdf_generation_failed",
+                                        {"message": "PDF generation failed."},
+                                    )
+                            except Exception as e_pdf:
                                 logger.error(
-                                    f"PDF conversion failed in main.py for URL {fetched_url_actual}."
+                                    f"Error during PDF generation for {url}: {e_pdf}",
+                                    exc_info=True,
                                 )
                                 yield format_sse_message(
                                     "warning",
-                                    "pdf_generation_failed",
-                                    {"message": "PDF generation failed."},
+                                    "pdf_generation_error",
+                                    {"message": f"PDF generation error: {str(e_pdf)}"},
                                 )
-                        except Exception as e_pdf_gen:
-                            logger.error(
-                                f"Error during PDF generation in main.py for {fetched_url_actual}: {e_pdf_gen}",
-                                exc_info=True,
-                            )
-                            yield format_sse_message(
-                                "warning",
-                                "pdf_generation_error",
-                                {
-                                    "message": f"Error during PDF generation: {str(e_pdf_gen)}"
-                                },
-                            )
-                    else:  # No content for PDF
-                        yield format_sse_message(
-                            "status",
-                            "pdf_generation_skipped",
-                            {"message": "PDF generation skipped (no content)."},
-                        )
-
-                if upload_to_supabase:
-                    yield format_sse_message(
-                        "status",
-                        "supabase_upload",
-                        {"message": "Preparing for Supabase upload..."},
-                    )
-                    if final_content_for_sse:
-                        default_embedding_model_id = os.getenv(
-                            "DEFAULT_EMBEDDING_MODEL_ID",
-                            "openai/text-embedding-ada-002",
-                        )
-                        embedding = await get_embedding_with_registry(
-                            final_content_for_sse, model_id=default_embedding_model_id
-                        )
-                        if embedding:
-                            embedding_generated = True
+                        elif pdf_path_from_fetcher: # e.g. Jina already made a PDF
+                            final_data_for_db_and_pdf["processed_content_path"] = pdf_path_from_fetcher
+                            final_data_for_db_and_pdf["output_type"] = "pdf_direct" # Or append if other content types also exist
+                            logger.info(f"Using pre-generated PDF from fetcher: {pdf_path_from_fetcher}")
                             yield format_sse_message(
                                 "status",
-                                "embedding_complete",
-                                {"message": "Embedding generated."},
+                                "pdf_provided_by_fetcher",
+                                {
+                                    "message": f"PDF provided by fetcher: {pdf_path_from_fetcher}",
+                                    "pdf_path": pdf_path_from_fetcher,
+                                    "pdf_url": f"/view-pdf?path={urllib.parse.quote(pdf_path_from_fetcher)}",
+                                    "download_url": f"/download-pdf?path={urllib.parse.quote(pdf_path_from_fetcher)}",
+                                },
                             )
-                            supabase_content_id = await upsert_content_to_supabase(
-                                url=fetched_url_actual,
-                                title=title,
-                                markdown_content=final_content_for_sse,
-                                embedding=embedding,
-                                pdf_path=pdf_relative_path,
+                        else: # No markdown and no pre-existing PDF from fetcher
+                             yield format_sse_message(
+                                "status",
+                                "pdf_generation_skipped",
+                                {"message": "PDF generation skipped (no markdown content or pre-existing PDF)."},
                             )
-                            if supabase_content_id:
-                                supabase_content_id_str = str(supabase_content_id)
-                                yield format_sse_message(
-                                    "status",
-                                    "supabase_upload_complete",
-                                    {
-                                        "message": f"Content uploaded to Supabase with ID: {supabase_content_id_str}",
-                                        "database_id": supabase_content_id_str,
-                                    },
-                                )
-                            else:
-                                yield format_sse_message(
-                                    "warning", "Supabase upload failed."
-                                )
+                    else: # generate_pdf is False
+                        yield format_sse_message("status", "pdf_generation_disabled", {"message": "PDF generation disabled by request."})
+
+
+                    # --- Supabase Upload (if requested and has content) ---
+                    if upload_to_supabase:
+                        if not text_content_for_embedding and not markdown_content: # Ensure there's something to embed/store
+                            logger.warning(f"Supabase upload skipped for {url}: No text or markdown content available for embedding/storage.")
+                            yield format_sse_message("warning", "supabase_upload_skipped_no_content", {"message": "Supabase upload skipped: no text/markdown content."})
+                        elif not supabase_client_for_history: # Check if client is available (it should be from history creation)
+                            logger.error(f"Supabase client not available, skipping upload for {url}.")
+                            yield format_sse_message("error", "supabase_client_unavailable_for_upload", {"message": "Supabase client unavailable for upload."})
                         else:
                             yield format_sse_message(
-                                "warning",
-                                "Embedding generation failed (via registry), skipping Supabase upload.",
+                                "status",
+                                "embedding_and_upload_starting",
+                                {"message": "Generating embedding and uploading to Supabase..."},
                             )
-                    else:
-                        yield format_sse_message(
-                            "status",
-                            "supabase_upload_skipped",
-                            {"message": "Supabase upload skipped (no content)."},
-                        )
+                            embedding_text = text_content_for_embedding if text_content_for_embedding else markdown_content
+                            try:
+                                embedding = await get_embedding_with_registry(embedding_text) # Use registry
+                                embedding_generated = bool(embedding)
+                                
+                                if embedding_generated:
+                                    yield format_sse_message("status", "embedding_generated", {"message": "Embedding generated."})
+                                else:
+                                    yield format_sse_message("warning", "embedding_failed", {"message": "Embedding generation failed or returned empty."})
 
-                if fetch_history_id and supabase_client_for_history:
-                    # Define fallback values for missing variables
-                    content_storage_path_local = None  # Fallback for missing variable
-                    raw_content_path_local = None  # Fallback for missing variable
-
-                    # Determine the output_type for the history record
-                    current_output_type = "unknown"  # Default
-                    final_processed_content_path = (
-                        content_storage_path_local  # Default to markdown/text path
-                    )
-
-                    if pdf_relative_path:  # If a PDF was generated
-                        current_output_type = "pdf"
-                        final_processed_content_path = pdf_relative_path
-                    elif (
-                        output_format
-                    ):  # output_format is a Query param for /fetch-content
-                        current_output_type = output_format.lower()
-                        # final_processed_content_path remains content_storage_path_local (for md, txt etc)
-                    elif (
-                        markdown_content
-                    ):  # Fallback if no explicit format but markdown exists
-                        current_output_type = "markdown"
-                        # final_processed_content_path remains content_storage_path_local
-
-                    success_update_data = {
-                        "status": "success",
-                        "content_summary": (final_content_for_sse or "")[:500] + "..."
-                        if final_content_for_sse and len(final_content_for_sse) > 500
-                        else (final_content_for_sse or "No content."),
-                        "raw_content_path": raw_content_path_local
-                        if raw_content_path_local
-                        and raw_content_path_local != final_processed_content_path
-                        else None,
-                        "processed_content_path": final_processed_content_path,
-                        "supabase_content_id": supabase_content_id_str
-                        if supabase_content_id_str
-                        else None,
-                        "output_type": current_output_type,  # Set the output_type
-                    }
-                    (
-                        history_update_sse_msg,
-                        db_write_ok,
-                    ) = await _update_fetch_history_record(
-                        supabase_client_for_history,
-                        fetch_history_id,
-                        success_update_data,
-                        all_request_params,
-                    )
-                    if db_write_ok and success_update_data.get("status") in [
-                        "success",
-                        "failed",
-                    ]:
-                        terminal_status_written_to_db = True
-                    if history_update_sse_msg:
-                        yield history_update_sse_msg
-
-                final_payload_data = {
-                    "url": fetched_url_actual,
-                    "title": title,
-                    "content": final_content_for_sse,
-                    "markdown_content_fallback": markdown_content
-                    if final_content_for_sse != markdown_content
-                    and llm_extracted_content is not None
-                    else None,
-                    "content_preview": (final_content_for_sse or "")[:250] + "..."
-                    if final_content_for_sse
-                    else "No content.",
-                    "pdf_path": pdf_relative_path,
-                    "embedding_generated": embedding_generated,
-                    "database_id": supabase_content_id_str,
-                    "engine_used": engine,
-                    "fetcher_non_fatal_error": fetched_data_dict.get("error"),
-                }
-                yield format_sse_message(
-                    "completed",
-                    final_payload_data,
-                    {"message": f"Fetch process completed for {url}."},
-                )
-
-            elif fetched_data_dict and fetched_data_dict.get("error"):
-                error_msg_content = fetched_data_dict.get(
-                    "content", f"Unknown error after fetching with {engine}"
-                )
+                                supabase_content_id_str = await upsert_content_to_supabase(
+                                    supabase_client=supabase_client_for_history, # Reuse client
+                                    url=fetched_url_actual,
+                                    title=title,
+                                    markdown_content=markdown_content, # Store full markdown
+                                    embedding=embedding,
+                                    pdf_path=final_data_for_db_and_pdf.get("processed_content_path"), # Use path from DB dict
+                                    metadata_payload=fetched_data_dict.get("metadata"), # Pass along metadata
+                                    raw_html_content=fetched_data_dict.get("content"), # Store raw HTML if available
+                                    text_content=text_content_for_embedding, # Store plain text
+                                    screenshot_base64=screenshot_base64_data # Store screenshot
+                                )
+                                if supabase_content_id_str:
+                                    final_data_for_db_and_pdf["supabase_content_id"] = supabase_content_id_str
+                                    yield format_sse_message(
+                                        "status",
+                                        "upload_complete",
+                                        {
+                                            "message": f"Content uploaded to Supabase. ID: {supabase_content_id_str}",
+                                            "supabase_id": supabase_content_id_str,
+                                        },
+                                    )
+                                else:
+                                    logger.error(
+                                        f"Supabase upload failed for {url}, no ID returned."
+                                    )
+                                    yield format_sse_message(
+                                        "warning",
+                                        "upload_failed",
+                                        {"message": "Supabase upload failed."},
+                                    )
+                            except Exception as e_supabase:
+                                logger.error(
+                                    f"Error during Supabase embedding/upload for {url}: {e_supabase}",
+                                    exc_info=True,
+                                )
+                                yield format_sse_message(
+                                    "warning",
+                                    "upload_error",
+                                    {"message": f"Supabase upload error: {str(e_supabase)}"},
+                                )
+                    else: # upload_to_supabase is False
+                        yield format_sse_message("status", "supabase_upload_disabled", {"message": "Supabase upload disabled by request."})
+                    
+                    final_data_for_db_and_pdf["status"] = "success" # If we got here through content processing
+            
+            elif fetched_data_dict and (fetched_data_dict.get("error") or fetched_data_dict.get("status_code", 200) >=400) : # Fetcher itself reported an error in the main data payload
+                error_from_fetcher = fetched_data_dict.get("error", "Unknown error from fetcher payload.")
+                status_code_from_fetcher = fetched_data_dict.get("status_code", "N/A")
                 logger.error(
-                    f"Fetch process for {url} by {engine} resulted in error state: {error_msg_content}"
+                    f"Fetcher returned an error in its main payload for {url}. Status: {status_code_from_fetcher}, Error: {error_from_fetcher}"
                 )
-                if fetch_history_id and supabase_client_for_history:
-                    failure_update_data = {
-                        "status": "failed",
-                        "error_message": str(error_msg_content)[:1000],
-                    }
-                    (
-                        history_update_sse_msg,
-                        db_write_ok,
-                    ) = await _update_fetch_history_record(
-                        supabase_client_for_history,
-                        fetch_history_id,
-                        failure_update_data,
-                        all_request_params,
-                    )
-                    if db_write_ok and failure_update_data.get("status") in [
-                        "success",
-                        "failed",
-                    ]:
-                        terminal_status_written_to_db = True
-                    if history_update_sse_msg:
-                        yield history_update_sse_msg
-                yield format_sse_message("error", error_msg_content)
+                yield format_sse_message(
+                    "error",
+                    "fetcher_payload_error",
+                    {
+                        "message": f"Content fetcher reported an error: {error_from_fetcher}",
+                        "status_code": status_code_from_fetcher,
+                        "details": str(fetched_data_dict) # Log the whole dict for debugging
+                    },
+                )
+                final_data_for_db_and_pdf["status"] = "failed"
+                final_data_for_db_and_pdf["error_message"] = f"Fetcher Error (status {status_code_from_fetcher}): {error_from_fetcher}"
+                final_data_for_db_and_pdf["output_type"] = "error_payload"
 
-            else:  # No fetched_data_dict (e.g., engine failed to initialize or returned unexpected structure)
-                final_error_message = f"Failed to retrieve or process data using {engine} for {url}. No valid data dictionary was produced."
-                logger.error(final_error_message)
-                if fetch_history_id and supabase_client_for_history:
-                    failure_update_data = {
-                        "status": "failed",
-                        "error_message": final_error_message[:1000],
-                    }
-                    (
-                        history_update_sse_msg,
-                        db_write_ok,
-                    ) = await _update_fetch_history_record(
-                        supabase_client_for_history,
-                        fetch_history_id,
-                        failure_update_data,
-                        all_request_params,
+
+            else:  # fetched_data_dict is None or empty (should be caught by the check after crawl4ai loop for that engine)
+                if engine.lower() != "crawl4ai": # Only log this if not crawl4ai, as crawl4ai has its own check
+                    logger.error(
+                        f"Failed to retrieve or process data using {engine} for {url}. No valid data dictionary was produced."
                     )
-                    if db_write_ok and failure_update_data.get("status") in [
-                        "success",
-                        "failed",
-                    ]:
-                        terminal_status_written_to_db = True
-                    if history_update_sse_msg:
-                        yield history_update_sse_msg
-                yield format_sse_message("error", final_error_message)
+                    yield format_sse_message(
+                        "error",
+                        "no_valid_data_dictionary",
+                        {
+                            "message": f"Engine {engine} completed but no valid data was processed internally. Check engine's direct output."
+                        },
+                    )
+                # Ensure history is updated if we fall through here without a specific error status written
+                final_data_for_db_and_pdf["status"] = "failed" # Default to failed if no data
+                final_data_for_db_and_pdf["error_message"] = final_data_for_db_and_pdf.get("error_message") or f"{engine.capitalize()} fetch completed but no data processed by backend."
+                final_data_for_db_and_pdf["output_type"] = "processing_failure"
+
+
+            # --- Final Update to Fetch History ---
+            if fetch_history_id and supabase_client_for_history and not terminal_status_written_to_db:
+                # Use the data accumulated in final_data_for_db_and_pdf
+                logger.info(f"Attempting final history update for ID {fetch_history_id} with status: {final_data_for_db_and_pdf.get('status')}")
+                sse_hist_update_msg, db_write_ok = await _update_fetch_history_record(
+                    supabase_client_for_history,
+                    fetch_history_id,
+                    final_data_for_db_and_pdf, # Pass the dictionary
+                    all_request_params,
+                )
+                if sse_hist_update_msg: # This contains either success or failure of DB write
+                    yield sse_hist_update_msg 
+                if db_write_ok and final_data_for_db_and_pdf.get("status") in ["success", "failed", "completed_no_content", "processing_failed"]:
+                     terminal_status_written_to_db = True # Final status is now in DB
+
+
+            yield format_sse_message(
+                "status",
+                "completed",
+                {"message": f"Fetch process for {url} concluded with overall status: {final_data_for_db_and_pdf.get('status', 'unknown')}."},
+            )
 
         except asyncio.CancelledError:
-            logger.info(
-                f"SSE /fetch-content connection closed by client {client_host} for URL: {url}"
-            )
-            if (
-                fetch_history_id
-                and supabase_client_for_history
-                and not terminal_status_written_to_db
-            ):
-                failure_update_data = {
-                    "status": "failed",
-                    "error_message": "Fetch cancelled by client.",
-                }
-                _, db_write_ok = await _update_fetch_history_record(
-                    supabase_client_for_history,
-                    fetch_history_id,
-                    failure_update_data,
-                    all_request_params,
-                )
-                if db_write_ok and failure_update_data.get("status") in [
-                    "success",
-                    "failed",
-                ]:  # Check status is terminal
-                    terminal_status_written_to_db = True  # Ensure flag is set
-            elif (
-                fetch_history_id
-                and supabase_client_for_history
-                and terminal_status_written_to_db
-            ):  # Already success, but client cancelled
-                logger.info(
-                    f"Fetch cancelled by client after 'success' status was set for {fetch_history_id}. Status remains 'success'."
-                )
-                post_success_error_update = {
-                    "error_message": "Fetch cancelled by client post-success."[:1000]
-                }  # Update error message, status remains success
+            logger.info(f"Fetch process for {url} was cancelled by client.")
+            yield format_sse_message("status", "cancelled", {"message": "Process cancelled by client."})
+            if fetch_history_id and supabase_client_for_history and not terminal_status_written_to_db:
+                cancel_update_data = {"status": "cancelled", "error_message": "Process cancelled by client."}
                 await _update_fetch_history_record(
-                    supabase_client_for_history,
-                    fetch_history_id,
-                    post_success_error_update,
-                    all_request_params,
-                )  # db_write_ok not critical here
-            # No yield here as the connection is likely gone
-        except HTTPException as http_exc:
-            logger.warning(
-                f"HTTPException in /fetch-content generator for {url}: {http_exc.detail}",
-                exc_info=True,
-            )
-            final_error_message_to_client = f"Server error: {http_exc.detail}"
-            db_error_message = f"HTTPException: {str(http_exc.detail)}"[:1000]
-
-            if (
-                fetch_history_id
-                and supabase_client_for_history
-                and not terminal_status_written_to_db
-            ):
-                failure_update_data = {
-                    "status": "failed",
-                    "error_message": db_error_message,
-                }
-                (
-                    history_update_sse_msg,
-                    db_write_ok,
-                ) = await _update_fetch_history_record(
-                    supabase_client_for_history,
-                    fetch_history_id,
-                    failure_update_data,
-                    all_request_params,
+                    supabase_client_for_history, fetch_history_id, cancel_update_data, all_request_params
                 )
-                if db_write_ok and failure_update_data.get("status") in [
-                    "success",
-                    "failed",
-                ]:  # Check status is terminal
-                    terminal_status_written_to_db = True  # Ensure flag is set
-                if history_update_sse_msg:
-                    try:
-                        yield history_update_sse_msg
-                    except Exception:
-                        pass
-            elif (
-                fetch_history_id
-                and supabase_client_for_history
-                and terminal_status_written_to_db
-            ):  # Already success
-                logger.info(
-                    f"HTTPException occurred after 'success' status for {fetch_history_id}. Error: {db_error_message}. Status remains 'success'."
-                )
-                post_success_error_update = {
-                    "error_message": f"Post-success HTTPException: {str(http_exc.detail)}"[
-                        :1000
-                    ]
-                }
-                await _update_fetch_history_record(
-                    supabase_client_for_history,
-                    fetch_history_id,
-                    post_success_error_update,
-                    all_request_params,
-                )
-            try:
-                yield format_sse_message("error", final_error_message_to_client)
-            except Exception:
-                pass
-        except Exception as e:
+        except Exception as e_outer:
             logger.error(
-                f"Unexpected error in /fetch-content SSE generator for {url} with {engine}: {e}",
+                f"Unhandled error in fetch content event generator for {url}: {e_outer}",
                 exc_info=True,
             )
-            final_error_message_to_client = (
-                f"An unexpected server error occurred: {str(e)}"
+            yield format_sse_message(
+                "error", "unhandled_exception", {"message": f"Server error: {str(e_outer)}"}
             )
-            db_error_message = f"Unexpected error: {str(e)}"[:1000]
-
-            if (
-                fetch_history_id
-                and supabase_client_for_history
-                and not terminal_status_written_to_db
-            ):
-                failure_update_data = {
+            if fetch_history_id and supabase_client_for_history and not terminal_status_written_to_db:
+                unhandled_exc_update_data = {
                     "status": "failed",
-                    "error_message": db_error_message,
-                }
-                (
-                    history_update_sse_msg,
-                    db_write_ok,
-                ) = await _update_fetch_history_record(
-                    supabase_client_for_history,
-                    fetch_history_id,
-                    failure_update_data,
-                    all_request_params,
-                )
-                if db_write_ok and failure_update_data.get("status") in [
-                    "success",
-                    "failed",
-                ]:  # Check status is terminal
-                    terminal_status_written_to_db = True  # Ensure flag is set
-                if history_update_sse_msg:
-                    try:
-                        yield history_update_sse_msg
-                    except Exception:
-                        pass
-            elif (
-                fetch_history_id
-                and supabase_client_for_history
-                and terminal_status_written_to_db
-            ):  # Already success
-                logger.info(
-                    f"Error occurred after 'success' status was set for {fetch_history_id}. Error: {db_error_message}. Status remains 'success'."
-                )
-                post_success_error_update = {
-                    "error_message": f"Post-success error: {str(e)}"[:1000]
+                    "error_message": f"Unhandled exception: {str(e_outer)[:500]}", # Truncate
+                    "output_type": "exception",
                 }
                 await _update_fetch_history_record(
                     supabase_client_for_history,
                     fetch_history_id,
-                    post_success_error_update,
+                    unhandled_exc_update_data,
                     all_request_params,
                 )
-            try:
-                yield format_sse_message("error", final_error_message_to_client)
-            except Exception:
-                pass
         finally:
-            # Removed automatic 'failed' status update in finally block
-            # Relying on explicit 'success' or 'failed' updates within the main logic
-            logger.info(
-                f"SSE /fetch-content event generator finished for {client_host}, URL: {url}"
-            )
+            logger.info(f"SSE event stream for {url} finished.")
+            # Final history update if a terminal status wasn't successfully written for some reason
+            if fetch_history_id and supabase_client_for_history and not terminal_status_written_to_db:
+                logger.warning(f"Fetch for {url} (ID: {fetch_history_id}) ended without a confirmed terminal status in DB. Attempting final 'unknown_outcome' update.")
+                final_fallback_data = {
+                    "status": "unknown_outcome",
+                    "error_message": "Process ended; terminal status could not be confirmed in database.",
+                }
+                await _update_fetch_history_record(
+                    supabase_client_for_history, fetch_history_id, final_fallback_data, all_request_params
+                )
 
-    return EventSourceResponse(event_generator(), media_type="text/event-stream")
+
+    return EventSourceResponse(event_generator())
 
 
 # --- PDF Serving Endpoints ---

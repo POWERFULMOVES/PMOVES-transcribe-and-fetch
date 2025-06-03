@@ -1,7 +1,7 @@
 version: '3.8'
 
 services:
-  litellm:
+  litellm-proxy:
     # Replace with your LiteLLM service definition
     image: litellm/proxy:latest
     ports:
@@ -12,16 +12,21 @@ services:
       # Mount your LiteLLM environment file for API keys
       - ./.env.litellm:/app/.env
     restart: unless-stopped
+    networks:
+      - pmoves-network
 
   crawl4ai:
-    # Use pre-built image from Docker Hub
-    image: unclecode/crawl4ai:latest # Or a specific version tag
+    build:
+      context: ./deployment/crawl4ai
+      dockerfile: Dockerfile.custom
     ports:
       - "11235:11235"
     volumes:
       # Mount config.yml from your project's config directory
       # Update the path below to match your project structure
       - ./deployment/crawl4ai/config.yml:/app/config.yml
+      - crawl4ai_hf_cache:/home/appuser/.cache/huggingface
+      - crawl4ai_internal_cache:/home/appuser/.crawl4ai
       # The .llm.env volume mount is generally not needed if routing via LiteLLM
       # - ./deployment/crawl4ai/.llm.env:/app/.llm.env
       # Optional: Mount a volume for crawl4ai cache if you want persistence
@@ -34,6 +39,8 @@ services:
       timeout: 10s
       start_period: 5s
       retries: 3
+    networks:
+      - pmoves-network
 
   pipecat:
     # Replace with your Pipecat service definition
@@ -45,11 +52,16 @@ services:
     #   - "your_pipecat_port:your_pipecat_port"
     # volumes:
     #   - ./your_pipecat_config:/app/config
+    environment:
+      - LITELLM_PROXY_URL=http://litellm-proxy:4000
+      # Add other necessary Pipecat env vars here
     restart: unless-stopped
     depends_on:
-      - litellm
+      - litellm-proxy
       - crawl4ai
     # Add healthcheck if needed
+    networks:
+      - pmoves-network
 
   supabase-agent:
     # Fixed build context to point to the correct supabase-agent directory
@@ -64,7 +76,7 @@ services:
     environment:
       # Container-specific overrides
       - AGENT_ENDPOINT_URL=http://supabase-agent:8002
-      - LITELLM_PROXY_URL=http://litellm:4000
+      - LITELLM_PROXY_URL=http://litellm-proxy:4000
       - AGENT_REGISTRY_URL=http://backend:8000/agents
     volumes:
       # Optional: Mount for development
@@ -77,12 +89,20 @@ services:
       retries: 3
       start_period: 10s
     depends_on:
-      - litellm
+      - litellm-proxy
       - crawl4ai
       - pipecat
-      # Add Supabase dependency here if running Supabase as a service
-      # - supabase
+    # Add Supabase dependency here if running Supabase as a service
+    # - supabase
+    networks:
+      - pmoves-network
 
 # Optional: Define named volumes
 # volumes:
-#   crawl4ai_cache: 
+#   crawl4ai_cache:
+volumes:
+  crawl4ai_hf_cache: {}
+  crawl4ai_internal_cache: {}
+networks:
+  pmoves-network:
+    driver: bridge

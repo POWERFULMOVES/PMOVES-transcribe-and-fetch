@@ -1,3 +1,8 @@
+# THIS FILE IS POTENTIALLY REDUNDANT OR AN OLD VARIANT.
+# backend/app/crawl4ai_docker_fetcher.py is currently the preferred file for interacting with the Crawl4AI Docker service.
+# This file also uses Crawl4aiDockerClient but has a slightly different payload structure for the client.crawl() method.
+# Review carefully before use or consider for deletion if confirmed redundant.
+
 # -*- coding: utf-8 -*-
 """
 Module to handle content fetching using the crawl4ai library.
@@ -30,7 +35,7 @@ from crawl4ai import (
 )
 # from crawl4ai.async_crawler_strategy import AsyncPlaywrightCrawlerStrategy # Not needed when using Docker client
 from crawl4ai.content_filter_strategy import PruningContentFilter # Added for advanced MD generator
-from crawl4ai.models import CrawlResultContainer # Added to handle new result type
+# from crawl4ai.models import CrawlResultContainer # Removed unused import
 from crawl4ai.models import MarkdownGenerationResult # Added for type checking markdown field
 from crawl4ai.deep_crawling.filters import FilterChain, URLPatternFilter
 from crawl4ai.deep_crawling.scorers import URLScorer, KeywordRelevanceScorer
@@ -39,13 +44,13 @@ from crawl4ai.deep_crawling.scorers import URLScorer, KeywordRelevanceScorer
 from crawl4ai.docker_client import Crawl4aiDockerClient, Crawl4aiClientError
 
 # --- Local Imports ---
-try:
-    from .utils.llm_registry_service import get_llm_registry_service # Import the getter function
-    LLM_REGISTRY_AVAILABLE = True
-except ImportError:
-    LLM_REGISTRY_AVAILABLE = False # Keep this flag
-    get_llm_model_details_from_registry = None # type: ignore
-    logger.error("llm_registry_service not available. LLM model selection will rely on direct parameters.")
+# try:
+#     from .utils.llm_registry_service import get_llm_registry_service # Removed unused import
+#     LLM_REGISTRY_AVAILABLE = True
+# except ImportError:
+#     LLM_REGISTRY_AVAILABLE = False # Keep this flag
+#     get_llm_model_details_from_registry = None # type: ignore
+#     logger.error("llm_registry_service not available. LLM model selection will rely on direct parameters.")
 
 try:
     from .app_config import LITELLM_PROXY_URL, LITELLM_PROXY_API_KEY
@@ -132,8 +137,7 @@ async def fetch_with_crawl4ai(url: str, original_request_params: Dict[str, Any])
     # Define the base URL for the crawl4ai Docker service
     # This should match the service name and port in your docker-compose-core.yml
     CRAWL4AI_SERVICE_URL = os.getenv('CRAWL4AI_SERVICE_URL', 'http://crawl4ai:11235')
-    # If your crawl4ai service requires an API token (configured in its config.yml)
-    CRAWL4AI_API_TOKEN = os.getenv('CRAWL4AI_API_TOKEN') # You will need to set this env var in your backend service
+    CRAWL4AI_API_TOKEN = os.getenv("CRAWL4AI_API_TOKEN")
 
     crawl4ai_client = None # Initialize client to None
 
@@ -142,9 +146,34 @@ async def fetch_with_crawl4ai(url: str, original_request_params: Dict[str, Any])
 
         # --- Initialize Crawl4aiDockerClient ---
         # Pass the service URL and API token if required
-        crawl4ai_client = Crawl4aiDockerClient(base_url=CRAWL4AI_SERVICE_URL, api_token=CRAWL4AI_API_TOKEN)
-        await crawl4ai_client.authenticate() # Authenticate if using JWT
-        yield json.dumps({"type": "status", "status": "initialized", "message": "crawl4ai service client initialized."})
+        if not CRAWL4AI_SERVICE_URL:
+            logger.error("CRAWL4AI_SERVICE_URL is not set. Cannot connect to Crawl4AI service.")
+            yield json.dumps({
+                "type": "error",
+                "timestamp": datetime.now().isoformat(),
+                "id": str(time.time()),
+                "message": "Crawl4AI service URL is not configured. Fetching aborted."
+            })
+            return
+
+        logger.info(f"Attempting to initialize Crawl4aiDockerClient with base_url: {CRAWL4AI_SERVICE_URL}")
+        crawl4ai_client = Crawl4aiDockerClient(base_url=CRAWL4AI_SERVICE_URL)
+        logger.info(f"Crawl4aiDockerClient initialized successfully.")
+
+        # --- Perform client-side authentication step ---
+        # Even if server auth is disabled (as per config.yml),
+        # the client library might expect authenticate() to be called.
+        try:
+            logger.info("Attempting to call Crawl4aiDockerClient.authenticate().")
+            # Provide a placeholder email as a positional argument as per documentation example.
+            await crawl4ai_client.authenticate("placeholder@example.com") 
+            logger.info("Crawl4aiDockerClient.authenticate() called successfully.")
+        except Exception as auth_err:
+            logger.error(f"Error during Crawl4aiDockerClient.authenticate() call: {auth_err}", exc_info=True)
+            yield json.dumps({"type": "error", "message": f"Error during client authentication handshake: {auth_err}"})
+            return # Stop if this step fails
+
+        yield json.dumps({"type": "status", "status": "initialized", "message": "Crawl4AI client initialized."})
 
         # --- BrowserConfig Population ---
         # UI parameters are sourced from docs/fetch_page_enhancement_plan.md (lines 81-133)
@@ -334,149 +363,89 @@ async def fetch_with_crawl4ai(url: str, original_request_params: Dict[str, Any])
 
         # --- Extraction Strategy Population ---
         extraction_strategy_instance: Optional[ExtractionStrategy] = None
-        extraction_strategy_type = params.get("extraction_strategy")
+        # Default to "html" if not specified, as per previous logic before 'none' default
+        extraction_strategy_name = params.get("extraction_strategy") or "html" # Default to 'html'
+        extraction_params = {} # Initialize as an empty dict
 
-        if extraction_strategy_type and isinstance(extraction_strategy_type, str):
-            if extraction_strategy_type.lower() == "llm":
-                # --- LLMExtractionStrategy Population (Advanced) ---
-                llm_extraction_strategy_params = {}
+        # Check if extraction_config is provided (this is the JSON blob from the UI)
+        extraction_config_blob = params.get("extraction_config")
+        if isinstance(extraction_config_blob, str) and extraction_config_blob.strip():
+            try:
+                parsed_config = json.loads(extraction_config_blob)
+                if isinstance(parsed_config, dict):
+                    extraction_strategy_name = parsed_config.get("strategy", extraction_strategy_name) # Override name if in blob
+                    extraction_params = parsed_config # Use the whole blob as params for the strategy
+                    logger.info(f"Using extraction_config JSON blob: strategy_name='{extraction_strategy_name}', params='{extraction_params}'")
+                else:
+                    logger.warning(f"Parsed extraction_config string was not a dict: {type(parsed_config)}. Using default/individual params.")
+            except json.JSONDecodeError:
+                logger.error(f"Failed to parse extraction_config string: {extraction_config_blob}. Using default/individual params.", exc_info=True)
+        elif isinstance(extraction_config_blob, dict): # If it was already a dictionary
+            extraction_strategy_name = extraction_config_blob.get("strategy", extraction_strategy_name)
+            extraction_params = extraction_config_blob
+            logger.info(f"Using pre-parsed extraction_config dict: strategy_name='{extraction_strategy_name}', params='{extraction_params}'")
+        elif extraction_config_blob is not None:
+            logger.warning(f"extraction_config was an unexpected type: {type(extraction_config_blob)}. Using default/individual params.")
 
-                # Get LLM Model Config from LLM Registry (Preferred)
-                llm_model_alias = params.get("llm_model_alias") or os.getenv('DEFAULT_LLM_MODEL_ALIAS') # Use alias from params or env var
-                llm_config_instance: Optional[LLMConfig] = None
 
-                if llm_model_alias and LLM_REGISTRY_AVAILABLE and get_llm_registry_service:
-                    llm_registry = get_llm_registry_service()
-                    if llm_registry:
-                        try:
-                            # Get model details from the registry using the alias
-                            model_details = await llm_registry.get_model_details(llm_model_alias)
-                            if model_details:
-                                # Construct LLMConfig using details from the registry
-                                # The LiteLLM proxy URL is obtained from app_config or fallback env var
-                                if PROXY_CONFIG_LOADED or LITELLM_PROXY_URL:
-                                    llm_config_instance = LLMConfig(
-                                        model=llm_model_alias, # Use the alias defined in LiteLLM config
-                                        api_base=LITELLM_PROXY_URL, # Point to the LiteLLM proxy
-                                        # API key is handled by the LiteLLM proxy based on its env config
-                                        api_key=LITELLM_PROXY_API_KEY, # Pass the proxy's API key (if any)
-                                        # Pass extra params from registry or request if needed by the strategy/proxy
-                                        extra_params=model_details.get("extra_params"),
-                                        # temperature, max_tokens, etc. can also be passed here if needed
-                                        # temperature=params.get("llm_temperature"),
-                                        # max_tokens=params.get("llm_max_tokens"),
-                                    )
-                                    logger.info(f"Using LLMConfig from registry details for alias: {llm_model_alias}")
-                                else:
-                                    logger.warning("LiteLLM proxy URL not configured, cannot create LLMConfig from registry.")
-                            else:
-                                logger.warning(f"Model details not found in registry for alias: {llm_model_alias}")
-                        except Exception as e:
-                            logger.error(f"Error getting model details from registry for {llm_model_alias}: {e}", exc_info=True)
-                    else:
-                        logger.warning("LLM registry service not initialized.")
-                elif llm_model_alias:
-                     logger.warning("LLM registry service not available or model alias not provided. Using direct LLM params if available.")
+        logger.info(f"Determined extraction strategy: {extraction_strategy_name} with base params: {extraction_params}")
 
-                # Fallback: Direct LLM Parameters (if registry not used or failed)
-                if llm_config_instance is None:
-                    logger.info("Attempting to construct LLMConfig from direct parameters.")
-                    try:
-                        # Direct parameters from the request, mapping to LLMConfig attributes
-                        direct_llm_params_args = {
-                            "model": params.get("llm_model"), # Direct model name/ID
-                            "api_key": params.get("llm_api_key"), # Direct API Key
-                            "api_base": params.get("llm_api_base"), # Direct API Base URL
-                            "temperature": to_float(params.get("llm_temperature")), # Matches main.py Query param
-                            "max_tokens": to_int(params.get("llm_max_tokens")), # Matches main.py Query param
-                            "extra_params": to_json_dict(params.get("llm_extra_params")), # Matches main.py Query param
-                            "max_retries": to_int(params.get("llm_max_retries")), # Matches main.py Query param
-                            "timeout": to_float(params.get("llm_timeout")), # Matches main.py Query param
-                            # provider, api_version, organization, etc. can be added if needed
-                        }
-                        # Filter out None values
-                        filtered_direct_llm_params_args = {k: v for k, v in direct_llm_params_args.items() if v is not None}
+        if extraction_strategy_name.lower() == "llm":
+            # Parameters for LLMConfig are sourced from the main 'params' dictionary
+            # which includes llm_provider (model), llm_api_key, and crawl4ai_llm_base_url
+            llm_model_name = params.get("llm_provider") # This comes from main.py's llm_provider (aliased as crawl4ai_llm_provider_model)
+            api_key_val = params.get("llm_api_key")
+            base_url_val = params.get("crawl4ai_llm_base_url")
+            temperature_val = to_float(params.get("llm_temperature", 0.7)) # Default from main.py
+            max_tokens_val = to_int(params.get("llm_max_tokens", 1000))    # Default from main.py
 
-                        if filtered_direct_llm_params_args.get("model"): # Only create if a model is specified
-                             llm_config_instance = LLMConfig(**filtered_direct_llm_params_args)
-                             logger.info(f"Successfully constructed LLMConfig from direct parameters: {filtered_direct_llm_params_args}")
-                        else:
-                            logger.warning("No LLM model specified in direct parameters. LLMExtractionStrategy will not be created.")
+            llm_config_args_for_strategy = {}
+            if llm_model_name:
+                llm_config_args_for_strategy["provider"] = llm_model_name  # Use 'provider' as required by Crawl4AI
+            if api_key_val:
+                llm_config_args_for_strategy["api_key"] = api_key_val
+            if base_url_val:
+                llm_config_args_for_strategy["base_url"] = base_url_val
+            if temperature_val is not None:
+                llm_config_args_for_strategy["temperature"] = temperature_val
+            if max_tokens_val is not None:
+                llm_config_args_for_strategy["max_tokens"] = max_tokens_val
+            
+            # Add LiteLLM proxy details if not overridden by direct base_url
+            if not base_url_val and LITELLM_PROXY_URL:
+                llm_config_args_for_strategy["base_url"] = LITELLM_PROXY_URL
+                if LITELLM_PROXY_API_KEY and not api_key_val: # Only use proxy key if no direct key is given
+                    llm_config_args_for_strategy["api_key"] = LITELLM_PROXY_API_KEY
+                logger.info(f"LLM strategy using LiteLLM Proxy: {LITELLM_PROXY_URL}")
 
-                    except Exception as e:
-                         logger.error(f"Error constructing LLMConfig from direct parameters: {e}", exc_info=True)
+            llm_config_for_strategy = LLMConfig(**llm_config_args_for_strategy)
+            logger.info(f"LLMConfig for LLMExtractionStrategy: {llm_config_args_for_strategy}")
 
-                # Proceed only if LLMConfig instance was successfully created
-                if llm_config_instance:
-                    # --- LLMExtractionStrategy Specific Parameters ---
-                    llm_strategy_args = {
-                        "llm_config": llm_config_instance,
-                        "prompt_template": params.get("llm_prompt_template"), # Matches main.py Query param
-                        "output_format": params.get("llm_output_format"), # Matches main.py Query param (json, text)
-                        "json_schema": to_json_dict(params.get("llm_json_schema")), # Matches main.py Query param (for json output)
-                         # vision_enabled, audio_enabled are derived from the model capabilities via registry or config
-                         "vision_enabled": to_bool(params.get("llm_vision_enabled")), # Matches main.py Query param
-                         "audio_enabled": to_bool(params.get("llm_audio_enabled")), # Matches main.py Query param
-                         "tool_calling_enabled": to_bool(params.get("llm_tool_calling_enabled")), # Matches main.py Query param
-                         "thinking": params.get("llm_thinking"), # Matches main.py Query param
-                         "reasoning_effort": params.get("llm_reasoning_effort"), # Matches main.py Query param
-                         "cache_control": params.get("llm_cache_control"), # Matches main.py Query param
-                         "metadata": to_json_dict(params.get("llm_metadata")), # Matches main.py Query param
-                         "user": params.get("llm_user"), # Matches main.py Query param
-                         "input_file_types": to_list_str(params.get("llm_input_file_types")), # Matches main.py Query param
-                    }
-                    # Filter out None values
-                    filtered_llm_strategy_args = {k: v for k, v in llm_strategy_args.items() if v is not None}
+            # Specific params for LLMExtractionStrategy itself, from the 'params' field of the extraction_config blob
+            llm_strategy_constructor_params = extraction_params.get("params", {})
+            # Ensure prompt and schema are correctly passed if they are part of llm_strategy_constructor_params
+            # e.g., prompt = llm_strategy_constructor_params.get("prompt")
+            #       json_schema = llm_strategy_constructor_params.get("json_schema")
 
-                    try:
-                        extraction_strategy_instance = LLMExtractionStrategy(**filtered_llm_strategy_args)
-                        logger.info(f"Successfully created LLMExtractionStrategy with args: {filtered_llm_strategy_args}")
-                    except Exception as e:
-                        logger.error(f"Error creating LLMExtractionStrategy: {e}", exc_info=True)
-                        # If LLMExtractionStrategy creation fails, yield an error and stop
-                        yield json.dumps({"type": "error", "message": f"Failed to configure LLM Extraction Strategy: {e}"})
-                        return # Stop the generator
-
-            elif extraction_strategy_type.lower() == "cosine":
-                # Cosine Strategy parameters
-                cosine_strategy_args = {
-                    "query": params.get("cosine_query"),
-                    "threshold": to_float(params.get("cosine_threshold")), # Matches main.py Query param
-                    "content_weight": to_float(params.get("cosine_content_weight")), # Matches main.py Query param
-                    "summary_weight": to_float(params.get("cosine_summary_weight")), # Matches main.py Query param
-                    "keywords": to_list_str(params.get("cosine_keywords")), # Matches main.py Query param
-                }
-                # Filter out None values
-                filtered_cosine_strategy_args = {k: v for k, v in cosine_strategy_args.items() if v is not None}
-
-                try:
-                    extraction_strategy_instance = CosineStrategy(**filtered_cosine_strategy_args)
-                    logger.info(f"Successfully created CosineStrategy with args: {filtered_cosine_strategy_args}")
-                except Exception as e:
-                     logger.error(f"Error creating CosineStrategy: {e}", exc_info=True)
-                     yield json.dumps({"type": "error", "message": f"Failed to configure Cosine Extraction Strategy: {e}"})
-                     return # Stop the generator
-
-            elif extraction_strategy_type.lower() == "jsoncss":
-                # JsonCss Extraction Strategy parameters
-                jsoncss_strategy_args = {
-                    "css_selector": params.get("jsoncss_css_selector"), # Matches main.py Query param
-                    "extract_attribute": params.get("jsoncss_extract_attribute"), # Matches main.py Query param
-                }
-                # Filter out None values
-                filtered_jsoncss_strategy_args = {k: v for k, v in jsoncss_strategy_args.items() if v is not None}
-
-                try:
-                     extraction_strategy_instance = JsonCssExtractionStrategy(**filtered_jsoncss_strategy_args)
-                     logger.info(f"Successfully created JsonCssExtractionStrategy with args: {filtered_jsoncss_strategy_args}")
-                except Exception as e:
-                     logger.error(f"Error creating JsonCssExtractionStrategy: {e}", exc_info=True)
-                     yield json.dumps({"type": "error", "message": f"Failed to configure JsonCss Extraction Strategy: {e}"})
-                     return # Stop the generator
-            else:
-                logger.warning(f"Unknown extraction strategy type: {extraction_strategy_type}")
-                yield json.dumps({"type": "error", "message": f"Unknown extraction strategy type: {extraction_strategy_type}"})
-                return # Stop the generator
+            extraction_strategy_instance = LLMExtractionStrategy(
+                llm_config=llm_config_for_strategy,
+                **llm_strategy_constructor_params # Pass other params like prompt, json_schema
+            )
+            logger.info(f"LLMExtractionStrategy initialized with params: {llm_strategy_constructor_params}")
+        elif extraction_strategy_name.lower() == "cosine":
+            cosine_params = extraction_params.get("params", {})
+            extraction_strategy_instance = CosineStrategy(**cosine_params)
+            logger.info(f"CosineStrategy initialized with params: {cosine_params}")
+        elif extraction_strategy_name.lower() == "jsoncss":
+            jsoncss_params = extraction_params.get("params", {})
+            extraction_strategy_instance = JsonCssExtractionStrategy(**jsoncss_params)
+            logger.info(f"JsonCssExtractionStrategy initialized with params: {jsoncss_params}")
+        elif extraction_strategy_name.lower() == "html": # Explicitly handle 'html' or default
+            extraction_strategy_instance = None # Equivalent to default HTML extraction
+            logger.info("Using default HTML extraction strategy (instance is None).")
+        else: # Default or unrecognized strategy
+            extraction_strategy_instance = None # Or handle as an error/warning
+            logger.warning(f"Unknown or 'none' extraction strategy: '{extraction_strategy_name}'. Defaulting to HTML extraction.")
 
         # --- Markdown Generator Population ---
         # DefaultMarkdownGenerator is used unless a custom one is needed based on params.
@@ -507,15 +476,11 @@ async def fetch_with_crawl4ai(url: str, original_request_params: Dict[str, Any])
             "deep_crawl_strategy": deep_crawl_strategy_instance, # Pass the instantiated strategy object
             "extraction_strategy": extraction_strategy_instance, # Pass the instantiated strategy object
             "markdown_generator": markdown_generator_instance, # Pass the instantiated generator object
-            "max_timeout": to_float(params.get("max_timeout", 60.0)), # Matches main.py Query param, default 60s
-            "keep_html": to_bool(params.get("keep_html", False)), # Matches main.py Query param
-            "keep_text": to_bool(params.get("keep_text", True)), # Matches main.py Query param
-            "keep_markdown": to_bool(params.get("keep_markdown", True)), # Matches main.py Query param
-            "keep_screenshots": to_bool(params.get("keep_screenshots", False)), # Matches main.py Query param
-            "screenshots_dir": params.get("screenshots_dir"), # Matches main.py Query param
+            "screenshot": to_bool(params.get("capture_screenshot", False)), # Use 'screenshot' and map from 'capture_screenshot'
             "ignore_urls": to_list_str(params.get("ignore_urls")), # Matches main.py Query param
             "include_urls": to_list_str(params.get("include_urls")), # Matches main.py Query param
             "max_retries": to_int(params.get("max_retries")), # Matches main.py Query param
+            "page_timeout": to_int(params.get("timeout", 60) * 1000), # Convert seconds to ms. Param 'timeout' from main.py (crawl4ai_timeout_seconds)
             "retry_delay": to_float(params.get("retry_delay")), # Matches main.py Query param
             # Add other CrawlerRunConfig parameters as needed
         }
@@ -523,8 +488,68 @@ async def fetch_with_crawl4ai(url: str, original_request_params: Dict[str, Any])
         filtered_crawler_run_config_args = {k: v for k, v in crawler_run_config_args.items() if v is not None}
 
         # Create CrawlerRunConfig object from processed parameters
-        crawler_run_config = CrawlerRunConfig(**filtered_crawler_run_config_args)
-        logger.debug(f"CrawlerRunConfig: {filtered_crawler_run_config_args}") # Log the args passed
+        # crawler_run_config = CrawlerRunConfig(**filtered_crawler_run_config_args) # This is for local/in-process use
+        # logger.debug(f"CrawlerRunConfig object (for local use if any): {crawler_run_config}")
+
+
+        # --- Prepare JSON Serializable Parameters for Docker Client ---
+        # Base serializable parameters for CrawlerRunConfig
+        serializable_crawler_run_params_for_docker = {
+            # "url": url, # Remove: Redundant if top-level "urls" is used by the service endpoint
+            "screenshot": to_bool(params.get("capture_screenshot", False)),
+            # Add other simple parameters that are directly serializable
+            # Sourced from what CrawlerRunConfig would take:
+            "ignore_urls": to_list_str(params.get("ignore_urls")),
+            "include_urls": to_list_str(params.get("include_urls")),
+            "max_retries": to_int(params.get("max_retries")),
+            # Convert seconds to ms. Param 'timeout' from main.py (crawl4ai_timeout_seconds)
+            "page_timeout": to_int(params.get("timeout", 60) * 1000),
+            "retry_delay": to_float(params.get("retry_delay")),
+        }
+
+        # Handle deep_crawl_strategy for Docker payload
+        # final_deep_crawl_dict is already constructed to be serializable if deep_crawl_strategy_instance exists
+        if deep_crawl_strategy_instance and final_deep_crawl_dict:
+            serializable_crawler_run_params_for_docker["deep_crawl_strategy"] = final_deep_crawl_dict
+            logger.info(f"Docker payload: deep_crawl_strategy set to: {final_deep_crawl_dict}")
+        elif deep_crawl_strategy_instance and not final_deep_crawl_dict:
+            logger.warning("Docker payload: deep_crawl_strategy_instance exists but final_deep_crawl_dict is empty. Strategy omitted.")
+
+        # Handle extraction_strategy for Docker payload
+        # extraction_strategy_name (e.g. "llm", "cosine", "html", "none")
+        # extraction_params (dict, comes from the 'params' field of the extraction_config blob, or empty if no blob)
+        if extraction_strategy_name and extraction_strategy_name.lower() != 'none':
+            # Use extraction_params directly if it's already the dict of strategy parameters
+            # The structure sent to the service is usually {"name": "strategy_name", "params": {...config for that strategy...}}
+            # extraction_params from the UI is expected to be {"strategy": "name", "params": {...}}
+            # So, extraction_params.get("params", {}) is correct to get the inner params for the named strategy.
+            payload_inner_extraction_params = extraction_params.get("params", {})
+            serializable_crawler_run_params_for_docker["extraction_strategy"] = {
+                "name": extraction_strategy_name,
+                "params": payload_inner_extraction_params
+            }
+            logger.info(f"Docker payload: extraction_strategy set to: Name='{extraction_strategy_name}', Params='{payload_inner_extraction_params}'")
+        else:
+            logger.info(f"Docker payload: No specific extraction_strategy (or 'none') provided. Service will use its default.")
+
+        # Handle markdown_generator for Docker payload
+        # markdown_generator_param is the string from the request (e.g., "Default", "PruningMarkdown")
+        markdown_generator_name_from_request = params.get("crawl4ai_markdown_generator")
+        if markdown_generator_name_from_request and isinstance(markdown_generator_name_from_request, str) and markdown_generator_name_from_request.lower() != "none":
+            serializable_crawler_run_params_for_docker["markdown_generator"] = markdown_generator_name_from_request
+            logger.info(f"Docker payload: markdown_generator set to: '{markdown_generator_name_from_request}' from request.")
+        else:
+            # If not specified in request, or "none", use "default" explicitly.
+            # The Crawl4AI service should handle "default" appropriately.
+            serializable_crawler_run_params_for_docker["markdown_generator"] = "default"
+            logger.info("Docker payload: markdown_generator set to 'default'.")
+
+        # Filter out None values from the final serializable_crawler_run_params_for_docker
+        final_serializable_crawler_run_params_for_docker = {
+            k: v for k, v in serializable_crawler_run_params_for_docker.items() if v is not None
+        }
+        logger.debug(f"Final serializable CrawlerRunConfig params for Docker: {final_serializable_crawler_run_params_for_docker}")
+
 
         # --- Execute Crawl using Docker Client ---
         yield json.dumps({"type": "status", "status": "crawling", "message": f"Starting crawl for {url}..."})
@@ -535,14 +560,17 @@ async def fetch_with_crawl4ai(url: str, original_request_params: Dict[str, Any])
         # If deep crawling is enabled, the client/service handles finding additional URLs
         # based on the deep_crawl_strategy provided in the config.
 
-        # Prepare the request payload for the Docker client
         # The client expects config dictionaries, not Pydantic objects
         request_payload = {
             "urls": urls_to_crawl,
-            "browser_config": browser_config.model_dump() if hasattr(browser_config, 'model_dump') else browser_config.dict(), # Use model_dump for Pydantic v2+, dict for v1
-            "crawler_config": crawler_run_config.model_dump() if hasattr(crawler_run_config, 'model_dump') else crawler_run_config.dict(),
-             # Note: Nested strategy/generator objects might need custom serialization if .dict()/.model_dump() isn't sufficient
-             # based on crawl4ai client's API spec. Assuming they handle standard Pydantic dict output for now.
+            "browser_config": {
+                "type": "BrowserConfig",
+                "params": final_browser_config_args
+            },
+            "crawler_config": {
+                "type": "CrawlerRunConfig",
+                "params": final_serializable_crawler_run_params_for_docker
+            },
         }
 
         # Remove None values from the payload dictionary to avoid issues with the client API
@@ -559,7 +587,7 @@ async def fetch_with_crawl4ai(url: str, original_request_params: Dict[str, Any])
 
         # Call the crawl method on the Docker client
         # Assuming the client's crawl method yields results as they are processed by the service
-        async for crawl_result in crawl4ai_client.crawl(cleaned_request_payload):
+        async for crawl_result in await crawl4ai_client.crawl(cleaned_request_payload):
              # crawl_result is expected to be a CrawlResult object
              logger.debug(f"Received crawl result for URL: {crawl_result.url}")
 

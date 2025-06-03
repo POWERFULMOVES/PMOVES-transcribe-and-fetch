@@ -1,4 +1,4 @@
-from typing import Optional, Dict, Any
+from typing import Optional, Dict
 from ...models.tool_calling_models import ToolSchema
 
 
@@ -6,7 +6,8 @@ class ToolSchemaManager:
     def __init__(self):
         """
         Initializes the ToolSchemaManager.
-        In a more advanced setup, schemas could be loaded from a configuration file or database.
+        In a more advanced setup, schemas could be loaded from a configuration
+        file or database.
         """
         self._schemas: Dict[str, ToolSchema] = {
             "get_weather": {
@@ -14,7 +15,9 @@ class ToolSchemaManager:
                 "properties": {
                     "location": {
                         "type": "string",
-                        "description": "The city and state, e.g. San Francisco, CA",
+                        "description": (
+                            "The city and state, e.g. San Francisco, CA"
+                        ),
                     },
                     "unit": {"type": "string", "enum": ["celsius", "fahrenheit"]},
                 },
@@ -29,7 +32,8 @@ class ToolSchemaManager:
                 },
                 "required": ["to", "subject", "body"],
             },
-            # Placeholder: Schemas could be loaded from a configuration file or database here.
+            # Placeholder: Schemas could be loaded from a configuration file or
+            # database here.
         }
 
     def get_schema(self, tool_name: str) -> Optional[ToolSchema]:
@@ -46,7 +50,8 @@ class ToolSchemaManager:
 
     def load_schemas_from_config(self, config_path: str):
         """
-        Placeholder method to load schemas from an external configuration file (e.g., JSON or YAML).
+        Placeholder method to load schemas from an external configuration file
+        (e.g., JSON or YAML).
         """
         pass
 
@@ -59,3 +64,28 @@ class ToolSchemaManager:
             schema: The schema definition.
         """
         self._schemas[tool_name] = schema
+
+    def get_all_schemas_for_llm(self) -> list:
+        """
+        Returns all registered tool schemas in the format expected by LiteLLM.
+        LiteLLM expects a list of tool definitions, where each definition has:
+        - "type": "function"
+        - "function": {"name": ..., "description": ..., "parameters": ...}
+        The parameters should match the JSON Schema format.
+        """
+        llm_tools = []
+        for tool_name, schema in self._schemas.items():
+            # Assuming the schema directly matches the "parameters" part of the
+            # LLM tool definition. And that a description might be stored
+            # alongside or inferred.
+            llm_tools.append({
+                "type": "function",
+                "function": {
+                    "name": tool_name,
+                    "description": schema.get(
+                        "description", f"Schema for {tool_name}"
+                    ),  # Add description if available
+                    "parameters": schema,  # The schema itself
+                },
+            })
+        return llm_tools
