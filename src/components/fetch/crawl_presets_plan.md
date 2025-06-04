@@ -28,6 +28,8 @@ The primary structure for a crawl preset will include:
 
 *(Refer to `docs/crawl4ai/crawl4ai_custom_context.md` for detailed JSON examples of `crawl4ai` strategy, filter_chain, and url_scorer configurations.)*
 
+The `strategy_definition` should be comprehensive enough to include configurations for extraction strategies (like `LLMExtractionStrategy` including its `LLMConfig`), deep crawling strategies (like `BestFirstCrawlingStrategy` with its `url_scorer` and `filter_chain`), and general `BrowserConfig` / `CrawlerRunConfig` parameters, as detailed in the `fetch_page_enhancement_plan.md` (v1.3) and the examples in Section 6.
+
 ### 2.2. Preset Metadata
 
 In addition to the core crawl configuration, each preset will have associated metadata for management and discovery:
@@ -162,6 +164,8 @@ Agents designed to perform web crawls (e.g., a `ResearchAgent`, `DataExtractionA
 
 ## 6. Example JSON Preset (for `crawl_presets` table, `strategy_definition` field)
 
+### Example 1: BFS Crawl with Basic Filters
+
 ```json
 {
   "strategy": "BFSDeepCrawlStrategy",
@@ -190,6 +194,80 @@ Agents designed to perform web crawls (e.g., a `ResearchAgent`, `DataExtractionA
 }
 ```
 This would be stored in the `strategy_definition` JSONB column for a preset named, for example, `"documentation_site_bfs_crawl"`.
+
+### Example 2: Deep Crawl with `BestFirstCrawlingStrategy`, Keyword Scorer, and URL Pattern Filter
+
+```json
+{
+  "strategy": "BestFirstCrawlingStrategy",
+  "params": {
+    "max_depth": 3,
+    "max_pages": 100,
+    "include_external": true,
+    "url_scorer": {
+      "type": "KeywordRelevanceScorer",
+      "params": {
+        "keywords": ["ai", "llm", "development"],
+        "weight": 0.75
+      }
+    },
+    "filter_chain": {
+      "filters": [
+        {
+          "type": "URLPatternFilter",
+          "params": {
+            "patterns": ["*/blog/*", "*/news/*"],
+            "case_sensitive": false
+          }
+        },
+        {
+          "type": "DomainFilter",
+          "params": {
+            "allowed_domains": ["example.com", "another.example.org"]
+          }
+        }
+      ]
+    }
+  }
+}
+```
+
+### Example 3: Extraction with `LLMExtractionStrategy` and `LLMConfig`
+
+```json
+{
+  "strategy": "SinglePageFetchStrategy",
+  "params": {
+    "extraction_strategy": {
+      "type": "LLMExtractionStrategy",
+      "params": {
+        "schema_json": {
+          "title": "string",
+          "summary": "string",
+          "key_topics": ["list", "string"]
+        },
+        "instruction": "Extract the title, a concise summary, and key topics from the article."
+      }
+    },
+    "llm_config": {
+      "provider": "ollama",
+      "model": "mistral:latest",
+      "base_url": "http://localhost:11434/api",
+      "api_token": null
+    },
+    "browser_config": {
+      "user_agent": "MyExtractionBot/1.0",
+      "text_mode": true
+    },
+    "run_config": {
+      "page_timeout": 60000,
+      "only_text": true
+    }
+  }
+}
+```
+
+These examples illustrate how various `crawl4ai` features can be defined within a preset. The `backend/app/crawl4ai_fetcher.py` will be responsible for parsing this `strategy_definition` and configuring the `crawl4ai` library accordingly.
 
 ## 7. Future Considerations
 

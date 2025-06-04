@@ -12,6 +12,7 @@ import os
 import time
 from typing import Dict, Any, AsyncGenerator, List, Optional, Tuple, Union, Pattern
 from datetime import datetime, timezone
+import httpx # Added for async HTTP requests
 
 from crawl4ai import (
     CrawlResult,
@@ -29,10 +30,9 @@ from crawl4ai import (
 )
 from crawl4ai.content_filter_strategy import PruningContentFilter
 from crawl4ai.models import CrawlResultContainer, MarkdownGenerationResult
-from crawl4ai.deep_crawling.filters import FilterChain, URLPatternFilter
+from crawl4ai.deep_crawling.filters import FilterChain, URLPatternFilter, DomainFilter
 from crawl4ai.deep_crawling.scorers import URLScorer, KeywordRelevanceScorer
 
-# Import the Docker client
 from crawl4ai.docker_client import Crawl4aiDockerClient, Crawl4aiClientError
 
 # --- Local Imports ---
@@ -41,7 +41,7 @@ try:
     LLM_REGISTRY_AVAILABLE = True
 except ImportError:
     LLM_REGISTRY_AVAILABLE = False
-    get_llm_model_details_from_registry = None # type: ignore
+    get_llm_model_details_from_registry = None
     logger.error("llm_registry_service not available. LLM model selection will rely on direct parameters.")
 
 try:
@@ -50,959 +50,490 @@ try:
     logger.info(f"Successfully imported LiteLLM proxy config: URL='{LITELLM_PROXY_URL}', Key_Loaded={'Yes' if LITELLM_PROXY_API_KEY else 'No'}")
 except ImportError:
     logger.warning("Could not import LITELLM_PROXY_URL, LITELLM_PROXY_API_KEY from .app_config. Proxy integration will be disabled or use defaults.")
-    LITELLM_PROXY_URL = os.getenv('LITELLM_PROXY_URL', 'http://localhost:4000') # Fallback
-    LITELLM_PROXY_API_KEY = os.getenv('LITELLM_PROXY_API_KEY') # Fallback
+    LITELLM_PROXY_URL = os.getenv('LITELLM_PROXY_URL', 'http://localhost:4000')
+    LITELLM_PROXY_API_KEY = os.getenv('LITELLM_PROXY_API_KEY')
     PROXY_CONFIG_LOADED = False
 
+try:
+    from ..models.presets_models import CrawlPresetResponse
+except ImportError: # Handle cases where models might not be in this exact path during isolated testing
+    logger.warning("Could not import CrawlPresetResponse from ..models.presets_models. Defining a fallback for this subtask.")
+    from pydantic import BaseModel, Field as PydanticField # Use PydanticField to avoid conflict with FastAPI's Field
+    from uuid import UUID as PyUUID # Use PyUUID to avoid conflict with FastAPI's UUID
+
+    class CrawlPresetResponse(BaseModel):
+        preset_id: PyUUID
+        preset_name: str
+        description: Optional[str] = None
+        version: int = 1
+        crawl_tool: str = "crawl4ai"
+        strategy_definition: Dict[str, Any] = PydanticField(...)
+        target_capability: Optional[str] = None
+        tags: Optional[List[str]] = None
+        created_by: Optional[PyUUID] = None
+        created_at: datetime
+        updated_at: datetime
+        class Config:
+            orm_mode = True
+
+
 # --- Helper Functions for Type Conversion ---
+# (to_bool, to_list_str, to_int, to_float, to_json_dict remain the same)
 def to_bool(value: Any) -> bool:
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, str):
-        return value.lower() in ('true', 'yes', '1', 't')
+    if isinstance(value, bool): return value
+    if isinstance(value, str): return value.lower() in ('true', 'yes', '1', 't')
     return bool(value)
 
 def to_list_str(value: Any, delimiter: str = ',') -> Optional[List[str]]:
-    if value is None:
-        return None
-    if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    if isinstance(value, str):
-        return [item.strip() for item in value.split(delimiter) if item.strip()]
+    if value is None: return None
+    if isinstance(value, list): return [str(item).strip() for item in value if str(item).strip()]
+    if isinstance(value, str): return [item.strip() for item in value.split(delimiter) if item.strip()]
     return None
 
 def to_int(value: Any) -> Optional[int]:
-    if value is None:
-        return None
-    try:
-        return int(value)
-    except (ValueError, TypeError):
-        return None
+    if value is None: return None
+    try: return int(value)
+    except (ValueError, TypeError): return None
 
 def to_float(value: Any) -> Optional[float]:
-    if value is None:
-        return None
-    try:
-        return float(value)
-    except (ValueError, TypeError):
-        return None
+    if value is None: return None
+    try: return float(value)
+    except (ValueError, TypeError): return None
 
 def to_json_dict(value: Any) -> Optional[Dict[str, Any]]:
-    if value is None:
-        return None
-    if isinstance(value, dict):
-        return value
+    if value is None: return None
+    if isinstance(value, dict): return value
     if isinstance(value, str):
-        if not value.strip():
-            return None
-        try:
-            return json.loads(value)
+        if not value.strip(): return None
+        try: return json.loads(value)
         except json.JSONDecodeError:
             logger.warning(f"Failed to parse JSON string: {value}", exc_info=True)
             return None
     return None
 
 async def fetch_with_crawl4ai_docker(url: str, original_request_params: Dict[str, Any]) -> AsyncGenerator[str, None]:
-    """
-    Async generator for fetching content using the crawl4ai Docker service, yielding SSE events.
-    Maps UI parameters from docs/fetch_page_enhancement_plan.md to crawl4ai config objects.
-    Includes comprehensive LLM call logging and structured error reporting.
-    """
     logger.info(f"fetch_with_crawl4ai_docker called for URL: {url}")
-    logger.info(f"fetch_with_crawl4ai_docker received original_request_params: {original_request_params}") # DIAGNOSTIC
     logger.debug(f"Original request parameters for crawl4ai: {original_request_params}")
 
     params = original_request_params
-    llm_log_data: Dict[str, Any] = {} # Initialize for potential LLM logging
 
-    # Define the base URL for the crawl4ai Docker service
-    # This should match the service name and port in your docker-compose-core.yml
-    # CRAWL4AI_SERVICE_URL = os.getenv('CRAWL4AI_SERVICE_URL', 'http://crawl4ai:11235')
-    CRAWL4AI_SERVICE_URL = 'http://localhost:11235' # FORCED FOR TESTING
+    # --- Preset Fetching Logic ---
+    loaded_strategy_definition_from_preset: Optional[Dict[str, Any]] = None
+    preset_identifier = original_request_params.get('preset_id') or original_request_params.get('preset_name')
+
+    if preset_identifier:
+        logger.info(f"Preset identifier found: '{preset_identifier}'. Attempting to fetch preset.")
+        BACKEND_SERVICE_URL = os.getenv("BACKEND_SERVICE_URL", "http://localhost:8000")
+        preset_api_url = f"{BACKEND_SERVICE_URL}/api/presets/{preset_identifier}"
+        logger.info(f"Calling Presets API: GET {preset_api_url}")
+        try:
+            async with httpx.AsyncClient() as client:
+                api_response = await client.get(preset_api_url, timeout=10.0)
+
+            if api_response.status_code == 200:
+                preset_data = api_response.json()
+                try:
+                    fetched_preset = CrawlPresetResponse(**preset_data)
+                    loaded_strategy_definition_from_preset = fetched_preset.strategy_definition
+                    logger.info(f"Successfully fetched and parsed preset '{preset_identifier}'. Using its strategy_definition.")
+                    logger.debug(f"Strategy definition from preset: {json.dumps(loaded_strategy_definition_from_preset, default=str)[:500]}...")
+                except Exception as pydantic_err: # Catch Pydantic validation error
+                    logger.error(f"Pydantic validation error for fetched preset '{preset_identifier}': {pydantic_err}", exc_info=True)
+            elif api_response.status_code == 404:
+                logger.warning(f"Preset '{preset_identifier}' not found (404) at API: {preset_api_url}")
+            else:
+                logger.error(f"Failed to fetch preset '{preset_identifier}'. Status: {api_response.status_code}, Response: {api_response.text[:200]}")
+        except httpx.RequestError as http_err:
+            logger.error(f"HTTP request error fetching preset '{preset_identifier}' from {preset_api_url}: {http_err}", exc_info=True)
+        except Exception as e_preset_fetch:
+            logger.error(f"Unexpected error fetching preset '{preset_identifier}': {e_preset_fetch}", exc_info=True)
+
+    # --- Determine Final strategy_definition ---
+    # This variable (lowercase) will be used by all subsequent configuration logic
+    strategy_definition: Dict[str, Any] = {}
+    direct_sd_from_params = original_request_params.get('strategy_definition')
+
+    if loaded_strategy_definition_from_preset:
+        strategy_definition = loaded_strategy_definition_from_preset
+        if direct_sd_from_params:
+            logger.warning("Both a preset and a direct 'strategy_definition' were provided. Prioritizing preset's definition.")
+    elif isinstance(direct_sd_from_params, dict):
+        strategy_definition = direct_sd_from_params
+        logger.info("Using 'strategy_definition' (dict) directly from request parameters.")
+    elif isinstance(direct_sd_from_params, str):
+        logger.info("Attempting to parse 'strategy_definition' (string) from request parameters.")
+        try:
+            parsed_direct_sd = json.loads(direct_sd_from_params)
+            if isinstance(parsed_direct_sd, dict):
+                strategy_definition = parsed_direct_sd
+            else:
+                logger.error(f"Parsed direct 'strategy_definition' is not a dict: {type(parsed_direct_sd)}. Ignoring.")
+        except json.JSONDecodeError:
+            logger.error(f"Failed to parse direct 'strategy_definition' JSON string: {direct_sd_from_params[:200]}...", exc_info=True)
+
+    if strategy_definition:
+        logger.info(f"Final 'strategy_definition' (type: {type(strategy_definition)}) will be used for configuration: {json.dumps(strategy_definition, default=str)[:500]}...")
+    else:
+        logger.info("No 'strategy_definition' (from preset or direct params) will be used. Relying on individual fallback flat parameters from 'params'.")
+
+
+    CRAWL4AI_SERVICE_URL = 'http://localhost:11235'
     logger.warning(f"FORCED CRAWL4AI_SERVICE_URL: {CRAWL4AI_SERVICE_URL}")
-
-    # If your crawl4ai service requires an API token (configured in its config.yml)
-    CRAWL4AI_API_TOKEN = os.getenv('CRAWL4AI_API_TOKEN') # You will need to set this env var in your backend service
-
-    crawl4ai_client = None # Initialize client to None
+    CRAWL4AI_API_TOKEN = os.getenv('CRAWL4AI_API_TOKEN')
+    crawl4ai_client = None
 
     try:
         yield json.dumps({"type": "status", "status": "initializing", "message": "Initializing crawl4ai service client..."})
-
-        # --- Initialize Crawl4aiDockerClient ---
-        # Pass the service URL and API token if required
         crawl4ai_client = Crawl4aiDockerClient(base_url=CRAWL4AI_SERVICE_URL)
-        # Provide a placeholder email as a positional argument as per documentation example.
         try:
-            logger.info("Attempting to call Crawl4aiDockerClient.authenticate().")
-            await crawl4ai_client.authenticate("placeholder@example.com") # Using placeholder as per example
+            await crawl4ai_client.authenticate("placeholder@example.com")
             logger.info("Crawl4aiDockerClient.authenticate() called successfully.")
         except Exception as auth_err:
             logger.error(f"Error during Crawl4aiDockerClient.authenticate() call: {auth_err}", exc_info=True)
             yield json.dumps({"type": "error", "message": f"Error during client authentication handshake: {auth_err}"})
-            return # Stop if this step fails
+            return
         yield json.dumps({"type": "status", "status": "initialized", "message": "crawl4ai service client initialized."})
 
         # --- BrowserConfig Population ---
-        # UI parameters are sourced from docs/fetch_page_enhancement_plan.md (lines 81-133)
-        # crawl4ai parameters from docs/crawl4ai/docs/md_v2/api/parameters.md
+        logger.info("Populating BrowserConfig...")
+        sd_browser_config = strategy_definition.get('browser_config', {})
 
         browser_config_args = {
-            "headless": to_bool(params.get("headless", True)), # Matches main.py Query param
-            "user_agent": params.get("user_agent"), # Matches main.py Query param
-            "proxy": params.get("proxy_url"), # Matches main.py Query param 'proxy_url', maps to 'proxy' in BrowserConfig
-            "java_script_enabled": to_bool(params.get("enable_javascript", True)), # Matches main.py Query param 'enable_javascript'
-            "ignore_https_errors": to_bool(params.get("ignore_https_errors", True)), # Matches main.py Query param
-            "light_mode": to_bool(params.get("light_mode", False)), # Matches main.py Query param
-            "text_mode": to_bool(params.get("text_mode", False)), # Matches main.py Query param
-            "cookies": to_json_dict(params.get("browser_cookies")), # Matches main.py Query param
-            "headers": to_json_dict(params.get("browser_headers")), # Matches main.py Query param
-            "use_persistent_context": to_bool(params.get("browser_use_persistent_context")), # Matches main.py Query param
-            "user_data_dir": params.get("browser_user_data_dir"), # Matches main.py Query param
-            "extra_args": to_list_str(params.get("browser_extra_args")), # Matches main.py Query param
-            # Viewport width and height are handled separately below as they are individual query params
-            # browser_type is handled after this block to map 'playwright'
-            # "browser_type": params.get("browser_engine", "chromium"), 
+            "headless": to_bool(sd_browser_config.get("headless", params.get("headless", True))),
+            "user_agent": sd_browser_config.get("user_agent", params.get("user_agent")),
+            "proxy": sd_browser_config.get("proxy", params.get("proxy_url")),
+            "java_script_enabled": to_bool(sd_browser_config.get("java_script_enabled", params.get("enable_javascript", True))),
+            "ignore_https_errors": to_bool(sd_browser_config.get("ignore_https_errors", params.get("ignore_https_errors", True))),
+            "light_mode": to_bool(sd_browser_config.get("light_mode", params.get("light_mode", False))),
+            "text_mode": to_bool(sd_browser_config.get("text_mode", params.get("text_mode", False))),
+            "cookies": sd_browser_config.get("cookies") if isinstance(sd_browser_config.get("cookies"), (dict, list)) else to_json_dict(params.get("browser_cookies")),
+            "headers": sd_browser_config.get("headers") if isinstance(sd_browser_config.get("headers"), dict) else to_json_dict(params.get("browser_headers")),
+            "use_persistent_context": to_bool(sd_browser_config.get("use_persistent_context", params.get("browser_use_persistent_context"))),
+            "user_data_dir": sd_browser_config.get("user_data_dir", params.get("browser_user_data_dir")),
+            "extra_args": sd_browser_config.get("extra_args") if isinstance(sd_browser_config.get("extra_args"), list) else to_list_str(params.get("browser_extra_args")),
+            "viewport_width": to_int(sd_browser_config.get("viewport_width", params.get("viewport_width"))),
+            "viewport_height": to_int(sd_browser_config.get("viewport_height", params.get("viewport_height"))),
+            "browser_type": sd_browser_config.get("browser_type", params.get("browser_engine", "chromium")),
         }
-        # Viewport Size from UI (separate width and height)
-        # These keys 'viewport_width' and 'viewport_height' match the Query params in main.py
-        viewport_width_val = params.get("viewport_width")
-        if viewport_width_val is not None:
-            browser_config_args["viewport_width"] = to_int(viewport_width_val)
-        
-        viewport_height_val = params.get("viewport_height")
-        if viewport_height_val is not None:
-            browser_config_args["viewport_height"] = to_int(viewport_height_val)
-        
-        # Filter out None values for optional parameters before passing to BrowserConfig
+        if browser_config_args["browser_type"] == "playwright":
+            browser_config_args["browser_type"] = "chromium"
+            logger.info("Mapped browser_engine 'playwright' to 'chromium' for BrowserConfig.")
         final_browser_config_args = {k: v for k, v in browser_config_args.items() if v is not None}
-        logger.info(f"Intermediate browser_config_args: {browser_config_args}") # DIAGNOSTIC
-        # Create BrowserConfig object from processed parameters
-        browser_engine_param = params.get("browser_engine", "chromium")
-        if browser_engine_param == "playwright":
-            actual_browser_type = "chromium" # Default Playwright to Chromium
-            logger.info("Mapped browser_engine \'playwright\' to \'chromium\' for BrowserConfig.")
-        else:
-            actual_browser_type = browser_engine_param
-        browser_config_args["browser_type"] = actual_browser_type
+        logger.debug(f"Final arguments for BrowserConfig: {final_browser_config_args}")
         browser_config = BrowserConfig(**final_browser_config_args)
-        logger.info(f"Final browser_config_args for BrowserConfig(): {final_browser_config_args}") # DIAGNOSTIC
-        logger.debug(f"BrowserConfig: {final_browser_config_args}") # Log the args passed
+        logger.info(f"BrowserConfig populated. Headless: {browser_config.headless}, Text Mode: {browser_config.text_mode}")
 
-        # --- LLMConfig Population (Optional) ---
-        # This section is for the main crawler's LLMConfig, if crawl4ai itself uses one at the top level.
-        # The LLMExtractionStrategy will have its own LLMConfig instance.
-        # For now, we assume the main crawler does not need a separate LLMConfig from this part of the code.
-        # If it were needed, similar logic to the LLMExtractionStrategy's LLMConfig setup would apply.
-        llm_config = None # Placeholder, not currently used for the main crawler instance here.
-        logger.debug(f"Top-level LLMConfig for crawler (not strategy): {llm_config}")
+        # --- LLMConfig (Global - from strategy_definition.llm_config) ---
+        global_llm_config: Optional[LLMConfig] = None
+        sd_global_llm_config_data = strategy_definition.get('llm_config', {})
+        if sd_global_llm_config_data and isinstance(sd_global_llm_config_data, dict):
+            logger.info(f"Global LLMConfig found in strategy_definition: {sd_global_llm_config_data}")
+            if sd_global_llm_config_data.get("provider") and sd_global_llm_config_data.get("model"):
+                global_llm_config_params = {k:v for k,v in sd_global_llm_config_data.items() if v is not None}
+                if "base_url" in global_llm_config_params: global_llm_config_params["api_base"] = global_llm_config_params.pop("base_url")
+                if "api_token" in global_llm_config_params: global_llm_config_params["api_key"] = global_llm_config_params.pop("api_token")
+                try:
+                    global_llm_config = LLMConfig(**global_llm_config_params)
+                    logger.info(f"Instantiated global LLMConfig: {global_llm_config}")
+                except Exception as e_llm_global: logger.error(f"Error instantiating global LLMConfig from strategy_definition: {e_llm_global}", exc_info=True)
+            else: logger.warning("Global LLMConfig in strategy_definition missing provider or model.")
 
-        # --- Deep Crawl Strategy Population ---
+        # --- Deep Crawl Strategy ---
+        logger.info("Populating Deep Crawl Strategy...")
         deep_crawl_strategy_instance: Optional[Union[BFSDeepCrawlStrategy, DFSDeepCrawlStrategy, BestFirstCrawlingStrategy]] = None
-        # --- Determine Deep Crawl Configuration ---
-        # Priority:
-        # 1. Valid `deep_crawl_config` JSON blob from `params`.
-        # 2. Construct from individual `deep_crawl_*` parameters in `params`.
-        # 3. Default to empty config (no deep crawl).
+        sd_main_strategy_name = strategy_definition.get('strategy')
+        sd_main_params = strategy_definition.get('params', {})
+        sd_deep_crawl_block = strategy_definition.get('deep_crawl_strategy', {})
 
-        final_deep_crawl_dict = {}
-        deep_crawl_config_blob = params.get("deep_crawl_config")
+        dc_name_to_use = None
+        dc_params_to_use = {}
 
-        if isinstance(deep_crawl_config_blob, str) and deep_crawl_config_blob.strip():
+        if isinstance(sd_deep_crawl_block, dict) and sd_deep_crawl_block.get('strategy'):
+            dc_name_to_use = sd_deep_crawl_block.get('strategy')
+            dc_params_to_use = sd_deep_crawl_block.get('params', {})
+            logger.info(f"Using explicit 'deep_crawl_strategy' block: Name='{dc_name_to_use}', Params='{dc_params_to_use}'")
+        elif isinstance(sd_main_strategy_name, str) and any(s_type.lower() in sd_main_strategy_name.lower() for s_type in ["bfs", "dfs", "bestfirst", "crawlstrategy"]):
+            dc_name_to_use = sd_main_strategy_name
+            dc_params_to_use = sd_main_params
+            logger.info(f"Using top-level 'strategy':'{dc_name_to_use}' and 'params' for deep crawl.")
+
+        if dc_name_to_use:
+            logger.info(f"Attempting to instantiate deep crawl strategy '{dc_name_to_use}' from strategy_definition.")
             try:
-                parsed_blob = json.loads(deep_crawl_config_blob)
-                if isinstance(parsed_blob, dict):
-                    final_deep_crawl_dict = parsed_blob
-                    logger.info(f"Using deep_crawl_config JSON blob: {final_deep_crawl_dict}")
-                else:
-                    logger.warning(f"Parsed deep_crawl_config string was not a dict: {type(parsed_blob)}. Will check individual params.")
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse deep_crawl_config string: {deep_crawl_config_blob}. Will check individual params.", exc_info=True)
-        elif isinstance(deep_crawl_config_blob, dict): # If it was already a dictionary (e.g. if tests pass it directly)
-            final_deep_crawl_dict = deep_crawl_config_blob
-            logger.info(f"Using pre-parsed deep_crawl_config dict: {final_deep_crawl_dict}")
-        elif deep_crawl_config_blob is not None: # It's not a string, not a dict, but not None
-             logger.warning(f"deep_crawl_config was an unexpected type: {type(deep_crawl_config_blob)}. Will check individual params.")
+                strategy_name_lower = dc_name_to_use.lower()
+                if "bfsdeepcrawlstrategy" in strategy_name_lower or strategy_name_lower == "bfs":
+                    deep_crawl_strategy_instance = BFSDeepCrawlStrategy(**{k:v for k,v in dc_params_to_use.items() if k in BFSDeepCrawlStrategy.model_fields})
+                elif "dfsdeepcrawlstrategy" in strategy_name_lower or strategy_name_lower == "dfs":
+                    deep_crawl_strategy_instance = DFSDeepCrawlStrategy(**{k:v for k,v in dc_params_to_use.items() if k in DFSDeepCrawlStrategy.model_fields})
+                elif "bestfirstcrawlingstrategy" in strategy_name_lower or strategy_name_lower == "bestfirst":
+                    bf_init_params = {k:v for k,v in dc_params_to_use.items() if k in BestFirstCrawlingStrategy.model_fields and k not in ['url_scorer', 'filter_chain']}
+                    url_scorer_data = dc_params_to_use.get('url_scorer')
+                    if isinstance(url_scorer_data, dict) and url_scorer_data.get('type'):
+                        scorer_type_str = url_scorer_data['type']
+                        scorer_params_data = url_scorer_data.get('params', {})
+                        logger.info(f"Attempting to instantiate URLScorer from strategy_definition: Type='{scorer_type_str}', Params='{scorer_params_data}'")
+                        if scorer_type_str.lower() == "keywordrelevancescorer":
+                            try:
+                                bf_init_params['url_scorer'] = KeywordRelevanceScorer(**scorer_params_data)
+                                logger.info(f"Instantiated KeywordRelevanceScorer with params: {scorer_params_data}")
+                            except Exception as e_scorer: logger.error(f"Error instantiating KeywordRelevanceScorer: {e_scorer}", exc_info=True)
+                        else: logger.warning(f"Unsupported URLScorer type: {scorer_type_str}")
 
-        # If blob wasn't used or was invalid, try constructing from individual parameters
-        individual_params_for_strategy_dict = {} # Initialize here
-        strategy_name_from_blob = None
-        strategy_params_from_blob = {}
+                    filter_chain_data = dc_params_to_use.get('filter_chain')
+                    if isinstance(filter_chain_data, dict) and isinstance(filter_chain_data.get('filters'), list):
+                        filter_objects = []
+                        logger.info(f"Attempting to instantiate FilterChain with filters: {filter_chain_data['filters']}")
+                        for filter_data in filter_chain_data['filters']:
+                            if isinstance(filter_data, dict) and filter_data.get('type'):
+                                filter_type_str = filter_data['type']
+                                filter_params_data = filter_data.get('params', {})
+                                filter_instance = None
+                                if filter_type_str.lower() == "urlpatternfilter":
+                                    try: filter_instance = URLPatternFilter(**filter_params_data); logger.info(f"Instantiated URLPatternFilter: {filter_params_data}")
+                                    except Exception as e_f: logger.error(f"Error URLPatternFilter: {e_f}", exc_info=True)
+                                elif filter_type_str.lower() == "domainfilter":
+                                    try: filter_instance = DomainFilter(**filter_params_data); logger.info(f"Instantiated DomainFilter: {filter_params_data}")
+                                    except Exception as e_f: logger.error(f"Error DomainFilter: {e_f}", exc_info=True)
+                                else: logger.warning(f"Unsupported Filter type: {filter_type_str}")
+                                if filter_instance: filter_objects.append(filter_instance)
+                        if filter_objects: bf_init_params['filter_chain'] = FilterChain(filters=filter_objects); logger.info(f"Instantiated FilterChain with {len(filter_objects)} filters.")
+                        else: logger.warning("No valid filters for FilterChain.")
+                    deep_crawl_strategy_instance = BestFirstCrawlingStrategy(**bf_init_params)
+                if deep_crawl_strategy_instance: logger.info(f"Instantiated deep crawl strategy from strategy_definition: {type(deep_crawl_strategy_instance).__name__}")
+            except Exception as e: logger.error(f"Error instantiating deep crawl strategy '{dc_name_to_use}' from strategy_definition: {e}", exc_info=True)
 
-        if final_deep_crawl_dict: # If blob was parsed
-            strategy_name_from_blob = final_deep_crawl_dict.get("strategy_name") or final_deep_crawl_dict.get("strategy")
-            strategy_params_from_blob = final_deep_crawl_dict.get("params", {})
-            if isinstance(strategy_params_from_blob, dict): # Ensure params is a dict
-                individual_params_for_strategy_dict.update(strategy_params_from_blob) # Populate with blob params first
-            logger.info(f"Populated initial deep crawl strategy params from blob: name='{strategy_name_from_blob}', params='{strategy_params_from_blob}'")
-
-
-        if not final_deep_crawl_dict: # Only construct from individual if blob was NOT primary source
-            logger.info("deep_crawl_config JSON blob not used or invalid. Attempting to construct from individual parameters.")
+        if not deep_crawl_strategy_instance:
+            logger.info("Deep crawl strategy not from SD. Checking fallback 'params.deep_crawl_config' or individual 'deep_crawl_*' params.")
+            fb_dc_conf_blob = params.get("deep_crawl_config")
+            fb_dc_name = params.get("deep_crawl_strategy_name")
+            current_fb_dc_params = {}
+            fb_dc_name_to_use = fb_dc_name
+            if isinstance(fb_dc_conf_blob, str): fb_dc_conf_blob = to_json_dict(fb_dc_conf_blob)
+            if isinstance(fb_dc_conf_blob, dict) and fb_dc_conf_blob.get("strategy"):
+                 fb_dc_name_to_use = fb_dc_conf_blob.get("strategy")
+                 current_fb_dc_params = fb_dc_conf_blob.get("params", {})
+            elif fb_dc_name_to_use:
+                 if params.get("deep_crawl_max_depth") is not None: current_fb_dc_params["max_depth"] = to_int(params.get("deep_crawl_max_depth"))
+                 if params.get("deep_crawl_max_pages") is not None: current_fb_dc_params["max_pages"] = to_int(params.get("deep_crawl_max_pages"))
+                 if params.get("deep_crawl_include_external") is not None: current_fb_dc_params["include_external"] = to_bool(params.get("deep_crawl_include_external"))
+                 if "bestfirst" in fb_dc_name_to_use.lower():
+                    if params.get("deep_crawl_url_scorer_type"): current_fb_dc_params["url_scorer_type"] = params.get("deep_crawl_url_scorer_type")
+                    if params.get("deep_crawl_scorer_keywords"): current_fb_dc_params["scorer_keywords"] = params.get("deep_crawl_scorer_keywords")
+                    if params.get("deep_crawl_scorer_weight") is not None: current_fb_dc_params["scorer_weight"] = to_float(params.get("deep_crawl_scorer_weight"))
+                    if params.get("deep_crawl_filter_regexes") is not None: current_fb_dc_params["filter_regexes"] = to_list_str(params.get("deep_crawl_filter_regexes"))
             
-            # Parameter names here match those potentially sent by tests or UI forms
-            # (e.g., deep_crawl_strategy_name, deep_crawl_max_depth)
-            strategy_from_individual = params.get("deep_crawl_strategy_name") or params.get("strategy") # Fallback for "strategy" key
-
-            if strategy_from_individual and isinstance(strategy_from_individual, str) and strategy_from_individual.strip():
-                individual_params_for_strategy_dict = {} # Reset if direct individual param is given, it takes precedence
-                
-                # Max Depth
-                max_depth_val = params.get("deep_crawl_max_depth")
-                if max_depth_val is not None: individual_params_for_strategy_dict["max_depth"] = max(0, max_depth_val)
-                
-                # Max Pages
-                max_pages_val = params.get("deep_crawl_max_pages")
-                if max_pages_val is not None: individual_params_for_strategy_dict["max_pages"] = max(1, max_pages_val)
-                
-                # Include External
-                include_external_val = params.get("deep_crawl_include_external")
-                if include_external_val is not None: individual_params_for_strategy_dict["include_external"] = to_bool(include_external_val)
-
-            # Score Threshold
-            score_threshold_val = params.get("deep_crawl_score_threshold")
-            if score_threshold_val is not None: individual_params_for_strategy_dict["score_threshold"] = score_threshold_val
-
-            # Filter Regexes (can be list or comma-separated string)
-            filter_regexes_val = params.get("deep_crawl_filter_regexes")
-            if filter_regexes_val is not None:
-                if isinstance(filter_regexes_val, list):
-                    individual_params_for_strategy_dict["filter_regexes"] = filter_regexes_val
-                elif isinstance(filter_regexes_val, str):
-                     # The processing logic later expects a list for URLPatternFilter
-                    individual_params_for_strategy_dict["filter_regexes"] = to_list_str(filter_regexes_val)
-                else:
-                    logger.warning(f"deep_crawl_filter_regexes was an unexpected type: {type(filter_regexes_val)}")
-
-            # URL Scorer Type
-            url_scorer_type_val = params.get("deep_crawl_url_scorer_type")
-            if url_scorer_type_val is not None: individual_params_for_strategy_dict["url_scorer_type"] = url_scorer_type_val
-
-            # Scorer Keywords (can be list or comma-separated string)
-            scorer_keywords_val = params.get("deep_crawl_scorer_keywords")
-            if scorer_keywords_val is not None:
-                # The processing logic later expects a string for KeywordRelevanceScorer's keywords, then splits it
-                if isinstance(scorer_keywords_val, list):
-                    individual_params_for_strategy_dict["scorer_keywords"] = ",".join(scorer_keywords_val)
-                elif isinstance(scorer_keywords_val, str):
-                    individual_params_for_strategy_dict["scorer_keywords"] = scorer_keywords_val
-                else:
-                     logger.warning(f"deep_crawl_scorer_keywords was an unexpected type: {type(scorer_keywords_val)}")
-            
-
-            # --- Construct Deep Crawl Strategy from Individual Params ---
-            if strategy_from_individual:
+            if fb_dc_name_to_use:
                 try:
-                    logger.info(f"Attempting to construct deep crawl strategy '{strategy_from_individual}' from individual parameters: {individual_params_for_strategy_dict}")
-                    if strategy_from_individual.lower() == "bfs":
-                        deep_crawl_strategy_instance = BFSDeepCrawlStrategy(**individual_params_for_strategy_dict)
-                    elif strategy_from_individual.lower() == "dfs":
-                         deep_crawl_strategy_instance = DFSDeepCrawlStrategy(**individual_params_for_strategy_dict)
-                    elif strategy_from_individual.lower() == "bestfirst":
-                         # BestFirstCrawlingStrategy takes url_scorer_type, filter_regexes, scorer_keywords, max_pages, include_external
-                         # Need to handle scorers and filters explicitly if provided as individual params
-
-                         url_scorer: Optional[URLScorer] = None
-                         scorer_keywords: Optional[str] = individual_params_for_strategy_dict.get("scorer_keywords")
-                         # Handle deep_crawl_scorer_weight for KeywordRelevanceScorer
-                         scorer_weight: Optional[float] = to_float(params.get("deep_crawl_scorer_weight")) # Get weight from original params
-                         url_scorer_type = individual_params_for_strategy_dict.get("url_scorer_type", "keyword_relevance") # Default to keyword if not specified
-
-                         if url_scorer_type and isinstance(url_scorer_type, str):
-                            if url_scorer_type.lower() == "keyword_relevance" and scorer_keywords:
-                                # Pass the weight if available
-                                url_scorer = KeywordRelevanceScorer(keywords=scorer_keywords, weight=scorer_weight if scorer_weight is not None else 1.0)
-                            # Add other scorer types here if needed in the future
-                            else:
-                                logger.warning(f"Unsupported or incomplete url_scorer_type for BestFirst: {url_scorer_type}")
-
-                         filter_chain: Optional[FilterChain] = None
-                         filter_regexes: Optional[List[str]] = individual_params_for_strategy_dict.get("filter_regexes")
-
-                         if filter_regexes:
-                             filters = [URLPatternFilter(regex) for regex in filter_regexes]
-                             filter_chain = FilterChain(filters=filters)
-
-                         deep_crawl_strategy_instance = BestFirstCrawlingStrategy(
-                             url_scorer=url_scorer, # Pass the instantiated scorer
-                             filter_chain=filter_chain, # Pass the instantiated filter chain
-                             max_pages=individual_params_for_strategy_dict.get("max_pages"),
-                             include_external=individual_params_for_strategy_dict.get("include_external", False) # Default to False if not specified
-                         )
-
-                    else:
-                        logger.warning(f"Unknown deep crawl strategy name from individual params: {strategy_from_individual}")
-
-                    if deep_crawl_strategy_instance: # Check if successfully created
-                         logger.info(f"Successfully constructed deep crawl strategy instance: {type(deep_crawl_strategy_instance).__name__}")
-                         # If constructed from individual params, convert to dict format for final_deep_crawl_dict
-                         # Note: This conversion might lose some information depending on the strategy's __dict__ or serialization
-                         # A more robust approach would be to serialize the strategy instance if crawl4ai client expects a specific JSON format
-                         # For now, we'll create a simple dict representation
-                         final_deep_crawl_dict = {
-                             "strategy_name": strategy_from_individual,
-                             **{k: v for k, v in individual_params_for_strategy_dict.items() if k != "strategy_name"}
-                         } # Add individual params back for logging/potential use
-                         # Special handling for complex objects like scorers/filters if they were constructed
-                         if isinstance(deep_crawl_strategy_instance, BestFirstCrawlingStrategy):
-                              final_deep_crawl_dict["url_scorer"] = str(deep_crawl_strategy_instance.url_scorer) if deep_crawl_strategy_instance.url_scorer else None
-                              final_deep_crawl_dict["filter_chain"] = str(deep_crawl_strategy_instance.filter_chain) if deep_crawl_strategy_instance.filter_chain else None
+                    fb_strategy_name_lower = fb_dc_name_to_use.lower()
+                    if "bfs" in fb_strategy_name_lower: deep_crawl_strategy_instance = BFSDeepCrawlStrategy(**current_fb_dc_params)
+                    elif "dfs" in fb_strategy_name_lower: deep_crawl_strategy_instance = DFSDeepCrawlStrategy(**current_fb_dc_params)
+                    elif "bestfirst" in fb_strategy_name_lower:
+                        fb_bf_params = {k:v for k,v in current_fb_dc_params.items() if k in ["max_depth", "max_pages", "include_external"]}
+                        fb_url_scorer: Optional[URLScorer] = None
+                        if current_fb_dc_params.get("url_scorer_type", "").lower() == "keywordrelevancescorer" and current_fb_dc_params.get("scorer_keywords"):
+                            fb_url_scorer = KeywordRelevanceScorer(keywords=str(current_fb_dc_params["scorer_keywords"]), weight=float(current_fb_dc_params.get("scorer_weight", 1.0)))
+                        if fb_url_scorer: fb_bf_params['url_scorer'] = fb_url_scorer
+                        fb_filter_regexes = current_fb_dc_params.get("filter_regexes")
+                        if fb_filter_regexes and isinstance(fb_filter_regexes, list):
+                            fb_filters_obj = [URLPatternFilter(regex) for regex in fb_filter_regexes]
+                            if fb_filters_obj: fb_bf_params['filter_chain'] = FilterChain(filters=fb_filters_obj)
+                        deep_crawl_strategy_instance = BestFirstCrawlingStrategy(**fb_bf_params)
+                    if deep_crawl_strategy_instance: logger.info(f"Constructed deep crawl strategy from fallback: {type(deep_crawl_strategy_instance).__name__}")
+                except Exception as e_fb_dcs: logger.error(f"Error constructing deep crawl strategy from fallback '{fb_dc_name_to_use}': {e_fb_dcs}", exc_info=True)
 
 
-                except Exception as e:
-                    logger.error(f"Error constructing deep crawl strategy from individual params: {e}", exc_info=True)
-
-        # NEW BLOCK: Construct from blob if strategy_from_individual was None but blob had info
-        elif strategy_name_from_blob:
-            try:
-                logger.info(f"Attempting to construct deep crawl strategy '{strategy_name_from_blob}' from deep_crawl_config blob parameters: {individual_params_for_strategy_dict}")
-                if strategy_name_from_blob.lower() == "bfs" or "bfsdeepcrawlstrategy" in strategy_name_from_blob.lower():
-                    deep_crawl_strategy_instance = BFSDeepCrawlStrategy(**individual_params_for_strategy_dict)
-                elif strategy_name_from_blob.lower() == "dfs" or "dfsdeepcrawlstrategy" in strategy_name_from_blob.lower():
-                    deep_crawl_strategy_instance = DFSDeepCrawlStrategy(**individual_params_for_strategy_dict)
-                elif strategy_name_from_blob.lower() == "bestfirst" or "bestfirstcrawlingstrategy" in strategy_name_from_blob.lower():
-                    # Re-evaluate scorer and filter based on individual_params_for_strategy_dict (which now holds blob params)
-                    url_scorer: Optional[URLScorer] = None
-                    scorer_keywords_from_blob: Optional[str] = individual_params_for_strategy_dict.get("scorer_keywords")
-                    scorer_weight_from_blob: Optional[float] = to_float(individual_params_for_strategy_dict.get("scorer_weight"))
-                    url_scorer_type_from_blob = individual_params_for_strategy_dict.get("url_scorer_type", "keyword_relevance")
-
-                    if url_scorer_type_from_blob and isinstance(url_scorer_type_from_blob, str):
-                        if url_scorer_type_from_blob.lower() == "keyword_relevance" and scorer_keywords_from_blob:
-                            url_scorer = KeywordRelevanceScorer(keywords=scorer_keywords_from_blob, weight=scorer_weight_from_blob if scorer_weight_from_blob is not None else 1.0)
-                        else:
-                            logger.warning(f"Unsupported or incomplete url_scorer_type for BestFirst from blob: {url_scorer_type_from_blob}")
-
-                    filter_chain: Optional[FilterChain] = None
-                    filter_regexes_from_blob: Optional[List[str]] = individual_params_for_strategy_dict.get("filter_regexes")
-                    if isinstance(filter_regexes_from_blob, str): # if it was a comma sep string in blob params
-                        filter_regexes_from_blob = to_list_str(filter_regexes_from_blob)
-
-
-                    if filter_regexes_from_blob:
-                        filters = [URLPatternFilter(regex) for regex in filter_regexes_from_blob]
-                        filter_chain = FilterChain(filters=filters)
-
-                    deep_crawl_strategy_instance = BestFirstCrawlingStrategy(
-                        url_scorer=url_scorer,
-                        filter_chain=filter_chain,
-                        max_pages=individual_params_for_strategy_dict.get("max_pages"),
-                        include_external=to_bool(individual_params_for_strategy_dict.get("include_external", False))
-                    )
-                else:
-                    logger.warning(f"Unknown deep crawl strategy name from blob: {strategy_name_from_blob}")
-                
-                if deep_crawl_strategy_instance:
-                    logger.info(f"Successfully constructed deep crawl strategy instance from blob: {type(deep_crawl_strategy_instance).__name__}")
-
-            except Exception as e:
-                logger.error(f"Error constructing deep crawl strategy from blob params: {e}", exc_info=True)
-
-
-        # --- Extraction Strategy Population ---
+        # --- Extraction Strategy ---
+        logger.info("Populating Extraction Strategy...")
         extraction_strategy_instance: Optional[ExtractionStrategy] = None
-        extraction_strategy_type = params.get("extraction_strategy") # Direct param
-        extraction_params_for_strategy = {} # To hold params for chosen strategy
+        sd_extraction_block = strategy_definition.get('extraction_strategy', {})
+        if not sd_extraction_block and isinstance(sd_main_params, dict) :
+            sd_extraction_block = sd_main_params.get('extraction_strategy', {})
 
-        # Check extraction_config blob if direct type is not given
-        extraction_config_blob_str = params.get("extraction_config")
-        parsed_extraction_config_blob = None
-        strategy_name_from_extraction_blob = None
-        strategy_params_from_extraction_blob = {}
-
-        if isinstance(extraction_config_blob_str, str) and extraction_config_blob_str.strip():
+        if sd_extraction_block and isinstance(sd_extraction_block.get('type'), str):
+            ext_type = sd_extraction_block.get('type','').lower()
+            ext_params_data = sd_extraction_block.get('params', {})
+            logger.info(f"Using 'extraction_strategy' from strategy_definition: Type='{ext_type}', Params='{json.dumps(ext_params_data, default=str)}'")
             try:
-                parsed_extraction_config_blob = json.loads(extraction_config_blob_str)
-                if isinstance(parsed_extraction_config_blob, dict):
-                    strategy_name_from_extraction_blob = parsed_extraction_config_blob.get("strategy")
-                    strategy_params_from_extraction_blob = parsed_extraction_config_blob.get("params", {})
-                    if not isinstance(strategy_params_from_extraction_blob, dict): # ensure it's a dict
-                        logger.warning(f"Params from extraction_config blob was not a dict: {strategy_params_from_extraction_blob}. Using empty dict.")
-                        strategy_params_from_extraction_blob = {}
-                    logger.info(f"Parsed extraction_config blob: strategy_name='{strategy_name_from_extraction_blob}', params='{strategy_params_from_extraction_blob}'")
-                else:
-                    logger.warning(f"Parsed extraction_config string was not a dict: {type(parsed_extraction_config_blob)}.")
-            except json.JSONDecodeError:
-                logger.error(f"Failed to parse extraction_config string: {extraction_config_blob_str}.", exc_info=True)
-        elif isinstance(extraction_config_blob_str, dict): # If it was already a dictionary
-            parsed_extraction_config_blob = extraction_config_blob_str
-            strategy_name_from_extraction_blob = parsed_extraction_config_blob.get("strategy")
-            strategy_params_from_extraction_blob = parsed_extraction_config_blob.get("params", {})
-            if not isinstance(strategy_params_from_extraction_blob, dict):
-                logger.warning(f"Params from extraction_config dict was not a dict: {strategy_params_from_extraction_blob}. Using empty dict.")
-                strategy_params_from_extraction_blob = {}
-            logger.info(f"Using pre-parsed extraction_config dict: strategy_name='{strategy_name_from_extraction_blob}', params='{strategy_params_from_extraction_blob}'")
-
-
-        # Determine the actual strategy type to use
-        final_extraction_strategy_type = extraction_strategy_type # From direct param
-        if not final_extraction_strategy_type and strategy_name_from_extraction_blob:
-            final_extraction_strategy_type = strategy_name_from_extraction_blob
-            logger.info(f"Using extraction strategy type from blob: '{final_extraction_strategy_type}' as direct param was missing.")
-            # If using blob's strategy, params should also come from blob primarily
-            extraction_params_for_strategy = strategy_params_from_extraction_blob.copy()
-        
-        # If using direct strategy type, populate its params from direct request params
-        # and allow blob params to supplement/override if structure aligns
-        # (current code structure for LLM, Cosine, JsonCss already pulls from params.get for individual fields)
-
-        # The extraction_config_param warning and TODO can be re-evaluated or removed if this handles it.
-        # For now, we rely on the individual params.get() within each strategy block,
-        # but if strategy_params_from_extraction_blob is populated, it should be used.
-
-        if final_extraction_strategy_type and isinstance(final_extraction_strategy_type, str):
-            if final_extraction_strategy_type.lower() == "llm":
-                # --- LLMExtractionStrategy Population (Advanced) ---
-                llm_extraction_strategy_params = {}
-
-                # Get LLM Model Config from LLM Registry (Preferred)
-                llm_model_alias = params.get("llm_model_alias") or os.getenv('DEFAULT_LLM_MODEL_ALIAS') # Use alias from params or env var
-                llm_config_instance: Optional[LLMConfig] = None
-
-                if llm_model_alias and LLM_REGISTRY_AVAILABLE and get_llm_registry_service:
-                    llm_registry = get_llm_registry_service()
-                    if llm_registry:
+                if "llmextractionstrategy" in ext_type or ext_type == "llm":
+                    logger.info(f"Configuring LLMExtractionStrategy from strategy_definition params: {json.dumps(ext_params_data, default=str)}")
+                    llm_config_for_strategy: Optional[LLMConfig] = None
+                    sd_llm_config_data = ext_params_data.get('llm_config', {})
+                    if isinstance(sd_llm_config_data, dict) and sd_llm_config_data.get("provider") and sd_llm_config_data.get("model"):
+                        logger.info(f"Found llm_config in extraction_strategy params: {sd_llm_config_data}")
+                        llm_c_args = {k:v for k,v in sd_llm_config_data.items() if v is not None}
+                        if "base_url" in llm_c_args: llm_c_args["api_base"] = llm_c_args.pop("base_url")
+                        if "api_token" in llm_c_args: llm_c_args["api_key"] = llm_c_args.pop("api_token")
                         try:
-                            # Get model details from the registry using the alias
-                            model_details = await llm_registry.get_model_details(llm_model_alias)
-                            if model_details:
-                                # Construct LLMConfig using details from the registry
-                                # The LiteLLM proxy URL is obtained from app_config or fallback env var
-                                if PROXY_CONFIG_LOADED or LITELLM_PROXY_URL:
-                                    llm_config_instance = LLMConfig(
-                                        provider=llm_model_alias, # Use the alias defined in LiteLLM config
-                                        api_base=LITELLM_PROXY_URL, # Point to the LiteLLM proxy
-                                        api_key=LITELLM_PROXY_API_KEY, # Pass the proxy's API key (if any)
-                                        extra_params=model_details.get("extra_params"),
-                                        # temperature, max_tokens, etc. can also be passed here if needed
-                                        # temperature=params.get("llm_temperature"),
-                                        # max_tokens=params.get("llm_max_tokens"),
-                                    )
-                                    logger.info(f"Using LLMConfig from registry details for alias: {llm_model_alias}")
-                                else:
-                                    logger.warning("LiteLLM proxy URL not configured, cannot create LLMConfig from registry.")
-                            else:
-                                logger.warning(f"Model details not found in registry for alias: {llm_model_alias}")
-                        except Exception as e:
-                            logger.error(f"Error getting model details from registry for {llm_model_alias}: {e}", exc_info=True)
-                    else:
-                        logger.warning("LLM registry service not initialized.")
-                elif llm_model_alias:
-                     logger.warning("LLM registry service not available or model alias not provided. Using direct LLM params if available.")
+                            llm_config_for_strategy = LLMConfig(**llm_c_args)
+                            logger.info(f"LLMConfig for LLMExtractionStrategy created from extraction_strategy.params.llm_config: {llm_config_for_strategy}")
+                        except Exception as e_llm_cfg_sd: logger.error(f"Error creating LLMConfig from extraction_strategy.params.llm_config: {e_llm_cfg_sd}", exc_info=True)
+                    if not llm_config_for_strategy and global_llm_config:
+                        llm_config_for_strategy = global_llm_config
+                        logger.info("Using global LLMConfig for LLMExtractionStrategy.")
+                    if not llm_config_for_strategy:
+                        logger.info("LLMConfig not available from strategy_definition for LLMExtractionStrategy. Attempting fallback to original 'params'.")
+                        llm_model_alias_fb = params.get("llm_model_alias") or os.getenv('DEFAULT_LLM_MODEL_ALIAS')
+                        if llm_model_alias_fb and LLM_REGISTRY_AVAILABLE and get_llm_registry_service:
+                            llm_registry = get_llm_registry_service()
+                            if llm_registry:
+                                model_details_fb = await llm_registry.get_model_details(llm_model_alias_fb)
+                                if model_details_fb and (PROXY_CONFIG_LOADED or LITELLM_PROXY_URL):
+                                    llm_config_for_strategy = LLMConfig(provider=llm_model_alias_fb, api_base=LITELLM_PROXY_URL, api_key=LITELLM_PROXY_API_KEY, extra_params=model_details_fb.get("extra_params"), temperature=to_float(ext_params_data.get("temperature", params.get("llm_temperature"))), max_tokens=to_int(ext_params_data.get("max_tokens", params.get("llm_max_tokens"))))
+                                    logger.info(f"LLMConfig for LLMExtractionStrategy created from LLM Registry (fallback): {llm_model_alias_fb}")
+                        if not llm_config_for_strategy:
+                            fb_llm_provider = ext_params_data.get("provider", params.get("llm_model", params.get("provider")))
+                            fb_llm_model = ext_params_data.get("model", params.get("llm_model_name", fb_llm_provider))
+                            fb_llm_api_base = ext_params_data.get("api_base", params.get("crawl4ai_llm_base_url", params.get("api_base")))
+                            fb_llm_api_key = ext_params_data.get("api_key", params.get("llm_api_key"))
+                            if fb_llm_provider and fb_llm_model:
+                                direct_llm_fb_args = { "provider": fb_llm_provider, "model": fb_llm_model, "api_key": fb_llm_api_key, "api_base": fb_llm_api_base, "temperature": to_float(ext_params_data.get("temperature", params.get("llm_temperature"))), "max_tokens": to_int(ext_params_data.get("max_tokens", params.get("llm_max_tokens"))), "extra_params": ext_params_data.get("extra_params", to_json_dict(params.get("llm_extra_params")))}
+                                direct_llm_fb_args = {k:v for k,v in direct_llm_fb_args.items() if v is not None}
+                                try:
+                                    llm_config_for_strategy = LLMConfig(**direct_llm_fb_args)
+                                    logger.info(f"LLMConfig for LLMExtractionStrategy created from direct fallback params (merged with SD where possible): {direct_llm_fb_args}")
+                                except Exception as e_llm_cfg_fb_direct: logger.error(f"Error creating LLMConfig from merged/fallback params: {e_llm_cfg_fb_direct}", exc_info=True)
+                            else: logger.warning("Insufficient params for LLMConfig from fallback/merged.")
+                    if llm_config_for_strategy:
+                        schema_json_val = ext_params_data.get('schema_json', ext_params_data.get('json_schema', params.get("llm_json_schema")))
+                        if isinstance(schema_json_val, str): schema_json_val = to_json_dict(schema_json_val)
+                        instruction_val = ext_params_data.get('instruction', ext_params_data.get('prompt_template', params.get("llm_prompt_template")))
+                        if schema_json_val:
+                            llm_strat_args = { "llm_config": llm_config_for_strategy, "json_schema": schema_json_val, "prompt_template": instruction_val, "output_format": ext_params_data.get("output_format", params.get("llm_output_format")), "vision_enabled": to_bool(ext_params_data.get("vision_enabled", params.get("llm_vision_enabled", False))), "audio_enabled": to_bool(ext_params_data.get("audio_enabled", params.get("llm_audio_enabled", False))), "tool_calling_enabled": to_bool(ext_params_data.get("tool_calling_enabled", params.get("llm_tool_calling_enabled", False))), "thinking": ext_params_data.get("thinking", params.get("llm_thinking")), "reasoning_effort": ext_params_data.get("reasoning_effort", params.get("llm_reasoning_effort")), "cache_control": ext_params_data.get("cache_control", params.get("llm_cache_control")), "metadata": ext_params_data.get("metadata", to_json_dict(params.get("llm_metadata"))), "user": ext_params_data.get("user", params.get("llm_user")), "input_file_types": ext_params_data.get("input_file_types", to_list_str(params.get("llm_input_file_types")))}
+                            final_llm_strat_args = {k:v for k,v in llm_strat_args.items() if v is not None}
+                            extraction_strategy_instance = LLMExtractionStrategy(**final_llm_strat_args)
+                            logger.info(f"LLMExtractionStrategy instantiated. Schema provided: {bool(schema_json_val)}, Instruction provided: {bool(instruction_val)}")
+                        else: logger.warning("Could not instantiate LLMExtractionStrategy: JSON schema (schema_json) is missing.")
+                    else: logger.warning("LLMConfig not successfully created, cannot instantiate LLMExtractionStrategy.")
+                elif "cosinestrategy" in ext_type or ext_type == "cosine":
+                    extraction_strategy_instance = CosineStrategy(**{k:v for k,v in ext_params_data.items() if k in CosineStrategy.model_fields})
+                elif "jsoncssextractionstrategy" in ext_type or ext_type == "jsoncss":
+                    extraction_strategy_instance = JsonCssExtractionStrategy(**{k:v for k,v in ext_params_data.items() if k in JsonCssExtractionStrategy.model_fields})
+                if extraction_strategy_instance: logger.info(f"Instantiated extraction strategy from strategy_definition: {type(extraction_strategy_instance).__name__}")
+            except Exception as e: logger.error(f"Error instantiating extraction strategy '{ext_type}' from strategy_definition: {e}", exc_info=True)
+        if not extraction_strategy_instance: # Fallback
+            logger.info("Extraction strategy not fully parsed from strategy_definition or not defined. Checking fallback parameters.")
+            fb_ext_type = params.get("extraction_strategy")
+            if fb_ext_type == "llm" and not extraction_strategy_instance:
+                logger.warning("LLM Extraction via fallback (simplified as SD path failed): This indicates missing LLM config in SD.")
+                llm_model_alias_fb = params.get("llm_model_alias")
+                llm_json_schema_fb = to_json_dict(params.get("llm_json_schema"))
+                if llm_model_alias_fb and llm_json_schema_fb and LLM_REGISTRY_AVAILABLE and get_llm_registry_service :
+                     temp_llm_config = LLMConfig(provider=llm_model_alias_fb, api_base=LITELLM_PROXY_URL, api_key=LITELLM_PROXY_API_KEY)
+                     extraction_strategy_instance = LLMExtractionStrategy(llm_config=temp_llm_config, json_schema=llm_json_schema_fb)
+                     logger.info("Used simplified fallback for LLMExtractionStrategy based on top-level 'params'.")
 
-                # Fallback: Direct LLM Parameters (if registry not used or failed)
-                if llm_config_instance is None:
-                    logger.info("Attempting to construct LLMConfig from direct parameters or extraction_config blob params.")
-                    # Prioritize params from extraction_config_blob if type was derived from there
-                    llm_direct_param_source = extraction_params_for_strategy if strategy_name_from_extraction_blob and final_extraction_strategy_type.lower() == "llm" else params
-
-                    try:
-                        # Direct parameters from the request, mapping to LLMConfig attributes
-                        direct_llm_params_args = {
-                            "provider": llm_direct_param_source.get("llm_model") or llm_direct_param_source.get("provider"), # Use 'provider' for model name/ID
-                            "api_key": llm_direct_param_source.get("llm_api_key"), # Direct API Key
-                            "api_base": llm_direct_param_source.get("crawl4ai_llm_base_url") or llm_direct_param_source.get("api_base"), 
-                            "temperature": to_float(llm_direct_param_source.get("llm_temperature") or llm_direct_param_source.get("temperature")), 
-                            "max_tokens": to_int(llm_direct_param_source.get("llm_max_tokens") or llm_direct_param_source.get("max_tokens")), 
-                            "extra_params": to_json_dict(llm_direct_param_source.get("llm_extra_params") or llm_direct_param_source.get("extra_params")), 
-                            "max_retries": to_int(llm_direct_param_source.get("llm_max_retries") or llm_direct_param_source.get("max_retries")), 
-                            "timeout": to_float(llm_direct_param_source.get("llm_timeout") or llm_direct_param_source.get("timeout")), 
-                        }
-                        # Filter out None values
-                        filtered_direct_llm_params_args = {k: v for k, v in direct_llm_params_args.items() if v is not None}
-
-                        if filtered_direct_llm_params_args.get("provider"): # Only create if a provider is specified
-                             llm_config_instance = LLMConfig(**filtered_direct_llm_params_args)
-                             logger.info(f"Successfully constructed LLMConfig from direct parameters: {filtered_direct_llm_params_args}")
-                        else:
-                            logger.warning("No LLM provider specified in direct parameters. LLMExtractionStrategy will not be created.")
-
-                    except Exception as e:
-                         logger.error(f"Error constructing LLMConfig from direct parameters: {e}", exc_info=True)
-
-                # Proceed only if LLMConfig instance was successfully created
-                if llm_config_instance:
-                    # --- LLMExtractionStrategy Specific Parameters ---
-                    llm_strategy_param_source = extraction_params_for_strategy if strategy_name_from_extraction_blob and final_extraction_strategy_type.lower() == "llm" else params
-                    llm_strategy_args = {
-                        "llm_config": llm_config_instance,
-                        "prompt_template": llm_strategy_param_source.get("llm_prompt_template") or llm_strategy_param_source.get("prompt_template"), 
-                        "output_format": llm_strategy_param_source.get("llm_output_format") or llm_strategy_param_source.get("output_format"), 
-                        "json_schema": to_json_dict(llm_strategy_param_source.get("llm_json_schema") or llm_strategy_param_source.get("json_schema")), 
-                         "vision_enabled": to_bool(llm_strategy_param_source.get("llm_vision_enabled") or llm_strategy_param_source.get("vision_enabled")), 
-                         "audio_enabled": to_bool(llm_strategy_param_source.get("llm_audio_enabled") or llm_strategy_param_source.get("audio_enabled")), 
-                         "tool_calling_enabled": to_bool(llm_strategy_param_source.get("llm_tool_calling_enabled") or llm_strategy_param_source.get("tool_calling_enabled")), 
-                         "thinking": llm_strategy_param_source.get("llm_thinking") or llm_strategy_param_source.get("thinking"), 
-                         "reasoning_effort": llm_strategy_param_source.get("llm_reasoning_effort") or llm_strategy_param_source.get("reasoning_effort"), 
-                         "cache_control": llm_strategy_param_source.get("llm_cache_control") or llm_strategy_param_source.get("cache_control"), 
-                         "metadata": to_json_dict(llm_strategy_param_source.get("llm_metadata") or llm_strategy_param_source.get("metadata")), 
-                         "user": llm_strategy_param_source.get("llm_user") or llm_strategy_param_source.get("user"), 
-                         "input_file_types": to_list_str(llm_strategy_param_source.get("llm_input_file_types") or llm_strategy_param_source.get("input_file_types")), 
-                    }
-                    # Filter out None values
-                    filtered_llm_strategy_args = {k: v for k, v in llm_strategy_args.items() if v is not None}
-
-                    try:
-                        # This JSON blob might contain configuration specific to the chosen extraction_strategy_type.
-                        # The logic to instantiate/configure the strategy should incorporate this if present.
-                        # extraction_config_param = params.get("extraction_config") # This is already handled by strategy_params_from_extraction_blob
-                        if strategy_name_from_extraction_blob and final_extraction_strategy_type.lower() == "llm" and strategy_params_from_extraction_blob:
-                             logger.info(f"Processing extraction_config blob parameter for LLM strategy: {strategy_params_from_extraction_blob}")
-                             # Merge blob params into the filtered_llm_strategy_args
-                             # This allows overriding or adding strategy-specific parameters from the blob's "params" field
-                             
-                             # Create a temp dict from blob params, converting keys if necessary for LLMConfig/LLMExtractionStrategy
-                             # For LLMConfig fields within blob "params":
-                             llm_config_fields_from_blob = {
-                                "provider": strategy_params_from_extraction_blob.get("llm_model") or strategy_params_from_extraction_blob.get("provider"),
-                                "api_key": strategy_params_from_extraction_blob.get("llm_api_key"),
-                                "api_base": strategy_params_from_extraction_blob.get("crawl4ai_llm_base_url") or strategy_params_from_extraction_blob.get("api_base"),
-                                "temperature": to_float(strategy_params_from_extraction_blob.get("llm_temperature") or strategy_params_from_extraction_blob.get("temperature")),
-                                "max_tokens": to_int(strategy_params_from_extraction_blob.get("llm_max_tokens") or strategy_params_from_extraction_blob.get("max_tokens")),
-                                "extra_params": to_json_dict(strategy_params_from_extraction_blob.get("llm_extra_params") or strategy_params_from_extraction_blob.get("extra_params")),
-                                "max_retries": to_int(strategy_params_from_extraction_blob.get("llm_max_retries") or strategy_params_from_extraction_blob.get("max_retries")),
-                                "timeout": to_float(strategy_params_from_extraction_blob.get("llm_timeout") or strategy_params_from_extraction_blob.get("timeout"))
-                             }
-                             llm_config_fields_from_blob = {k:v for k,v in llm_config_fields_from_blob.items() if v is not None}
-                             if llm_config_fields_from_blob and isinstance(filtered_llm_strategy_args.get("llm_config"), LLMConfig):
-                                 # Update the existing llm_config_instance with values from blob
-                                 for key, value in llm_config_fields_from_blob.items():
-                                     if hasattr(filtered_llm_strategy_args["llm_config"], key):
-                                         setattr(filtered_llm_strategy_args["llm_config"], key, value)
-                                 logger.info("Updated LLMConfig instance with parameters from extraction_config blob.")
-                             
-                             # For LLMExtractionStrategy fields directly from blob "params":
-                             direct_strategy_fields_from_blob = {
-                                 "prompt_template": strategy_params_from_extraction_blob.get("llm_prompt_template") or strategy_params_from_extraction_blob.get("prompt_template"),
-                                 "output_format": strategy_params_from_extraction_blob.get("llm_output_format") or strategy_params_from_extraction_blob.get("output_format"),
-                                 "json_schema": to_json_dict(strategy_params_from_extraction_blob.get("llm_json_schema") or strategy_params_from_extraction_blob.get("json_schema")),
-                                 "vision_enabled": to_bool(strategy_params_from_extraction_blob.get("llm_vision_enabled") or strategy_params_from_extraction_blob.get("vision_enabled")),
-                                 "audio_enabled": to_bool(strategy_params_from_extraction_blob.get("llm_audio_enabled") or strategy_params_from_extraction_blob.get("audio_enabled")),
-                                 "tool_calling_enabled": to_bool(strategy_params_from_extraction_blob.get("llm_tool_calling_enabled") or strategy_params_from_extraction_blob.get("tool_calling_enabled")),
-                                 "thinking": strategy_params_from_extraction_blob.get("llm_thinking") or strategy_params_from_extraction_blob.get("thinking"),
-                                 "reasoning_effort": strategy_params_from_extraction_blob.get("llm_reasoning_effort") or strategy_params_from_extraction_blob.get("reasoning_effort"),
-                                 "cache_control": strategy_params_from_extraction_blob.get("llm_cache_control") or strategy_params_from_extraction_blob.get("cache_control"),
-                                 "metadata": to_json_dict(strategy_params_from_extraction_blob.get("llm_metadata") or strategy_params_from_extraction_blob.get("metadata")),
-                                 "user": strategy_params_from_extraction_blob.get("llm_user") or strategy_params_from_extraction_blob.get("user"),
-                                 "input_file_types": to_list_str(strategy_params_from_extraction_blob.get("llm_input_file_types") or strategy_params_from_extraction_blob.get("input_file_types")),
-                             }
-                             direct_strategy_fields_from_blob = {k:v for k,v in direct_strategy_fields_from_blob.items() if v is not None}
-                             filtered_llm_strategy_args.update(direct_strategy_fields_from_blob)
-                             logger.info("Merged extraction_config blob 'params' into LLMExtractionStrategy args.")
-
-
-                        extraction_strategy_instance = LLMExtractionStrategy(**filtered_llm_strategy_args)
-                        logger.info(f"Successfully created LLMExtractionStrategy with args: {filtered_llm_strategy_args}")
-                    except Exception as e:
-                        logger.error(f"Error creating LLMExtractionStrategy: {e}", exc_info=True)
-                        # If LLMExtractionStrategy creation fails, yield an error and stop
-                        yield json.dumps({"type": "error", "message": f"Failed to configure LLM Extraction Strategy: {e}"})
-                        return # Stop the generator
-
-            elif final_extraction_strategy_type.lower() == "cosine":
-                # Cosine Strategy parameters
-                # Prioritize params from extraction_config_blob if type was derived from there
-                cosine_param_source = extraction_params_for_strategy if strategy_name_from_extraction_blob and final_extraction_strategy_type.lower() == "cosine" else params
-                
-                cosine_strategy_args = {
-                    "query": cosine_param_source.get("cosine_query") or cosine_param_source.get("query"),
-                    "threshold": to_float(cosine_param_source.get("cosine_threshold") or cosine_param_source.get("threshold")), 
-                    "content_weight": to_float(cosine_param_source.get("cosine_content_weight") or cosine_param_source.get("content_weight")), 
-                    "summary_weight": to_float(cosine_param_source.get("cosine_summary_weight") or cosine_param_source.get("summary_weight")), 
-                    "keywords": to_list_str(cosine_param_source.get("cosine_keywords") or cosine_param_source.get("keywords")), 
-                }
-                # Filter out None values
-                filtered_cosine_strategy_args = {k: v for k, v in cosine_strategy_args.items() if v is not None}
-
-                try:
-                    extraction_strategy_instance = CosineStrategy(**filtered_cosine_strategy_args)
-                    logger.info(f"Successfully created CosineStrategy with args: {filtered_cosine_strategy_args}")
-                except Exception as e:
-                     logger.error(f"Error creating CosineStrategy: {e}", exc_info=True)
-                     yield json.dumps({"type": "error", "message": f"Failed to configure Cosine Extraction Strategy: {e}"})
-                     return # Stop the generator
-
-            elif final_extraction_strategy_type.lower() == "jsoncss":
-                # JsonCss Extraction Strategy parameters
-                # Prioritize params from extraction_config_blob if type was derived from there
-                jsoncss_param_source = extraction_params_for_strategy if strategy_name_from_extraction_blob and final_extraction_strategy_type.lower() == "jsoncss" else params
-                
-                jsoncss_strategy_args = {
-                    "css_selector": jsoncss_param_source.get("jsoncss_css_selector") or jsoncss_param_source.get("css_selector"), 
-                    "extract_attribute": jsoncss_param_source.get("jsoncss_extract_attribute") or jsoncss_param_source.get("extract_attribute"), 
-                }
-                # Filter out None values
-                filtered_jsoncss_strategy_args = {k: v for k, v in jsoncss_strategy_args.items() if v is not None}
-
-                try:
-                     extraction_strategy_instance = JsonCssExtractionStrategy(**filtered_jsoncss_strategy_args)
-                     logger.info(f"Successfully created JsonCssExtractionStrategy with args: {filtered_jsoncss_strategy_args}")
-                except Exception as e:
-                     logger.error(f"Error creating JsonCssExtractionStrategy: {e}", exc_info=True)
-                     yield json.dumps({"type": "error", "message": f"Failed to configure JsonCss Extraction Strategy: {e}"})
-                     return # Stop the generator
-            else:
-                logger.warning(f"Unknown extraction strategy type: {final_extraction_strategy_type}")
-                yield json.dumps({"type": "error", "message": f"Unknown extraction strategy type: {final_extraction_strategy_type}"})
-                return # Stop the generator
-
-        # --- Markdown Generator Population ---
-        # DefaultMarkdownGenerator is used unless a custom one is needed based on params.
-        # Currently, no parameters in the UI map to custom Markdown generators.
-        # The PruningContentFilter for advanced MD generation is tied to the generator instance, not a separate config.
+        # --- Markdown Generator ---
+        logger.info("Populating Markdown Generator...")
         markdown_generator_instance = DefaultMarkdownGenerator()
-        logger.debug("Using DefaultMarkdownGenerator.")
+        sd_md_config = strategy_definition.get('markdown_generator_config', {})
+        if not sd_md_config and isinstance(sd_main_params, dict): sd_md_config = sd_main_params.get('markdown_generator_config',{})
+        if sd_md_config and isinstance(sd_md_config.get('type'), str):
+            logger.info(f"Using 'markdown_generator_config' from strategy_definition: {sd_md_config}")
+            if sd_md_config.get('type','').lower() != "defaultmarkdown": logger.warning(f"Custom markdown generator type '{sd_md_config.get('type')}' from SD not yet fully supported, using Default.")
+        sd_run_config_for_md = strategy_definition.get('run_config', sd_main_params if isinstance(sd_main_params, dict) else {})
+        use_adv_md_sd = sd_md_config.get('params',{}).get('use_advanced_markdown', sd_run_config_for_md.get('use_advanced_markdown'))
+        use_adv_md_final = to_bool(use_adv_md_sd if use_adv_md_sd is not None else params.get("use_advanced_markdown", False))
+        if use_adv_md_final:
+            if hasattr(markdown_generator_instance, 'content_filter'):
+                markdown_generator_instance.content_filter = PruningContentFilter()
+                logger.info("Applied PruningContentFilter to MarkdownGenerator.")
+            else: logger.warning("MarkdownGenerator does not support content_filter. Advanced markdown (pruning) not applied.")
+        logger.info(f"Final Markdown Generator: {type(markdown_generator_instance).__name__}")
 
-        # --- Handle crawl4ai_markdown_generator parameter (Placeholder) ---
-        # TODO: Add logic here to select/configure markdown_generator_instance
-        # based on the value of params.get("crawl4ai_markdown_generator")
-        # The markdown generator might need to be instantiated differently
-        # or configured with specific options based on this parameter.
-        markdown_generator_param = params.get("crawl4ai_markdown_generator")
-        if markdown_generator_param and isinstance(markdown_generator_param, str):
-            if markdown_generator_param.lower() == "default":
-                markdown_generator_instance = DefaultMarkdownGenerator()
-                logger.info("Using DefaultMarkdownGenerator based on parameter.")
-            # Add other Markdown generator types here if needed in the future
-            # elif markdown_generator_param.lower() == "custom":
-            #     # Instantiate and configure your custom generator here
-            #     markdown_generator_instance = CustomMarkdownGenerator(...)\n
-            #     logger.info("Using CustomMarkdownGenerator based on parameter.")\n
-            else:
-                logger.warning(f"Unknown crawl4ai_markdown_generator type: {markdown_generator_param}. Using default.")
-
-        # Check if advanced markdown generation is requested
-        use_advanced_markdown = to_bool(params.get("use_advanced_markdown", False))
-        if use_advanced_markdown:
-             # Instantiate the PruningContentFilter and apply it to the generator if needed
-             # PruningContentFilter is part of crawl4ai's content_filter_strategy
-             pruning_filter = PruningContentFilter()
-             # Assuming DefaultMarkdownGenerator can accept a content filter
-             if hasattr(markdown_generator_instance, 'content_filter'):
-                 markdown_generator_instance.content_filter = pruning_filter
-                 logger.info("Applied PruningContentFilter to MarkdownGenerator.")
-             else:
-                 logger.warning("MarkdownGenerator does not support content_filter attribute. Advanced markdown not applied.")
-
-
-
-        # --- CrawlerRunConfig Population ---
-        # These parameters control the overall crawl execution.
-        crawler_run_config_args = {
-            "url": url, # The target URL
-            "deep_crawl_strategy": deep_crawl_strategy_instance, # Pass the instantiated strategy object
-            "extraction_strategy": extraction_strategy_instance, # Pass the instantiated strategy object
-            "markdown_generator": markdown_generator_instance, # Pass the instantiated generator object
-            "screenshot": to_bool(params.get("capture_screenshot", False)), # Use 'screenshot' and map from 'capture_screenshot'
-            "ignore_urls": to_list_str(params.get("ignore_urls")), # Matches main.py Query param
-            "include_urls": to_list_str(params.get("include_urls")), # Matches main.py Query param
-            "max_retries": to_int(params.get("max_retries")), # Matches main.py Query param
-            "retry_delay": to_float(params.get("retry_delay")), # Matches main.py Query param
-            # Add other CrawlerRunConfig parameters as needed
-        }
-
-        # --- Determine page_timeout for CrawlerRunConfig ---
-        page_timeout_final_ms: Optional[int] = None
-        # Prioritize crawl4ai-specific page_timeout if available (expected in ms from frontend)
-        crawl4ai_specific_timeout_ms_str = params.get("crawl4ai_page_timeout")
-        if crawl4ai_specific_timeout_ms_str:
-            val = to_int(crawl4ai_specific_timeout_ms_str)
-            if val is not None:
-                page_timeout_final_ms = val
+        # --- CrawlerRunConfig ---
+        logger.info("Populating CrawlerRunConfig...")
+        sd_run_config_block = strategy_definition.get('run_config', {})
+        if not sd_run_config_block and isinstance(sd_main_params, dict) and any(k in sd_main_params for k in ["page_timeout", "screenshot", "only_text", "max_retries", "retry_delay", "ignore_urls", "include_urls"]):
+            logger.info("Using top-level 'params' from strategy_definition as source for run_config.")
+            sd_run_config_block = sd_main_params
+        elif sd_run_config_block: logger.info(f"Using 'run_config' block from strategy_definition: {json.dumps(sd_run_config_block, default=str)}")
+        else: logger.info("No 'run_config' block in strategy_definition, or top-level 'params' did not seem to contain run_config settings. Relying on fallbacks.")
+        page_timeout_final_ms = to_int(sd_run_config_block.get("page_timeout", params.get("crawl4ai_page_timeout")))
+        if page_timeout_final_ms is None and params.get("timeout") is not None:
+            page_timeout_val_s = to_int(params.get("timeout"))
+            if page_timeout_val_s is not None: page_timeout_final_ms = page_timeout_val_s * 1000
+        if page_timeout_final_ms is None: page_timeout_final_ms = 60000
+        logger.info(f"Effective Page Timeout for CrawlerRunConfig: {page_timeout_final_ms}ms")
+        crawler_run_config_args = {"deep_crawl_strategy": deep_crawl_strategy_instance, "extraction_strategy": extraction_strategy_instance, "markdown_generator": markdown_generator_instance, "screenshot": to_bool(sd_run_config_block.get("screenshot", params.get("capture_screenshot", False))), "ignore_urls": sd_run_config_block.get("ignore_urls") if isinstance(sd_run_config_block.get("ignore_urls"), list) else to_list_str(params.get("ignore_urls")), "include_urls": sd_run_config_block.get("include_urls") if isinstance(sd_run_config_block.get("include_urls"), list) else to_list_str(params.get("include_urls")), "max_retries": to_int(sd_run_config_block.get("max_retries", params.get("max_retries"))), "retry_delay": to_float(sd_run_config_block.get("retry_delay", params.get("retry_delay"))), "page_timeout": page_timeout_final_ms, "only_text": to_bool(sd_run_config_block.get("only_text", params.get("only_text", False)))}
+        final_crawler_run_config_args = {k: v for k, v in crawler_run_config_args.items() if v is not None}
+        logger.debug(f"Final arguments for CrawlerRunConfig constructor: { {k: (type(v).__name__ if isinstance(v, (ExtractionStrategy, BFSDeepCrawlStrategy, DFSDeepCrawlStrategy, BestFirstCrawlingStrategy, DefaultMarkdownGenerator)) else v) for k,v in final_crawler_run_config_args.items()} }")
+        crawler_config_object: Optional[CrawlerRunConfig] = None
+        try:
+            crawler_config_object = CrawlerRunConfig(**final_crawler_run_config_args)
+            logger.info(f"CrawlerRunConfig object created successfully.")
+        except Exception as e_crc_create:
+            logger.error(f"Error creating CrawlerRunConfig object: {e_crc_create}", exc_info=True)
+            yield json.dumps({"type": "error", "message": f"Error creating CrawlerRunConfig: {e_crc_create}"})
+            return
         
-        if page_timeout_final_ms is None:
-            # Fallback to generic 'timeout' param (expected in seconds from frontend/main.py)
-            generic_timeout_s_str = params.get("timeout")
-            if generic_timeout_s_str:
-                val = to_int(generic_timeout_s_str)
-                if val is not None:
-                    page_timeout_final_ms = val * 1000
-            elif params.get("timeout") is None: # Default if 'timeout' param itself is missing
-                page_timeout_final_ms = 60 * 1000 # Default 60 seconds in ms
-
-        if page_timeout_final_ms is not None:
-            crawler_run_config_args["page_timeout"] = page_timeout_final_ms
-        # --- End page_timeout determination ---
-        
-        # Filter out None values
-        filtered_crawler_run_config_args = {k: v for k, v in crawler_run_config_args.items() if v is not None}
-
-        # Create CrawlerRunConfig object from processed parameters
-        # crawler_run_config = CrawlerRunConfig(**filtered_crawler_run_config_args) # This is for local/in-process use
-        # logger.debug(f"CrawlerRunConfig object (for local use if any): {crawler_run_config}")
-
-        # --- Prepare JSON Serializable Parameters for Docker Client ---
-        # Base serializable parameters for CrawlerRunConfig
-        serializable_crawler_run_params_for_docker = {
-            # "url": url, # Remove: Redundant if top-level "urls" is used by the service endpoint
-            "screenshot": to_bool(params.get("capture_screenshot", False)),
-            "ignore_urls": to_list_str(params.get("ignore_urls")),
-            "include_urls": to_list_str(params.get("include_urls")),
-            "max_retries": to_int(params.get("max_retries")),
-            "page_timeout": to_int(params.get("timeout", 60) * 1000), # Convert seconds to ms
-            "retry_delay": to_float(params.get("retry_delay")),
-        }
-
-        # Handle deep_crawl_strategy for Docker payload
-        transformed_deep_crawl_config = None
-        if final_deep_crawl_dict: # This was constructed from deep_crawl_config (JSON blob or individual params)
-            temp_config = final_deep_crawl_dict.copy()
-            if "strategy" in temp_config and "name" not in temp_config:
-                strategy_val = temp_config.pop("strategy")
-                if isinstance(strategy_val, str):
-                    if "bfsdeepcrawlstrategy" in strategy_val.lower():
-                        temp_config["name"] = "bfs"
-                    elif "dfsdeepcrawlstrategy" in strategy_val.lower():
-                        temp_config["name"] = "dfs"
-                    elif "bestfirstcrawlingstrategy" in strategy_val.lower():
-                        temp_config["name"] = "bestfirst"
-                    else:
-                        temp_config["name"] = strategy_val.lower() # Use as is, ensure lowercase
-                else:
-                    logger.warning(f"Deep crawl strategy value was not a string: {strategy_val}. Re-adding original key.")
-                    temp_config["strategy"] = strategy_val # Put it back if not processable
-            
-            # Ensure 'params' key exists, even if empty, if 'name' is present
-            if "name" in temp_config and "params" not in temp_config:
-                temp_config["params"] = {}
-            transformed_deep_crawl_config = temp_config
-
-        if transformed_deep_crawl_config:
-            serializable_crawler_run_params_for_docker["deep_crawl_strategy"] = transformed_deep_crawl_config
-            logger.info(f"Docker payload: deep_crawl_strategy set to: {transformed_deep_crawl_config}")
-        
-        # Handle extraction_strategy for Docker payload
-        # extraction_strategy_type (string like "llm", "cosine", etc.)
-        strategy_name_for_payload = None
-        strategy_params_for_payload = {}
-
-        if isinstance(extraction_strategy_instance, LLMExtractionStrategy):
-            strategy_name_for_payload = "llm"
-            # We need to serialize llm_config within filtered_llm_strategy_args if it's an object
-            # Assuming filtered_llm_strategy_args ALREADY contains serializable items, EXCEPT for llm_config
-            temp_llm_strat_args = filtered_llm_strategy_args.copy()
-            if 'llm_config' in temp_llm_strat_args and isinstance(temp_llm_strat_args['llm_config'], LLMConfig):
-                temp_llm_strat_args['llm_config'] = temp_llm_strat_args['llm_config'].model_dump(exclude_none=True)
-            strategy_params_for_payload = temp_llm_strat_args
-        elif isinstance(extraction_strategy_instance, CosineStrategy):
-            strategy_name_for_payload = "cosine"
-            strategy_params_for_payload = filtered_cosine_strategy_args # Assumed serializable
-        elif isinstance(extraction_strategy_instance, JsonCssExtractionStrategy):
-            strategy_name_for_payload = "jsoncss"
-            strategy_params_for_payload = filtered_jsoncss_strategy_args # Assumed serializable
-        elif extraction_strategy_type and extraction_strategy_type.lower() != "none" and extraction_strategy_type.lower() != "html":
-            logger.warning(f"Unhandled extraction_strategy_instance type for Docker payload: {type(extraction_strategy_instance)}. Sending type as name.")
-            strategy_name_for_payload = extraction_strategy_type # Send the name if type is unknown but name exists
-
-        # if strategy_name_for_payload:
-        #     serializable_crawler_run_params_for_docker["extraction_strategy"] = {
-        #         "name": strategy_name_for_payload,
-        #         "params": strategy_params_for_payload
-        #     }
-        #     logger.info(f"Docker payload: extraction_strategy set to: Name='{strategy_name_for_payload}', Params='{strategy_params_for_payload}'")
-        # else:
-        #     logger.info(f"Docker payload: No specific extraction_strategy (or 'none'/'html') provided. Service will use its default.")
-
-        # Handle markdown_generator for Docker payload
-        markdown_generator_name_from_request = params.get("crawl4ai_markdown_generator")
-        if markdown_generator_name_from_request and isinstance(markdown_generator_name_from_request, str) and markdown_generator_name_from_request.lower() != "none":
-            serializable_crawler_run_params_for_docker["markdown_generator"] = markdown_generator_name_from_request
-            logger.info(f"Docker payload: markdown_generator set to: '{markdown_generator_name_from_request}' from request.")
-        else:
-            serializable_crawler_run_params_for_docker["markdown_generator"] = "default"
-            logger.info("Docker payload: markdown_generator set to 'default'.")
-
-        # Filter out None values from the final serializable_crawler_run_params_for_docker
-        final_serializable_crawler_run_params_for_docker = {
-            k: v for k, v in serializable_crawler_run_params_for_docker.items() if v is not None
-        }
-        logger.debug(f"Final serializable CrawlerRunConfig params for Docker: {final_serializable_crawler_run_params_for_docker}")
-
-        # --- ADD LOGGING HERE ---
-        # logger.info(f"DEBUG: final_browser_config_args before payload: {final_browser_config_args}") # This was for old payload
-        # logger.info(f"DEBUG: final_serializable_crawler_run_params_for_docker before payload: {final_serializable_crawler_run_params_for_docker}") # This was for old payload
-        # --- END LOGGING ---
-
         # --- Execute Crawl using Docker Client ---
         yield json.dumps({"type": "status", "status": "crawling", "message": f"Starting crawl for {url}..."})
-        start_time = time.time() # Start timing
-
+        start_time = time.time()
         urls_to_crawl = [url]
-        logger.info(f"DEBUG: Using actual URL for crawling: {urls_to_crawl}")
-
-        # Prepare BrowserConfig object
-        browser_config_object = None
-        if final_browser_config_args: 
-            try:
-                logger.info(f"DEBUG: Arguments for BrowserConfig constructor: {final_browser_config_args}")
-                browser_config_object = BrowserConfig(**final_browser_config_args)
-                logger.info(f"DEBUG: Created BrowserConfig object for client.")
-                logger.debug(f"DEBUG: BrowserConfig object details: {browser_config_object.dump()}")
-            except Exception as e:
-                logger.error(f"Error creating BrowserConfig object: {e}", exc_info=True)
-                yield json.dumps({"type": "error", "message": f"Error creating BrowserConfig: {e}"})
-                return
-
-        # Prepare CrawlerRunConfig object
-        crawler_config_object = None
-        # filtered_crawler_run_config_args is prepared around line 613.
-        # It's based on crawler_run_config_args (line 583) which contains strategy *instances*.
-        # Make a copy and remove 'url' as it's a separate param for crawl4ai_client.crawl()
-        crawler_run_config_params_for_init = filtered_crawler_run_config_args.copy()
-        crawler_run_config_params_for_init.pop("url", None) 
-
-        if crawler_run_config_params_for_init: # Check if there are any params for CrawlerRunConfig
-            try:
-                # ADDED BLOCK FOR DETAILED LOGGING OF STRATEGY TYPES
-                log_crawler_run_params = crawler_run_config_params_for_init.copy()
-                if "deep_crawl_strategy" in log_crawler_run_params and log_crawler_run_params["deep_crawl_strategy"] is not None:
-                    log_crawler_run_params["deep_crawl_strategy_type"] = type(log_crawler_run_params["deep_crawl_strategy"]).__name__
-                if "extraction_strategy" in log_crawler_run_params and log_crawler_run_params["extraction_strategy"] is not None:
-                    log_crawler_run_params["extraction_strategy_type"] = type(log_crawler_run_params["extraction_strategy"]).__name__
-                if "markdown_generator" in log_crawler_run_params and log_crawler_run_params["markdown_generator"] is not None:
-                    log_crawler_run_params["markdown_generator_type"] = type(log_crawler_run_params["markdown_generator"]).__name__
-                logger.info(f"DEBUG: Arguments for CrawlerRunConfig constructor (strategy types logged separately): { {k: v for k, v in log_crawler_run_params.items() if not isinstance(v, (BFSDeepCrawlStrategy, DFSDeepCrawlStrategy, BestFirstCrawlingStrategy, ExtractionStrategy, DefaultMarkdownGenerator))} }")
-                logger.info(f"DEBUG: Strategy types for CrawlerRunConfig: deep_crawl_strategy_type='{log_crawler_run_params.get('deep_crawl_strategy_type', 'N/A')}', extraction_strategy_type='{log_crawler_run_params.get('extraction_strategy_type', 'N/A')}', markdown_generator_type='{log_crawler_run_params.get('markdown_generator_type', 'N/A')}'")
-                # END ADDED BLOCK
-
-                crawler_config_object = CrawlerRunConfig(**crawler_run_config_params_for_init)
-                logger.info(f"DEBUG: Created CrawlerRunConfig object for client.")
-                # Use context={'is_dumping': True} if models have specific dump logic for nested serialization.
-                # crawl4ai's .dump() method should handle this if needed.
-                logger.debug(f"DEBUG: CrawlerRunConfig object details: {crawler_config_object.dump()}")
-            except Exception as e:
-                logger.error(f"Error creating CrawlerRunConfig object: {e}", exc_info=True)
-                yield json.dumps({"type": "error", "message": f"Error creating CrawlerRunConfig: {e}"})
-                return
-        
-        logger.info(f"DEBUG: Calling crawl4ai_client.crawl with: urls_count={len(urls_to_crawl)}, browser_config_is_obj={isinstance(browser_config_object, BrowserConfig)}, crawler_config_is_obj={isinstance(crawler_config_object, CrawlerRunConfig)}")
-        
-        # Call the crawl method on the Docker client, passing the instantiated config objects
-        # For non-streaming single URL, this returns a CrawlResult object directly.
-        crawl_result_item = None # Initialize
+        logger.info(f"Calling crawl4ai_client.crawl with: urls_count={len(urls_to_crawl)}, browser_config_valid={isinstance(browser_config, BrowserConfig)}, crawler_config_valid={isinstance(crawler_config_object, CrawlerRunConfig)}")
+        crawl_result_item = None
         try:
-            # Determine effective timeout for asyncio.wait_for
-            # page_timeout_final_ms is calculated around line 615
-            # Default to 60000ms (60s) if page_timeout_final_ms is None for some reason
-            base_timeout_ms = page_timeout_final_ms if page_timeout_final_ms is not None else 60000
-            grace_period_seconds = 30 # Add a grace period
-            effective_timeout_seconds = (base_timeout_ms / 1000) + grace_period_seconds
-            
-            logger.info(f"Attempting crawl with client-side timeout: {effective_timeout_seconds} seconds.")
-
-            crawl_result_item = await asyncio.wait_for(
-                crawl4ai_client.crawl(
-                    urls=urls_to_crawl,
-                    browser_config=browser_config_object,
-                    crawler_config=crawler_config_object
-                ),
-                timeout=effective_timeout_seconds
-            )
+            base_timeout_ms_eff = crawler_config_object.page_timeout if crawler_config_object and crawler_config_object.page_timeout is not None else 60000
+            grace_period_seconds = 30
+            effective_timeout_seconds = (base_timeout_ms_eff / 1000.0) + grace_period_seconds
+            logger.info(f"Attempting crawl with client-side timeout: {effective_timeout_seconds:.2f} seconds (base: {base_timeout_ms_eff}ms).")
+            crawl_result_item = await asyncio.wait_for(crawl4ai_client.crawl(urls=urls_to_crawl, browser_config=browser_config, crawler_config=crawler_config_object), timeout=effective_timeout_seconds)
         except asyncio.TimeoutError:
-            logger.error(f"Client-side timeout after {effective_timeout_seconds}s waiting for crawl4ai Docker service for URL: {url}")
+            logger.error(f"Client-side timeout after {effective_timeout_seconds:.2f}s waiting for crawl4ai Docker service for URL: {url}")
             yield json.dumps({"type": "error", "status": "timeout", "message": "The content fetch operation timed out on the client side."})
-            # Ensure finally block is reached for client cleanup
-            raise # Re-raise to be caught by the outer finally or allow it to propagate if not further handled by this try/except
-        except Crawl4aiClientError as ce: # Catch specific client errors first
+            raise
+        except Crawl4aiClientError as ce:
             logger.error(f"Crawl4aiClientError during crawl for {url}: {ce}", exc_info=True)
             yield json.dumps({"type": "error", "status": "client_error", "message": f"Crawl4AI service client error: {str(ce)}" })
-            raise # Re-raise
-        except Exception as e_crawl: # Catch other exceptions during the crawl call itself
+            raise
+        except Exception as e_crawl:
             logger.error(f"Exception during crawl4ai_client.crawl for {url}: {e_crawl}", exc_info=True)
             yield json.dumps({"type": "error", "status": "crawl_exception", "message": f"An unexpected error occurred during the crawl execution: {str(e_crawl)}"})
-            raise # Re-raise
-
+            raise
         if isinstance(crawl_result_item, CrawlResult):
             logger.debug(f"Received crawl result for URL: {crawl_result_item.url}")
-            output_data: Dict[str, Any] = {
-                "type": "crawl_result",
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-                "id": str(time.time()),
-                "url": crawl_result_item.url
-            }
-
-            if crawl_result_item.status_code:
-                 output_data["status_code"] = crawl_result_item.status_code
-            
+            output_data: Dict[str, Any] = {"type": "crawl_result", "timestamp": datetime.now(timezone.utc).isoformat(), "id": str(time.time()), "url": crawl_result_item.url}
+            if crawl_result_item.status_code: output_data["status_code"] = crawl_result_item.status_code
             if crawl_result_item.error_message:
                 output_data["error"] = str(crawl_result_item.error_message)
                 logger.error(f"Crawl error for {crawl_result_item.url}: {crawl_result_item.error_message}")
-                # Yield an error type event here in addition to setting output_data['error']
-                yield json.dumps({
-                    "type": "error",
-                    "timestamp": datetime.now(timezone.utc).isoformat(),
-                    "id": str(time.time()),
-                    "message": f"Error crawling {crawl_result_item.url}: {crawl_result_item.error_message}",
-                    "url": crawl_result_item.url
-                })
-                # Continue to yield the crawl_result event, but with error populated.
-
-            # Content (prefer cleaned, then extracted, then raw html)
-            if crawl_result_item.cleaned_html:
-                output_data["content"] = crawl_result_item.cleaned_html
-            elif crawl_result_item.extracted_content: # Typically text
-                output_data["content"] = crawl_result_item.extracted_content
-            elif crawl_result_item.html: # Fallback to raw HTML
-                output_data["content"] = crawl_result_item.html
-            else: # Ensure content is at least an empty string if nothing else
-                output_data["content"] = ""
-
-            # Markdown (accessing the .markdown property of CrawlResult)
-            md_property_value = crawl_result_item.markdown
-            if isinstance(md_property_value, MarkdownGenerationResult):
-                output_data["markdown"] = md_property_value.raw_markdown if md_property_value.raw_markdown is not None else ""
-            elif isinstance(md_property_value, str):
-                output_data["markdown"] = md_property_value
-            else: # Ensure markdown is at least an empty string
-                 output_data["markdown"] = ""
-
-            # Text (from extracted_content for the 'text' SSE field)
-            if crawl_result_item.extracted_content:
-                output_data["text"] = crawl_result_item.extracted_content
-            else: # Ensure text is at least an empty string
-                output_data["text"] = ""
-            
-            # Screenshot (CrawlResult.screenshot is base64 data)
-            if crawl_result_item.screenshot: # screenshot is base64 data
-                output_data["screenshot_base64"] = crawl_result_item.screenshot # Use a more descriptive key
-            
-            # Other useful fields from CrawlResult
-            if crawl_result_item.metadata: # Ensure it's serializable
-                output_data["metadata"] = crawl_result_item.metadata 
-            if crawl_result_item.links: # Ensure it's serializable
-                output_data["links"] = crawl_result_item.links 
-
+                yield json.dumps({"type": "error", "timestamp": datetime.now(timezone.utc).isoformat(), "id": str(time.time()), "message": f"Error reported by crawler for {crawl_result_item.url}: {crawl_result_item.error_message}", "url": crawl_result_item.url})
+            if crawl_result_item.cleaned_html: output_data["content"] = crawl_result_item.cleaned_html
+            elif crawl_result_item.extracted_content: output_data["content"] = crawl_result_item.extracted_content
+            elif crawl_result_item.html: output_data["content"] = crawl_result_item.html
+            else: output_data["content"] = ""
+            md_property = crawl_result_item.markdown
+            if isinstance(md_property, MarkdownGenerationResult): output_data["markdown"] = md_property.raw_markdown if md_property.raw_markdown is not None else ""
+            elif isinstance(md_property, str): output_data["markdown"] = md_property
+            else: output_data["markdown"] = ""
+            output_data["text"] = crawl_result_item.extracted_content if crawl_result_item.extracted_content is not None else ""
+            if crawl_result_item.screenshot: output_data["screenshot_base64"] = crawl_result_item.screenshot
+            if crawl_result_item.metadata: output_data["metadata"] = crawl_result_item.metadata
+            if crawl_result_item.links: output_data["links"] = crawl_result_item.links
             if hasattr(crawl_result_item, 'llm_log_data') and crawl_result_item.llm_log_data:
                 output_data["llm_log_data"] = crawl_result_item.llm_log_data
                 logger.debug(f"LLM log data included for {crawl_result_item.url}")
-
-            # Yield the main crawl_result event
-            logger.info(f"Yielding crawl_result event: {json.dumps(output_data)}")
-            yield json.dumps(output_data)
-        
-        elif crawl_result_item is None and not (crawler_config_object and crawler_config_object.stream):
+            logger.info(f"Yielding crawl_result event for {crawl_result_item.url} (Content length: {len(output_data.get('content', ''))}, Markdown length: {len(output_data.get('markdown', ''))})")
+            yield json.dumps(output_data, default=str)
+        elif crawl_result_item is None and not (crawler_config_object and crawler_config_object.stream if crawler_config_object else False) :
             logger.warning("Crawl client returned None for a non-streaming request. This might indicate an issue or no content.")
             yield json.dumps({"type": "status", "status": "no_content", "message": "Crawl returned no content or an empty result.", "url": url})
-        
-        else: # Handle unexpected types if any (e.g., list for single URL, though client logic suggests not)
+        else:
             logger.error(f"Unexpected result type from crawl_ai_client.crawl: {type(crawl_result_item)}. Expected CrawlResult for single non-streaming URL.")
             yield json.dumps({"type": "error", "message": f"Unexpected result type from crawl client: {type(crawl_result_item)}"}) 
-
-        end_time = time.time() # End timing
+        end_time = time.time()
         duration = end_time - start_time
         yield json.dumps({"type": "status", "status": "completed", "message": f"Crawl completed in {duration:.2f} seconds.", "duration": duration})
-
     except Crawl4aiClientError as e:
         logger.error(f"Crawl4AI client error: {e}", exc_info=True)
-        yield json.dumps({"type": "error", "message": f"Crawl4AI service client error: {e}"})
+        yield json.dumps({"type": "error", "status": "client_error_outer", "message": f"Crawl4AI service client error: {e}"})
     except Exception as e:
         logger.error(f"An unexpected error occurred during crawl: {e}", exc_info=True)
-        yield json.dumps({"type": "error", "message": f"An unexpected error occurred: {e}"})
+        yield json.dumps({"type": "error", "status": "unexpected_error_outer", "message": f"An unexpected error occurred: {e}"})
     finally:
-        # Close the client connection if necessary (depends on the client implementation)
         if crawl4ai_client:
             try:
                 await crawl4ai_client.close()
                 logger.info("Crawl4AI client connection closed.")
             except Exception as e:
-                logger.error(f"Error closing Crawl4AI client: {e}", exc_info=True) 
+                logger.error(f"Error closing Crawl4AI client: {e}", exc_info=True)
