@@ -1,5 +1,14 @@
 -- migrations/V7_create_crawl_presets_table.sql
 
+-- Define the trigger function to update updated_at column
+CREATE OR REPLACE FUNCTION public.update_updated_at_column()
+RETURNS TRIGGER AS $$
+BEGIN
+   NEW.updated_at = NOW();
+   RETURN NEW;
+END;
+$$ language 'plpgsql';
+
 -- Create the crawl_presets table
 CREATE TABLE crawl_presets (
     preset_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -28,6 +37,12 @@ COMMENT ON COLUMN crawl_presets.tags IS 'JSONB array of strings for categorizati
 COMMENT ON COLUMN crawl_presets.created_by IS 'Identifier of the user/agent who created the preset. References auth.users(id).';
 COMMENT ON COLUMN crawl_presets.created_at IS 'Timestamp of when the preset was created.';
 COMMENT ON COLUMN crawl_presets.updated_at IS 'Timestamp of the last update to the preset.';
+
+-- Create the trigger to automatically update updated_at on row update
+CREATE TRIGGER update_crawl_presets_updated_at
+BEFORE UPDATE ON public.crawl_presets
+FOR EACH ROW
+EXECUTE FUNCTION public.update_updated_at_column();
 
 -- Enable Row Level Security
 ALTER TABLE crawl_presets ENABLE ROW LEVEL SECURITY;

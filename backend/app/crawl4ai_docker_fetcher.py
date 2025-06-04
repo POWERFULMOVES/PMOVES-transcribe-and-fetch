@@ -28,7 +28,12 @@ from crawl4ai import (
     BestFirstCrawlingStrategy,
     DefaultMarkdownGenerator,
 )
-from crawl4ai.content_filter_strategy import PruningContentFilter
+from crawl4ai.content_filter_strategy import (
+    PruningContentFilter,
+    BM25ContentFilter,
+    LLMContentFilter,
+    ContentFilterStrategyBase
+)
 from crawl4ai.models import CrawlResultContainer, MarkdownGenerationResult
 from crawl4ai.deep_crawling.filters import FilterChain, URLPatternFilter, DomainFilter
 from crawl4ai.deep_crawling.scorers import URLScorer, KeywordRelevanceScorer
@@ -394,16 +399,43 @@ async def fetch_with_crawl4ai_docker(url: str, original_request_params: Dict[str
                                 except Exception as e_llm_cfg_fb_direct: logger.error(f"Error creating LLMConfig from merged/fallback params: {e_llm_cfg_fb_direct}", exc_info=True)
                             else: logger.warning("Insufficient params for LLMConfig from fallback/merged.")
                     if llm_config_for_strategy:
-                        schema_json_val = ext_params_data.get('schema_json', ext_params_data.get('json_schema', params.get("llm_json_schema")))
-                        if isinstance(schema_json_val, str): schema_json_val = to_json_dict(schema_json_val)
-                        instruction_val = ext_params_data.get('instruction', ext_params_data.get('prompt_template', params.get("llm_prompt_template")))
-                        if schema_json_val:
-                            llm_strat_args = { "llm_config": llm_config_for_strategy, "json_schema": schema_json_val, "prompt_template": instruction_val, "output_format": ext_params_data.get("output_format", params.get("llm_output_format")), "vision_enabled": to_bool(ext_params_data.get("vision_enabled", params.get("llm_vision_enabled", False))), "audio_enabled": to_bool(ext_params_data.get("audio_enabled", params.get("llm_audio_enabled", False))), "tool_calling_enabled": to_bool(ext_params_data.get("tool_calling_enabled", params.get("llm_tool_calling_enabled", False))), "thinking": ext_params_data.get("thinking", params.get("llm_thinking")), "reasoning_effort": ext_params_data.get("reasoning_effort", params.get("llm_reasoning_effort")), "cache_control": ext_params_data.get("cache_control", params.get("llm_cache_control")), "metadata": ext_params_data.get("metadata", to_json_dict(params.get("llm_metadata"))), "user": ext_params_data.get("user", params.get("llm_user")), "input_file_types": ext_params_data.get("input_file_types", to_list_str(params.get("llm_input_file_types")))}
+                        # Prioritize 'schema', then 'schema_json', then 'json_schema'
+                        schema_val = ext_params_data.get('schema',
+                                          ext_params_data.get('schema_json',
+                                              ext_params_data.get('json_schema',
+                                                  params.get("llm_json_schema"))))
+                        if isinstance(schema_val, str): schema_val = to_json_dict(schema_val)
+                        logger.debug(f"Schema for LLMExtractionStrategy resolved to: {type(schema_val)}")
+
+                        instruction_val = ext_params_data.get('instruction',
+                                              ext_params_data.get('prompt_template',
+                                                  params.get("llm_prompt_template")))
+                        logger.debug(f"Instruction for LLMExtractionStrategy: {'Provided' if instruction_val else 'Not provided'}")
+
+                        if schema_val:
+                            llm_strat_args = {
+                                "llm_config": llm_config_for_strategy,
+                                "schema": schema_val,  # Changed from json_schema to schema
+                                "prompt_template": instruction_val,
+                                "output_format": ext_params_data.get("output_format", params.get("llm_output_format")),
+                                "vision_enabled": to_bool(ext_params_data.get("vision_enabled", params.get("llm_vision_enabled", False))),
+                                "audio_enabled": to_bool(ext_params_data.get("audio_enabled", params.get("llm_audio_enabled", False))),
+                                "tool_calling_enabled": to_bool(ext_params_data.get("tool_calling_enabled", params.get("llm_tool_calling_enabled", False))),
+                                "thinking": ext_params_data.get("thinking", params.get("llm_thinking")),
+                                "reasoning_effort": ext_params_data.get("reasoning_effort", params.get("llm_reasoning_effort")),
+                                "cache_control": ext_params_data.get("cache_control", params.get("llm_cache_control")),
+                                "metadata": ext_params_data.get("metadata", to_json_dict(params.get("llm_metadata"))),
+                                "user": ext_params_data.get("user", params.get("llm_user")),
+                                "input_file_types": ext_params_data.get("input_file_types", to_list_str(params.get("llm_input_file_types")))
+                            }
                             final_llm_strat_args = {k:v for k,v in llm_strat_args.items() if v is not None}
+                            logger.debug(f"Arguments for LLMExtractionStrategy: {final_llm_strat_args.keys()}")
                             extraction_strategy_instance = LLMExtractionStrategy(**final_llm_strat_args)
-                            logger.info(f"LLMExtractionStrategy instantiated. Schema provided: {bool(schema_json_val)}, Instruction provided: {bool(instruction_val)}")
-                        else: logger.warning("Could not instantiate LLMExtractionStrategy: JSON schema (schema_json) is missing.")
-                    else: logger.warning("LLMConfig not successfully created, cannot instantiate LLMExtractionStrategy.")
+                            logger.info(f"LLMExtractionStrategy instantiated. Schema provided: {bool(schema_val)}, Instruction provided: {bool(instruction_val)}")
+                        else:
+                            logger.warning("Could not instantiate LLMExtractionStrategy: Schema (schema/schema_json/json_schema) is missing.")
+                    else:
+                        logger.warning("LLMConfig not successfully created, cannot instantiate LLMExtractionStrategy.")
                 elif "cosinestrategy" in ext_type or ext_type == "cosine":
                     extraction_strategy_instance = CosineStrategy(**{k:v for k,v in ext_params_data.items() if k in CosineStrategy.model_fields})
                 elif "jsoncssextractionstrategy" in ext_type or ext_type == "jsoncss":
@@ -424,21 +456,137 @@ async def fetch_with_crawl4ai_docker(url: str, original_request_params: Dict[str
 
         # --- Markdown Generator ---
         logger.info("Populating Markdown Generator...")
-        markdown_generator_instance = DefaultMarkdownGenerator()
+        markdown_generator_instance: DefaultMarkdownGenerator
+        content_filter_instance: Optional[ContentFilterStrategyBase] = None
+        md_options: Dict[str, Any] = {}
+
         sd_md_config = strategy_definition.get('markdown_generator_config', {})
-        if not sd_md_config and isinstance(sd_main_params, dict): sd_md_config = sd_main_params.get('markdown_generator_config',{})
-        if sd_md_config and isinstance(sd_md_config.get('type'), str):
-            logger.info(f"Using 'markdown_generator_config' from strategy_definition: {sd_md_config}")
-            if sd_md_config.get('type','').lower() != "defaultmarkdown": logger.warning(f"Custom markdown generator type '{sd_md_config.get('type')}' from SD not yet fully supported, using Default.")
-        sd_run_config_for_md = strategy_definition.get('run_config', sd_main_params if isinstance(sd_main_params, dict) else {})
-        use_adv_md_sd = sd_md_config.get('params',{}).get('use_advanced_markdown', sd_run_config_for_md.get('use_advanced_markdown'))
-        use_adv_md_final = to_bool(use_adv_md_sd if use_adv_md_sd is not None else params.get("use_advanced_markdown", False))
-        if use_adv_md_final:
-            if hasattr(markdown_generator_instance, 'content_filter'):
-                markdown_generator_instance.content_filter = PruningContentFilter()
-                logger.info("Applied PruningContentFilter to MarkdownGenerator.")
-            else: logger.warning("MarkdownGenerator does not support content_filter. Advanced markdown (pruning) not applied.")
-        logger.info(f"Final Markdown Generator: {type(markdown_generator_instance).__name__}")
+        if not sd_md_config and isinstance(sd_main_params, dict):
+            sd_md_config = sd_main_params.get('markdown_generator_config', {})
+
+        logger.debug(f"Raw markdown_generator_config from strategy_definition: {sd_md_config}")
+
+        if isinstance(sd_md_config, dict) and sd_md_config: # Check if sd_md_config is a non-empty dict
+            sd_md_config_params = sd_md_config.get('params', {})
+            logger.debug(f"Parameters from markdown_generator_config: {sd_md_config_params}")
+
+            # Configure html2text options
+            md_options = sd_md_config_params.get('html2text_options', {})
+            if md_options:
+                logger.info(f"Applying html2text_options to DefaultMarkdownGenerator: {md_options}")
+
+            # Configure content_filter
+            filter_config = sd_md_config_params.get('content_filter', {})
+            filter_type = filter_config.get('type')
+            filter_params = filter_config.get('params', {})
+            logger.debug(f"Content filter config: type='{filter_type}', params='{filter_params}'")
+
+            if filter_type:
+                filter_type_lower = filter_type.lower()
+                try:
+                    if filter_type_lower == "pruningcontentfilter" or filter_type_lower == "pruning":
+                        content_filter_instance = PruningContentFilter(**filter_params)
+                        logger.info(f"Instantiated PruningContentFilter with params: {filter_params}")
+                    elif filter_type_lower == "bm25contentfilter" or filter_type_lower == "bm25":
+                        content_filter_instance = BM25ContentFilter(**filter_params)
+                        logger.info(f"Instantiated BM25ContentFilter with params: {filter_params}")
+                    elif filter_type_lower == "llmcontentfilter" or filter_type_lower == "llm":
+                        logger.info(f"Configuring LLMContentFilter with params: {filter_params}")
+                        llm_config_for_filter: Optional[LLMConfig] = None
+
+                        # 1. Check for llm_config within filter_params
+                        sd_llm_config_data_filter = filter_params.get('llm_config', {})
+                        if isinstance(sd_llm_config_data_filter, dict) and sd_llm_config_data_filter.get("provider") and sd_llm_config_data_filter.get("model"):
+                            logger.info(f"Found llm_config in LLMContentFilter params: {sd_llm_config_data_filter}")
+                            llm_f_args = {k:v for k,v in sd_llm_config_data_filter.items() if v is not None}
+                            if "base_url" in llm_f_args: llm_f_args["api_base"] = llm_f_args.pop("base_url")
+                            if "api_token" in llm_f_args: llm_f_args["api_key"] = llm_f_args.pop("api_token")
+                            try:
+                                llm_config_for_filter = LLMConfig(**llm_f_args)
+                                logger.info(f"LLMConfig for LLMContentFilter created from its params.llm_config: {llm_config_for_filter}")
+                            except Exception as e_llm_cfg_filter: logger.error(f"Error creating LLMConfig from LLMContentFilter.params.llm_config: {e_llm_cfg_filter}", exc_info=True)
+
+                        # 2. Fallback to global_llm_config
+                        if not llm_config_for_filter and global_llm_config:
+                            llm_config_for_filter = global_llm_config
+                            logger.info("Using global LLMConfig for LLMContentFilter.")
+
+                        # 3. Fallback to original 'params' (less specific, broad fallback)
+                        if not llm_config_for_filter:
+                            logger.info("LLMConfig not available from filter_params or global_llm_config for LLMContentFilter. Attempting fallback to original 'params'.")
+                            llm_model_alias_fb_f = params.get("llm_model_alias") or os.getenv('DEFAULT_LLM_MODEL_ALIAS')
+                            if llm_model_alias_fb_f and LLM_REGISTRY_AVAILABLE and get_llm_registry_service:
+                                llm_registry_f = get_llm_registry_service()
+                                if llm_registry_f:
+                                    model_details_fb_f = await llm_registry_f.get_model_details(llm_model_alias_fb_f)
+                                    if model_details_fb_f and (PROXY_CONFIG_LOADED or LITELLM_PROXY_URL):
+                                        # Note: temperature, max_tokens for filter might come from filter_params or general params
+                                        llm_config_for_filter = LLMConfig(
+                                            provider=llm_model_alias_fb_f,
+                                            api_base=LITELLM_PROXY_URL,
+                                            api_key=LITELLM_PROXY_API_KEY,
+                                            extra_params=model_details_fb_f.get("extra_params"),
+                                            temperature=to_float(filter_params.get("temperature", params.get("llm_temperature"))), # Prioritize filter_params for temp/tokens
+                                            max_tokens=to_int(filter_params.get("max_tokens", params.get("llm_max_tokens")))
+                                        )
+                                        logger.info(f"LLMConfig for LLMContentFilter created from LLM Registry (fallback): {llm_model_alias_fb_f}")
+                            if not llm_config_for_filter: # Direct param fallback
+                                fb_llm_provider_f = filter_params.get("provider", params.get("llm_model", params.get("provider")))
+                                fb_llm_model_f = filter_params.get("model", params.get("llm_model_name", fb_llm_provider_f))
+                                fb_llm_api_base_f = filter_params.get("api_base", params.get("crawl4ai_llm_base_url", params.get("api_base")))
+                                fb_llm_api_key_f = filter_params.get("api_key", params.get("llm_api_key"))
+                                if fb_llm_provider_f and fb_llm_model_f:
+                                    direct_llm_fb_args_f = {
+                                        "provider": fb_llm_provider_f, "model": fb_llm_model_f,
+                                        "api_key": fb_llm_api_key_f, "api_base": fb_llm_api_base_f,
+                                        "temperature": to_float(filter_params.get("temperature", params.get("llm_temperature"))),
+                                        "max_tokens": to_int(filter_params.get("max_tokens", params.get("llm_max_tokens"))),
+                                        "extra_params": filter_params.get("extra_params", to_json_dict(params.get("llm_extra_params")))
+                                    }
+                                    direct_llm_fb_args_f = {k:v for k,v in direct_llm_fb_args_f.items() if v is not None}
+                                    try:
+                                        llm_config_for_filter = LLMConfig(**direct_llm_fb_args_f)
+                                        logger.info(f"LLMConfig for LLMContentFilter created from direct fallback params (merged with filter_params where possible): {direct_llm_fb_args_f.keys()}")
+                                    except Exception as e_llm_cfg_fb_direct_f: logger.error(f"Error creating LLMConfig for filter from merged/fallback params: {e_llm_cfg_fb_direct_f}", exc_info=True)
+                                else: logger.warning("Insufficient params for LLMConfig (for filter) from fallback/merged.")
+
+                        if llm_config_for_filter:
+                            # Pass other LLMContentFilter specific params from filter_params
+                            llm_filter_specific_params = {k:v for k,v in filter_params.items() if k not in ['llm_config', 'type', 'provider', 'model', 'api_base', 'api_key', 'temperature', 'max_tokens', 'extra_params']}
+                            content_filter_instance = LLMContentFilter(llm_config=llm_config_for_filter, **llm_filter_specific_params)
+                            logger.info(f"Instantiated LLMContentFilter with LLMConfig and params: {llm_filter_specific_params.keys()}")
+                        else:
+                            logger.warning("LLMConfig not successfully created, cannot instantiate LLMContentFilter.")
+                    else:
+                        logger.warning(f"Unsupported content_filter type: {filter_type}")
+                except Exception as e_filter_inst:
+                    logger.error(f"Error instantiating content_filter type '{filter_type}': {e_filter_inst}", exc_info=True)
+            else: # No filter_type specified in strategy_definition
+                # Fallback to use_advanced_markdown for PruningContentFilter (backward compatibility)
+                sd_run_config_for_md = strategy_definition.get('run_config', sd_main_params if isinstance(sd_main_params, dict) else {})
+                use_adv_md_sd = sd_md_config_params.get('use_advanced_markdown', sd_run_config_for_md.get('use_advanced_markdown'))
+                use_adv_md_final = to_bool(use_adv_md_sd if use_adv_md_sd is not None else params.get("use_advanced_markdown", False))
+                if use_adv_md_final:
+                    content_filter_instance = PruningContentFilter() # Default params for Pruning
+                    logger.info("Applied PruningContentFilter to MarkdownGenerator due to 'use_advanced_markdown' fallback.")
+        else: # sd_md_config is not a dict or is empty, try legacy use_advanced_markdown from flat params
+            logger.info("No 'markdown_generator_config' in strategy_definition or it's empty. Checking legacy 'use_advanced_markdown' from flat params.")
+            use_adv_md_final_legacy = to_bool(params.get("use_advanced_markdown", False))
+            if use_adv_md_final_legacy:
+                content_filter_instance = PruningContentFilter()
+                logger.info("Applied PruningContentFilter due to legacy 'use_advanced_markdown' (flat param).")
+
+        # Instantiate DefaultMarkdownGenerator with options and filter
+        try:
+            markdown_generator_args = {}
+            if md_options: markdown_generator_args['options'] = md_options
+            if content_filter_instance: markdown_generator_args['content_filter'] = content_filter_instance
+
+            markdown_generator_instance = DefaultMarkdownGenerator(**markdown_generator_args)
+            logger.info(f"Final Markdown Generator: {type(markdown_generator_instance).__name__}, Options: {md_options}, Filter: {type(content_filter_instance).__name__ if content_filter_instance else 'None'}")
+        except Exception as e_md_gen:
+            logger.error(f"Error instantiating DefaultMarkdownGenerator: {e_md_gen}. Falling back to default.", exc_info=True)
+            markdown_generator_instance = DefaultMarkdownGenerator() # Fallback to default if instantiation fails
 
         # --- CrawlerRunConfig ---
         logger.info("Populating CrawlerRunConfig...")
