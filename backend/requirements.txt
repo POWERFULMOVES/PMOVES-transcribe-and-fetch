@@ -4,7 +4,7 @@ aiofiles==24.1.0
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   crawl4ai
-aiohappyeyeballs==2.4.4
+aiohappyeyeballs==2.5.0
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   aiohttp
@@ -547,9 +547,8 @@ soupsieve==2.7
     # via beautifulsoup4
 sse-starlette==2.2.1
     # via pmoves-transcribe-and-fetch (pyproject.toml)
-starlette==0.47.0
+starlette==0.41.3
     # via
-    #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   fastapi
     #   sse-starlette
 storage3==0.9.0

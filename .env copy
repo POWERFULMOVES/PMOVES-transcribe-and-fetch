@@ -71,6 +71,7 @@ NEXT_PUBLIC_BACKEND_API_KEY=164482
 # Example: http://localhost:1234/v1
 LM_STUDIO_API_BASE="http://localhost:1234/v1"
 
+CRAWL4AI_SERVICE_URL="http://localhost:11235"
 # Hugging Face Token (if using Hugging Face models via LiteLLM)
 # HF_TOKEN="your_hugging_face_token_here"
 

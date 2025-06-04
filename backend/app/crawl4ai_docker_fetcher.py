@@ -28,11 +28,11 @@ from crawl4ai import (
     BestFirstCrawlingStrategy,
     DefaultMarkdownGenerator,
 )
-from crawl4ai.content_filter_strategy import (
+from crawl4ai import content_filter_strategy # For accessing ContentFilterStrategyBase
+from crawl4ai.content_filter_strategy import ( # Corrected module path
     PruningContentFilter,
     BM25ContentFilter,
     LLMContentFilter,
-    ContentFilterStrategyBase
 )
 from crawl4ai.models import CrawlResultContainer, MarkdownGenerationResult
 from crawl4ai.deep_crawling.filters import FilterChain, URLPatternFilter, DomainFilter
@@ -457,7 +457,7 @@ async def fetch_with_crawl4ai_docker(url: str, original_request_params: Dict[str
         # --- Markdown Generator ---
         logger.info("Populating Markdown Generator...")
         markdown_generator_instance: DefaultMarkdownGenerator
-        content_filter_instance: Optional[ContentFilterStrategyBase] = None
+        content_filter_instance: Optional[content_filter_strategy.ContentFilterStrategyBase] = None
         md_options: Dict[str, Any] = {}
 
         sd_md_config = strategy_definition.get('markdown_generator_config', {})

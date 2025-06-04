@@ -2652,7 +2652,7 @@ async def fetch_content_endpoint(
 
             elif engine.lower() == "jina": # Jina specific logic (remains largely the same)
                 # ... (Jina logic as before) ...
-                 if fetch_content_from_url is None: # Ensure this check is inside the Jina block
+                if fetch_content_from_url is None: # Ensure this check is inside the Jina block
                     yield format_sse_message("error", "Jina fetcher (fetch_content_from_url) not available.")
                     return
                 logger.info(f"Using Jina engine for URL: {url}")
@@ -2667,7 +2667,7 @@ async def fetch_content_endpoint(
             else: # Unknown engine
                 yield format_sse_message("error", f"Unknown engine: {engine}")
                 if fetch_history_id and supabase_client_for_history:
-                     _, terminal_status_written_to_db = await _update_fetch_history_record(supabase_client_for_history, fetch_history_id, {"status": "failed", "error_message": f"Unknown engine specified: {engine}"}, all_request_params)
+                    _, terminal_status_written_to_db = await _update_fetch_history_record(supabase_client_for_history, fetch_history_id, {"status": "failed", "error_message": f"Unknown engine specified: {engine}"}, all_request_params)
                 return
 
             # --- Post-fetch processing (PDF, Supabase) ---
@@ -3132,4 +3132,4 @@ async def list_workspace():
     tree = list_dir(WORKSPACE_ROOT)
     return {"root": WORKSPACE_ROOT, "tree": tree}
 
-[end of backend/app/main.py]
+
