@@ -2,24 +2,22 @@ import asyncio
 import json
 import logging
 import os
+import sys # Add sys import
+sys.path.insert(0, "/app") # Explicitly add /app to sys.path
 from typing import Dict, Any
 
 # Adjust import path based on actual location if run from a different context
 # Assuming it might be run from project root or a similar context where 'backend' is a package
+
+# Try to import the actual fetcher first
 try:
     from backend.app.crawl4ai_docker_fetcher import fetch_with_crawl4ai_docker
-except ImportError:
-    # Fallback for direct execution if path issues occur, try to make it runnable
-    # This path adjustment is fragile and depends on execution context.
-    # It's better if the execution environment handles PYTHONPATH.
-    # For a subtask, the primary goal is to create the file.
-    # import sys
-    # sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../..')))
-    # from app.crawl4ai_docker_fetcher import fetch_with_crawl4ai_docker
-
+    logging.info("Successfully imported ACTUAL fetch_with_crawl4ai_docker.")
+except ImportError as e:
+    logging.error(f"Failed to import actual fetch_with_crawl4ai_docker: {e}", exc_info=True)
     # If the above fails, define a placeholder for fetch_with_crawl4ai_docker
     async def fetch_with_crawl4ai_docker(url: str, params: Dict[str, Any]):
-        logging.warning("Using MOCK fetch_with_crawl4ai_docker for script creation/execution.")
+        logging.warning("Using MOCK fetch_with_crawl4ai_docker due to import failure.")
         yield json.dumps({"type": "status", "message": f"MOCK: Would fetch {url} with params: {json.dumps(params, default=str)}"})
         await asyncio.sleep(0.1) # Simulate some async work
         # Attempt to parse strategy_definition if it's a string
@@ -186,4 +184,5 @@ if __name__ == "__main__":
     #    sys.path.insert(0, project_root)
     # For local testing, ensure PYTHONPATH is set up to find 'backend.app...'
     # e.g., export PYTHONPATH=/path/to/your/project
+    # The sys.path.insert(0, "/app") at the top should handle this for the sandbox.
     asyncio.run(main())
