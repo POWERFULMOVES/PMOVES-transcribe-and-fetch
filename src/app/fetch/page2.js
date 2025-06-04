@@ -441,13 +441,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
             params.append('extraction_config', JSON.stringify(formState.crawl4aiExtractionConfig)); // Changed to extraction_config
           }
           if (formState.crawl4aiDeepCrawlConfig && formState.crawl4aiDeepCrawlConfig.strategy !== 'none') {
-            // Ensure that the params object within deep_crawl_config does not contain a 'logger' key
-            // as the backend strategy expects a Logger object or None, not a config dictionary.
-            const configCopy = JSON.parse(JSON.stringify(formState.crawl4aiDeepCrawlConfig));
-            if (configCopy.params && typeof configCopy.params.logger !== 'undefined') {
-              delete configCopy.params.logger;
-            }
-            params.append('deep_crawl_config', JSON.stringify(configCopy));
+            params.append('deep_crawl_config', JSON.stringify(formState.crawl4aiDeepCrawlConfig)); // Changed to deep_crawl_config
           }
         }
 
@@ -457,78 +451,43 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
     eventSourceRef.current.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        // Update progress message based on type or status
-        if (data.type === "status" && data.status) {
-          setProgressMessage(data.message || data.status || "Processing...");
-        } else if (data.type !== "crawl_result") { // Avoid overwriting crawl_result's own message if any
-          setProgressMessage(data.message || "Processing...");
-        }
-
-
+        setProgressMessage(data.status || data.message || "Processing...");
+        
         let currentProgress = estimateProgress(data.status || data.message);
         if (data.progress && typeof data.progress === 'number') {
             currentProgress = data.progress;
         }
-        // Don't reset progress to 0 if it's an error, keep last known good progress or specific error progress.
-        if (!(data.type === 'error' || data.status?.toLowerCase().includes('error'))) {
-          setProgressPercent(currentProgress);
-        }
+        setProgressPercent(currentProgress);
 
-        if (data.type === 'crawl_result') {
-          // Main content arrives in the crawl_result event
+        if (data.type === 'completed' || data.status?.toLowerCase().includes('completed')) {
+          // The backend sends the final payload inside the 'content' field of the 'completed' message.
+          // Map the backend payload structure to the structure expected by FetchedContentViewer.
+          const backendPayload = data.content || {};
           const viewerData = {
-            title: data.metadata?.title || data.title || `Content from ${data.url}`,
-            htmlContent: data.content, // Raw HTML
-            markdownContent: data.markdown || data.content, // Prefer Markdown, fallback to HTML
-            textContent: data.text,
-            pdf_file_path: data.pdf_path, // Ensure this matches what backend sends
-            metadata: data.metadata,
-            links: data.links,
-            screenshot_base64: data.screenshot_base64, // Add screenshot
-            url: data.url, // Include the URL for context
+            title: backendPayload.title,
+            markdownContent: backendPayload.content, // Map backend 'content' to frontend 'markdownContent'
+            pdf_file_path: backendPayload.pdf_path, // Pass pdf_path as pdf_file_path
+            metadata: backendPayload.metadata,
+            links: backendPayload.links,
+            // pdfUrl is not directly provided by backend, FetchedContentViewer constructs it
           };
-          setFormState(prev => ({ ...prev, result: viewerData, fetchedUrl: data.url })); // Store fetchedUrl for history
-          // Optionally, update progress message if crawl_result has specific info
-          if (data.message) setProgressMessage(data.message);
-
-        } else if (data.type === 'completed' || data.status?.toLowerCase().includes('completed')) {
-          // This event now primarily signals completion.
-          // The main data should have already been set by 'crawl_result'.
-          // If data.content exists here and is substantial, it might indicate an older backend version
-          // or a different flow, but for the current design, we rely on 'crawl_result'.
-          if (data.content && Object.keys(data.content).length > 0 && !formState.result) {
-            // Fallback for old backend behavior or if crawl_result was missed
-            console.warn("Received 'completed' event with content, but expected data via 'crawl_result'. Using this content as a fallback.");
-            const backendPayload = data.content;
-            const viewerData = {
-              title: backendPayload.title,
-              markdownContent: backendPayload.content,
-              pdf_file_path: backendPayload.pdf_path,
-              metadata: backendPayload.metadata,
-              links: backendPayload.links,
-              url: formState.url, // Use the original requested URL as fallback
-            };
-            setFormState(prev => ({ ...prev, result: viewerData, fetchedUrl: formState.url }));
-          } else if (!formState.result) {
-            // If completed is received but no result was set by crawl_result
-            console.warn("Fetch 'completed' but no content was processed via 'crawl_result'.");
-            setMainFetchError("Fetch completed, but no viewable content was received.");
-          }
-
-          setProgressMessage(data.message || "Fetch completed successfully!");
+          setFormState(prev => ({ ...prev, result: viewerData }));
+          setProgressMessage("Fetch completed successfully!");
           setProgressPercent(100);
-          setIsFetchingSse(false);
+          setIsFetchingSse(false); // Use renamed state variable
           if (eventSourceRef.current) {
             eventSourceRef.current.close();
             eventSourceRef.current = null;
           }
+          // Refresh history after successful fetch
+          // TODO: Implement refresh logic for useInfiniteQuery if needed, or rely on its own mechanisms.
+          // For now, this is out of scope as per instructions.
+          // if (typeof initializeHistory === 'function') initializeHistory(); // Example if hook had re-init
           console.log("Fetch successful, history refresh might be needed via useInfiniteQuery's mechanisms.");
-
         } else if (data.type === 'error' || data.status?.toLowerCase().includes('error')) {
           setMainFetchError(data.error || data.message || "An unknown error occurred during fetch.");
           setProgressMessage(data.error || data.message || "Error during fetch.");
-          setProgressPercent(0); // Indicate error in progress if desired
-          setIsFetchingSse(false);
+          setIsFetchingSse(false); // Use renamed state variable
           if (eventSourceRef.current) {
             eventSourceRef.current.close();
             eventSourceRef.current = null;

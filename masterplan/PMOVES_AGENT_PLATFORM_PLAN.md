@@ -335,163 +335,64 @@ To ensure the reliability, performance, and maintainability of the PMOVES Agent 
 
 ---
 
-## Progress
-- [x] **Minimal FastAPI-based agent registry service scaffolded**
-  - All core files (`main.py`, `schemas.py`, `models.py`, `registry.py`), Dockerfile, and requirements are implemented in `pmoves-agent-registry/`.
-  - REST API endpoints for agent registration, listing, heartbeat, and deregistration are live.
-  - Service is Docker-ready and ready for integration with orchestrator and agents.
-- [x] **Prototype agent self-registration and heartbeat**
-- [x] **Document registry API usage for orchestrator and UI**
-- [x] **Plan for persistent storage and scaling as needed**
-- [x] **Integrate LiteLLMPipecatService into a minimal Pipecat agent example** (`docs/pipecat/examples/word-wrangler-gemini-live/server/bot.py`)
-- [x] **Develop tests for the LiteLLMPipecatService streaming responses** (`tests/test_litellm_service.py`)
-- [x] **Refine LiteLLMPipecatService: Implement basic error handling and tool call detection**
-- [x] **Integrate LiteLLMPipecatService with dynamic LLM registry service** (`pmoves-pipecat/src/pipecat/services/litellm_service.py`)
-- [x] **Integrate crawl4ai Docker fetcher: Review parameter flow from `main.py` and update `crawl4ai_docker_fetcher.py` based on `crawl4ai` documentation.**
-- [x] **MAJOR MILESTONE: Complete Core Pipecat Service Implementation**
-  - **Full multimodal capabilities**: Text, audio (TTS/STT), video (WebRTC), image processing
-  - **WebRTC integration**: Daily.co transport with room management and bot participation
-  - **Supabase Realtime integration**: Live chat with agent summoning (@AgentName syntax)
-  - **Enhanced agent registry**: Dynamic capability detection, detailed metadata, A2A protocol support
-  - **Dynamic agent spawning**: On-demand agent creation with capability-based configuration
-  - **Comprehensive API**: Health endpoints, agent management, chat integration, WebSocket support
-- [x] **MAJOR MILESTONE: Correct Architecture Implementation**
-  - **Fixed backwards implementation**: Now properly implements core service + agent instances model
-  - **Core service (`pmoves-pipecat`)**: Full communication layer with orchestration capabilities
-  - **Agent instances (`pmoves-pipecat-agent`)**: Lightweight clients connecting to core service
-  - **Proper requirements**: Core service has full pipecat[all] installation, agents have minimal deps
-- [x] **MAJOR MILESTONE: Production-Ready Docker Configuration**
-  - **Multi-service orchestration**: Core pipecat service + agent instances + supporting services
-  - **Environment configuration**: Comprehensive env vars for multimodal capabilities
-  - **Health checks**: All services have proper health monitoring
-  - **Service dependencies**: Correct startup order and inter-service communication
-- [x] **MAJOR MILESTONE: Comprehensive Documentation**
-  - **Architecture documentation**: Complete `PIPECAT_ARCHITECTURE.md` with flow diagrams
-  - **API documentation**: All endpoints documented with examples
-  - **Integration examples**: Chat, WebRTC, and A2A protocol workflows
-  - **Deployment guide**: Docker compose setup and configuration
+## Current Implementation Status: Significantly Delayed & Partially Blocked
 
-### Current Implementation Status: PRODUCTION-READY ✅
+The project has encountered several critical blockers, primarily related to historical documentation access and interpretation. While individual agent development and some core infrastructure work have progressed, the inability to reliably access and utilize up-to-date documentation for key dependencies in past development cycles has impacted progress on integration tasks, security hardening, and advanced feature implementation.
 
-**Core Infrastructure Complete:**
-- ✅ **Multimodal Core Service**: Full pipecat implementation with TTS, STT, WebRTC, image processing
-- ✅ **Agent Registry Integration**: Enhanced metadata with capability detection and A2A support  
-- ✅ **Supabase Realtime Chat**: Live messaging with agent summoning and response handling
-- ✅ **WebRTC Communication**: Daily.co integration for real-time audio/video
-- ✅ **Dynamic Agent Orchestration**: On-demand spawning with capability-based configuration
-- ✅ **Docker Production Setup**: Multi-service orchestration with health monitoring
-- ✅ **Comprehensive API**: All endpoints implemented with proper error handling
-- ✅ **Documentation**: Complete architecture and integration guides
+**Key Accomplishments to Date (Summary - for full details, see PROJECT_REVIEW_AND_STATUS.md):**
+- Core Agent Infrastructure (Conceptual & Basic Implementation)
+- Specialized Agent Development (Initial Versions of Multimodal, Supabase, Research, CodeExecution Agents, Pipecat Core Service with foundational tool-calling)
+- Security Foundations (Partially Implemented `SecurityMiddleware`, `RestrictedPython`)
+- Basic Tooling & Utilities (`FileHandler`, `AsyncWebBrowser`)
+- Configuration Management (Pydantic models, .env usage)
+- Foundational work on Pipecat Core Service (`pmoves-pipecat`) including LiteLLM integration and basic tool-calling.
 
-**Agent Implementations Complete:**
-- ✅ **SupabaseAgent**: Database operations, vector search, content upserting with security
-- ✅ **TranscribeAgent**: Multi-provider transcription (OpenAI, Groq, Deepgram) with validation
-- ✅ **MultimodalAgent**: Vision analysis, image generation, audio processing, screen capture
-- ✅ **Production Security**: Rate limiting, authentication, input validation, security headers
-- ✅ **Agent Communication**: Chat integration, command handling, real-time responses
-
-**Backend Infrastructure Complete:**
-- ✅ **Comprehensive Search System**: Vector, keyword, and hybrid search across all content types
-- ✅ **Content Management**: Advanced upserter with markdown, HTML, media, and video processing
-- ✅ **Multi-Provider LLM Integration**: OpenAI, Groq, Anthropic with registry-based routing
-- ✅ **Refactored LLM Interaction**: Centralized LiteLLM proxy calls within `LLMRegistryService` for improved consistency and maintainability. Implemented advanced helper methods for all LLM capabilities (chat, embeddings, vision, TTS, transcription, image generation) with comprehensive unit tests. Refactored `/llm/chat` endpoint to use the new service method. (Ongoing refactoring for other LLM routes).
-- ✅ **Real-time Processing**: SSE endpoints for live status updates and streaming responses
-- ✅ **File Management**: Secure upload, validation, PDF generation, and storage
-- ✅ **Crawl4AI Integration**: Advanced web scraping with Docker containerization
-- ✅ **Database Operations**: Full CRUD with Supabase, embedding generation, and vector storage
-
-**Key Features Verified:**
-- ✅ **Frame Processing**: TextFrame, AudioFrame, VideoFrame, ImageFrame support
-- ✅ **Pipeline Management**: Proper PipelineRunner lifecycle with start/stop
-- ✅ **Transport Layer**: WebSocket and WebRTC transports working
-- ✅ **Service Integration**: LiteLLM, Supabase, multimodal services connected
-- ✅ **Agent Communication**: A2A protocol and chat integration functional
-- ✅ **Error Handling**: Comprehensive error management and recovery
-- ✅ **Security Implementation**: Production-ready security middleware with Redis rate limiting
-- ✅ **Content Processing**: Advanced search, upserting, and multimodal analysis capabilities
-
-**Architecture Validation:**
-- ✅ **Documentation Review**: Pipecat docs confirm our implementation follows best practices
-- ✅ **Frame Types**: Using correct frame hierarchy (DataFrame, AudioRawFrame, etc.)
-- ✅ **Pipeline Structure**: Proper processor chaining and frame flow
-- ✅ **Transport Usage**: DailyTransport and WebSocket correctly implemented
-- ✅ **Lifecycle Management**: PipelineRunner start/stop/cancel properly handled
-- ✅ **Backend Integration**: Full API coverage with 4600+ lines of production-ready endpoints
-- ✅ **Search Capabilities**: 2600+ lines of advanced search with multi-tier parameter management
+**Current Blockers & Challenges (Summary - for full details, see PROJECT_REVIEW_AND_STATUS.md):**
+1.  **Documentation Access & Interpretation:** While access is resolved in the current environment, historical issues have caused delays and highlight the need for robust access strategies.
+2.  **Agent Orchestration & Communication:** Lack of robust inter-agent communication, task delegation, or workflow management.
+3.  **Security Hardening:** `CodeExecutionAgent` sandboxing, API security, and input validation require significant enhancement.
+4.  **Task Management & Queuing:** Absence of a centralized task queue.
+5.  **Testing & Validation:** Automated testing is largely absent.
+6.  **VectorDB/Knowledge Base Integration:** `VectorDB` component is a placeholder.
+7.  **Outdated Planning Documents:** This document and `ARCHITECTURE.md` require ongoing updates to reflect true status.
 
 ---
 
-## Next Steps
+## Next Steps & Priorities (Revised)
 
-### Phase 1: Production Deployment & Testing (Immediate - Next 2 weeks)
-1. **Deploy and Test Full Stack**
-   - Deploy complete docker-compose setup to staging environment
-   - Test multimodal capabilities end-to-end (chat → WebRTC → agent response)
-   - Validate agent summoning and A2A communication workflows
-   - Performance testing with multiple concurrent agents
+This section aligns with the findings from the `PROJECT_REVIEW_AND_STATUS.md`.
 
-2. **Agent Implementation Completion**
-   - **Complete SupabaseAgent**: Integrate with `psearchworking.py` for search capabilities
-   - **Complete TranscribeAgent**: Add audio/video transcription with multimodal processing
-   - **Complete MultimodalAgent**: Vision, image generation, and audio processing
-   - Test agent-to-agent collaboration scenarios
+*   **IMMEDIATE & CRITICAL (Focus Areas):**
+    *   **Maintain Robust Documentation Access:** Ensure strategies are in place to prevent future documentation access issues, leveraging available tools effectively.
+    *   **Solidify Core Tooling & Services:**
+        *   Continue solidifying tool execution logic within `LiteLLMPipecatService`.
+    *   **Update Planning Documents:** Regularly update this document and `ARCHITECTURE.md` to reflect the project's true status and a detailed, revised roadmap.
 
-3. **Production Hardening**
-   - Add authentication and authorization to all endpoints
-   - Implement rate limiting and request validation
-   - Add comprehensive logging and monitoring (Langfuse integration)
-   - Security audit and vulnerability assessment
+*   **Core Infrastructure & Refinement (Once immediate items are well underway):**
+    *   **Priority 1: Full `SecurityMiddleware` Implementation & Integration:**
+        *   Implement and test robust API key and/or JWT authentication for all agent endpoints.
+        *   Ensure comprehensive input validation using Pydantic for all API request models.
+        *   Integrate FastAPI's security utilities correctly.
+        *   Review and apply necessary security headers.
+    *   **Priority 2: Enhance `CodeExecutionAgent` Security & Functionality:**
+        *   Investigate and implement stricter sandboxing mechanisms.
+        *   Develop clear input/output mechanisms for file handling within the sandboxed environment.
+        *   Implement resource limits (CPU, memory, time).
+    *   **Priority 3: Refine Individual Agent Capabilities & Error Handling:**
+        *   **MultimodalAgent:** Solidify error handling for API calls, improve configuration validation.
+        *   **SupabaseAgent:** Ensure DDL operations are truly safe. Improve error parsing from Supabase. Complete integration with `psearchworking.py`.
+        *   **ResearchAgent:** Implement a basic task queue for managing search/fetch tasks and their results.
+        *   **All Agents:** Review and improve error handling, logging, and status reporting.
+    *   **Priority 4: Develop Robust Inter-Agent Communication & Orchestration:**
+        *   Design and implement a mechanism for inter-agent communication, task delegation, and workflow management.
+    *   **Priority 5: Implement Task Management & Queuing:**
+        *   Establish a centralized or distributed task queue.
 
-### Phase 2: Advanced Features & Scaling (Next 4-6 weeks)
-1. **Enhanced Orchestration**
-   - Implement advanced agent selection algorithms based on capabilities
-   - Add agent load balancing and auto-scaling
-   - Implement agent health monitoring and automatic recovery
-   - Add agent versioning and blue-green deployments
-
-2. **Advanced Multimodal Features**
-   - Screen sharing and collaborative whiteboards in WebRTC
-   - Real-time image/video analysis and generation
-   - Advanced audio processing (noise reduction, enhancement)
-   - Multi-language support with real-time translation
-
-3. **Enterprise Features**
-   - Multi-tenant support with isolated agent environments
-   - Advanced analytics and usage tracking
-   - Custom agent marketplace and plugin system
-   - Enterprise SSO and compliance features
-
-### Phase 3: Platform Expansion (Next 2-3 months)
-1. **Agent Ecosystem**
-   - Public agent registry and marketplace
-   - Agent development SDK and templates
-   - Community-contributed agents and integrations
-   - Agent certification and quality assurance
-
-2. **Advanced AI Capabilities**
-   - Multi-agent reasoning and planning
-   - Long-term memory and context persistence
-   - Advanced function calling and tool integration
-   - Autonomous agent workflows and scheduling
-
-3. **Platform Integration**
-   - Integration with major platforms (Slack, Teams, Discord)
-   - Mobile app with full multimodal support
-   - API gateway and developer portal
-   - White-label solutions for enterprise customers
-
-### Immediate Action Items (This Week)
-- [ ] **Deploy staging environment** with full docker-compose stack
-- [ ] **Test multimodal workflows** end-to-end with real users
-- [x] **Complete SupabaseAgent** integration with search capabilities
-- [x] **Add authentication layer** to all services
-- [x] **Implement monitoring** with Langfuse and metrics collection
-- [ ] **Performance optimization** based on initial testing results
-
-### Success Metrics
-- **Technical**: 99.9% uptime, <100ms response latency, support for 100+ concurrent agents
-- **User Experience**: <2s agent response time, seamless multimodal transitions, intuitive chat interface
-- **Business**: Agent marketplace with 50+ community agents, enterprise pilot customers, developer adoption
+*   **Future Goals (Post-Blocker Resolution & Core Refinement):**
+    *   Implement comprehensive automated testing.
+    *   Integrate `VectorDB` properly for RAG capabilities and shared knowledge.
+    *   Develop a user interface or CLI for managing agents and tasks.
+    *   Address advanced multimodal features, enterprise features, and platform expansion as originally envisioned, once the core is stable and secure.
 
 ---
 

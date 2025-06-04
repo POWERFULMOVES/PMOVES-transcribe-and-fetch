@@ -1,0 +1,30 @@
+    # Start from the official crawl4ai image
+    FROM unclecode/crawl4ai:latest
+
+    # Install torch and sentence-transformers for CPU.
+    # sentence-transformers is commonly used with CosineStrategy.
+    # Using --no-cache-dir to keep the image smaller.
+    RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu && \
+        pip install --no-cache-dir sentence-transformers
+
+    # Switch to root to create directories and set permissions
+    USER root
+
+    # Create and set permissions for Hugging Face cache
+    RUN mkdir -p /home/appuser/.cache/huggingface && \
+        chown -R appuser:appuser /home/appuser/.cache && \
+        chmod -R u+rwx /home/appuser/.cache
+
+    # Create and set permissions for crawl4ai local cache directory
+    RUN mkdir -p /home/appuser/.crawl4ai && \
+        chown -R appuser:appuser /home/appuser/.crawl4ai && \
+        chmod -R u+rwx /home/appuser/.crawl4ai
+
+    # Set HOME environment variable for appuser so Path.home() resolves correctly
+    ENV HOME=/home/appuser
+
+    # Switch back to appuser for the application runtime
+    USER appuser
+
+    # The original CMD and ENTRYPOINT from unclecode/crawl4ai:latest will be inherited
+    # These should now run as 'appuser' with HOME=/home/appuser

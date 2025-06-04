@@ -20,6 +20,10 @@ The project has encountered several critical blockers, primarily related to docu
     *   `SupabaseAgent`: Basic CRUD operations (upsert, query), table management (DDL via RPC placeholder), and parameter adjustment. Streaming and infinite query capabilities are present. Chat listener for real-time interaction via Supabase tables.
     *   `ResearchAgent`: Foundational components for web searches, content fetching, and summarization. Integration with a proper tasking/results queue is pending.
     *   `CodeExecutionAgent` (formerly `CodeInterpreterAgent`): Basic Python code execution via `RestrictedPython`. File operations and state management are rudimentary. Security and sandboxing need significant enhancement.
+    *   **Pipecat Core Service (`pmoves-pipecat`):**
+        *   Dynamic LiteLLM Router configuration in `main.py` using `LLMRegistryService`.
+        *   `LiteLLMPipecatService` enhanced for tool-calling: passes tool schemas to LLM, includes placeholder logic for tool execution, and sends results back to the LLM for further processing.
+        *   Updated `ToolSchemaManager` in the backend to provide schemas in the format LiteLLM expects.
 3.  **Security Foundations (Partially Implemented):**
     *   `SecurityMiddleware`: Rate limiting (Redis-based), input validation placeholders, security headers. JWT/API key auth concepts are present but not fully integrated or tested. File security (quarantine) concept added. Initialization on startup has been recently addressed.
     *   `RestrictedPython` for basic code execution sandboxing.
@@ -43,7 +47,8 @@ The project has encountered several critical blockers, primarily related to docu
     *   Implementation of robust error handling.
     *   Proper security configurations (e.g., FastAPI security utils, Pydantic validation).
     *   Efficient debugging.
-2.  **Agent Orchestration & Communication:** No robust mechanism exists for inter-agent communication, task delegation, or workflow management beyond very basic direct calls (if co-located) or DB-mediated triggers.
+    *   *Self-correction:* While documentation access is still a general concern, the recent work on LiteLLM integration and tool calling has proceeded by leveraging existing knowledge and code structure, somewhat mitigating this specific blocker for *this particular sub-task*.
+2.  **Agent Orchestration & Communication:** No robust mechanism exists for inter-agent communication, task delegation, or workflow management beyond very basic direct calls (if co-located) or DB-mediated triggers. The foundational tool-calling work is a step towards more complex orchestrated tasks.
 3.  **Security Hardening:**
     *   `CodeExecutionAgent` sandboxing is insufficient for untrusted code.
     *   API security (authentication, authorization) is conceptual and not fully implemented or tested across agents.
@@ -76,7 +81,7 @@ The project has encountered several critical blockers, primarily related to docu
         *   **MultimodalAgent:** Solidify error handling for API calls, improve configuration validation.
         *   **SupabaseAgent:** Ensure DDL operations are truly safe (e.g., by requiring specific confirmations or using a more robust RPC mechanism than a generic "execute_sql_unsafe"). Improve error parsing from Supabase.
         *   **ResearchAgent:** Implement a basic task queue (e.g., using Redis or a Supabase table) for managing search/fetch tasks and their results.
-        *   **All Agents:** Review and improve error handling, logging, and status reporting based on proper documentation.
+        *   **All Agents (including Pipecat services):** Continue to review and improve error handling, logging, and status reporting based on proper documentation. Solidify tool execution logic within `LiteLLMPipecatService` beyond placeholders.
 
 *   **Future Goals (Post-Blocker Resolution & Core Refinement):**
     *   Develop a robust inter-agent communication protocol (e.g., message bus like Redis pub/sub, or a dedicated orchestration service).

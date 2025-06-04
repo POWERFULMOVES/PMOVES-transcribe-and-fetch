@@ -28,8 +28,8 @@ try:
     from pipecat.frames.frames import (
         Frame,
         TextFrame,
-        AudioFrame,
-        ImageFrame,
+        AudioRawFrame as AudioFrame,
+        ImageRawFrame as ImageFrame,
         VideoFrame,
         LLMMessagesFrame,
         FunctionCallInProgressFrame,
@@ -42,7 +42,7 @@ try:
     from pipecat.transports.services.websocket import WebsocketTransport
     from pipecat.processors.aggregators.llm_response import LLMResponseAggregator
     from pipecat.processors.aggregators.sentence import SentenceAggregator
-    from pipecat.processors.frameworks.processor import FrameProcessor
+    from pipecat.processors.frame_processor import FrameProcessor
     from pipecat.pipeline.frames import FrameDirection
 
     print("[INFO] Pipecat core imports successful")
@@ -378,20 +378,65 @@ class PipecatOrchestrator:
             try:
                 # Basic model list - ideally fetched from LLMRegistryService or config
                 # Ensure this list is compatible with how LiteLLMPipecatService expects to find models via router
-                example_model_list = [{
-                    "model_name": "gpt-4o-mini", # This is an alias LiteLLMPipecatService will use
-                    "litellm_params": {          # Params LiteLLM Router uses to call the model
-                        "model": "gpt-4o-mini",  # Actual model identifier for LiteLLM
-                        # "api_base": config.litellm_proxy_url, # Proxy URL for this specific model
-                        # "api_key": os.getenv("OPENAI_API_KEY") # Specific key if needed, else proxy handles
-                    }
-                }]
+                
+                model_list_for_router = []
+                if self.llm_registry_service:
+                    try:
+                        # Fetch all available models. Add filters if needed.
+                        available_llms = await self.llm_registry_service.get_available_models()
+                        for llm in available_llms:
+                            # The router's model_name is the alias that LiteLLMPipecatService will use.
+                            # LiteLLMPipecatService looks up models in the router using `preferred_model_alias`,
+                            # which corresponds to `StandardizedLLM.display_name` (the alias from LiteLLM config).
+                            # The router's `litellm_params.model` should be `StandardizedLLM.model_id`
+                            # (the actual provider/model_name like "openai/gpt-4o-mini").
+                            
+                            # Router's model_name should be the alias (StandardizedLLM.display_name)
+                            router_model_name = llm.display_name 
+                            
+                            # litellm_params.model should be the fully qualified ID (StandardizedLLM.model_id)
+                            litellm_model_id = llm.model_id
+
+                            model_entry_for_router = {
+                                "model_name": router_model_name, # Alias for router matching
+                                "litellm_params": {
+                                    "model": litellm_model_id, # Actual model for LiteLLM to call
+                                    # api_base and api_key can be set here if they are model-specific
+                                    # and override the global litellm.api_base or proxy defaults.
+                                    # For now, assume global proxy handles this.
+                                }
+                            }
+                            # Add pricing and rate limits if available and if router uses them
+                            if llm.pricing:
+                                model_entry_for_router["litellm_params"]["rpm"] = llm.pricing.get("rpm") # Example
+                                model_entry_for_router["litellm_params"]["tpm"] = llm.pricing.get("tpm") # Example
+                            
+                            model_list_for_router.append(model_entry_for_router)
+                        
+                        print(f"[INFO] Fetched {len(model_list_for_router)} models from LLMRegistryService for LiteLLM Router.")
+                        if not model_list_for_router:
+                            print("[WARNING] LLMRegistryService returned no models. LiteLLM Router might be empty or use defaults.")
+                            # Fallback to a minimal default if needed, or let router initialize empty.
+                            # For now, we'll let it initialize with what it gets.
+                    except Exception as e_fetch_llm:
+                        print(f"[ERROR] Failed to fetch models from LLMRegistryService: {e_fetch_llm}. Router may be empty.")
+                else:
+                    print("[WARNING] LLMRegistryService not available. LiteLLM Router will be initialized with an empty model list or default.")
+
+                # example_model_list = [{
+                #     "model_name": "gpt-4o-mini", # This is an alias LiteLLMPipecatService will use
+                #     "litellm_params": {          # Params LiteLLM Router uses to call the model
+                #         "model": "gpt-4o-mini",  # Actual model identifier for LiteLLM
+                #         # "api_base": config.litellm_proxy_url, # Proxy URL for this specific model
+                #         # "api_key": os.getenv("OPENAI_API_KEY") # Specific key if needed, else proxy handles
+                #     }
+                # }]
                 # Router can be configured to use the proxy globally or per model.
                 # If all models go via the same proxy, setting litellm.api_base might be enough.
                 # However, LiteLLMPipecatService is designed to work with a router that has models from potentially multiple sources.
                 
                 self.litellm_router = litellm.Router(
-                    model_list=example_model_list, # Populated dynamically in a real scenario
+                    model_list=model_list_for_router if model_list_for_router else [], # Use fetched models or empty list
                     # Fallbacks can be configured here if needed
                     routing_strategy="simple-shuffle", # Or another strategy
                     # set_verbose=True # For debugging router behavior

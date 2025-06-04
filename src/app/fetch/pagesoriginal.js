@@ -49,12 +49,6 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
 
   const supabase = createClient(); // Instantiate Supabase client
 
-  // State for available LLM Models
-  const [availableLlmModels, setAvailableLlmModels] = useState([]);
-  const [isLoadingLlmModels, setIsLoadingLlmModels] = useState(false);
-
- 
-
   // State for history filters and sort
   const [historySearchTerm, setHistorySearchTerm] = useState("");
   const [historyFilterEngine, setHistoryFilterEngine] = useState("all_engines"); // "jina", "crawl4ai", "all_engines" for all
@@ -183,10 +177,10 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
     crawl4aiVerboseLogging: false,
     crawl4aiLogPageConsoleOutput: false,
 
-    // crawl4ai - LLM Configuration (These specific crawl4ai ones are being removed)
-    // crawl4aiLlmProviderModel: "", // REMOVED
-    // crawl4aiLlmApiToken: "", // REMOVED
-    // crawl4aiLlmBaseUrl: "", // REMOVED
+    // crawl4ai - LLM Configuration (NEW - Task)
+    crawl4aiLlmProviderModel: "",
+    crawl4aiLlmApiToken: "",
+    crawl4aiLlmBaseUrl: "",
     crawl4aiMarkdownGenerator: "Default", // Added for Markdown generator selection
 
     // crawl4ai - Expert Options (NEW)
@@ -198,19 +192,8 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
 
     // crawl4ai - Strategy Configurations
     crawl4aiExtractionConfig: { strategy: 'none', params: {} },
-    crawl4aiDeepCrawlConfig: { strategy: 'none', params: {} },
-    // LLM Provider related fields for the new LlmConfiguration component
-    llmProvider: '', // Canonical LLM provider/model
-    llmApiToken: '',
-    llmBaseUrl: '',
+    crawl4aiDeepCrawlConfig: { strategy: 'None', params: {} },
   });
-
-  const handleFormChange = (fieldName, value) => {
-    setFormState(prevState => ({
-      ...prevState,
-      [fieldName]: value,
-    }));
-  };
 
   // Effect to handle the conceptual mapping of extractTextOnly and extractImages
   // removeImages is the old backend parameter.
@@ -226,58 +209,6 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
       setRemoveImagesBackend(!formState.extractImages);
     }
   }, [formState.extractTextOnly, formState.extractImages]);
-
-  // Effect to fetch available LLM models
-  useEffect(() => {
-    const fetchLlmModels = async () => {
-      // Only fetch if crawl4ai is the engine and advanced options are shown, or if models haven't been loaded yet.
-      // This prevents fetching if the user isn't even looking at the crawl4ai LLM options.
-      if ((fetchingEngine === 'crawl4ai' && showAdvanced) || availableLlmModels.length === 0) {
-        setIsLoadingLlmModels(true);
-        try {
-          const apiKey = process.env.NEXT_PUBLIC_BACKEND_API_KEY;
-          const headers = {
-            'Content-Type': 'application/json',
-          };
-          if (apiKey) {
-            headers['Authorization'] = `Bearer ${apiKey}`;
-          }
-
-          const response = await fetch(`${BACKEND_URL}/api/v1/models`, { headers });
-          if (!response.ok) {
-            const errorData = await response.json().catch(() => ({ detail: "Failed to fetch LLM models and parse error" }));
-            throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
-          }
-          const models = await response.json();
-          console.log('Fetched LLM Models:', models); // <-- ADD THIS LINE
-          // Assuming models is an array of StandardizedLLM objects
-          // We might want to filter or transform them if needed, e.g., filter by capability for crawl4ai
-          setAvailableLlmModels(models || []);
-          toast({ title: "LLM Models Loaded", description: `Found ${models.length} models.` });
-        } catch (error) {
-          console.error("Failed to fetch LLM models:", error);
-          toast({
-            title: "Error Loading LLM Models",
-            description: error.message || "Could not fetch LLM model list from backend.",
-            variant: "destructive",
-          });
-          setAvailableLlmModels([]); // Ensure it's an empty array on error
-        } finally {
-          setIsLoadingLlmModels(false);
-        }
-      }
-    };
-
-    // Initial fetch or fetch when relevant section is shown
-    if (availableLlmModels.length === 0) {
-        fetchLlmModels();
-    } else if (fetchingEngine === 'crawl4ai' && showAdvanced) {
-        // Optionally, re-fetch if advanced options are shown again for crawl4ai,
-        // in case the list might have changed. Or rely on initial load.
-        // For now, let's assume initial load is sufficient unless specific re-fetch logic is required.
-    }
-  // eslint-disable-next-line react-hooks/exhaustive-deps 
-  }, [fetchingEngine, showAdvanced, toast]); // BACKEND_URL is constant, availableLlmModels.length in condition
 
 
   const estimateProgress = (status) => {
@@ -394,13 +325,9 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
           // Add crawl4ai specific debugging and LLM parameters (NEW - Task)
           params.append('crawl4ai_verbose_logging', formState.crawl4aiVerboseLogging.toString());
           params.append('crawl4ai_log_page_console_output', formState.crawl4aiLogPageConsoleOutput.toString());
-          // Use the global LLM settings when crawl4ai is the engine
-          if (formState.llmProvider) {
-            params.append('llm_provider', formState.llmProvider); // For extraction strategy
-            params.append('llm_model_alias', formState.llmProvider); // For registry-based config (docker)
-          }
-          if (formState.llmApiToken) params.append('llm_api_key', formState.llmApiToken);
-          if (formState.llmBaseUrl) params.append('crawl4ai_llm_base_url', formState.llmBaseUrl); // Changed 'llm_base_url' to 'crawl4ai_llm_base_url'
+          if (formState.crawl4aiLlmProviderModel) params.append('crawl4ai_llm_provider_model', formState.crawl4aiLlmProviderModel);
+          if (formState.crawl4aiLlmApiToken) params.append('crawl4ai_llm_api_token', formState.crawl4aiLlmApiToken); // Be cautious with sending tokens directly
+          if (formState.crawl4aiLlmBaseUrl) params.append('crawl4ai_llm_base_url', formState.crawl4aiLlmBaseUrl);
           if (formState.crawl4aiMarkdownGenerator && formState.crawl4aiMarkdownGenerator !== "Default") {
             params.append('crawl4ai_markdown_generator', formState.crawl4aiMarkdownGenerator);
           }
@@ -438,16 +365,10 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
 
           // Add crawl4ai strategy configurations
           if (formState.crawl4aiExtractionConfig && formState.crawl4aiExtractionConfig.strategy !== 'none') {
-            params.append('extraction_config', JSON.stringify(formState.crawl4aiExtractionConfig)); // Changed to extraction_config
+            params.append('crawl4ai_extraction_strategy', JSON.stringify(formState.crawl4aiExtractionConfig));
           }
-          if (formState.crawl4aiDeepCrawlConfig && formState.crawl4aiDeepCrawlConfig.strategy !== 'none') {
-            // Ensure that the params object within deep_crawl_config does not contain a 'logger' key
-            // as the backend strategy expects a Logger object or None, not a config dictionary.
-            const configCopy = JSON.parse(JSON.stringify(formState.crawl4aiDeepCrawlConfig));
-            if (configCopy.params && typeof configCopy.params.logger !== 'undefined') {
-              delete configCopy.params.logger;
-            }
-            params.append('deep_crawl_config', JSON.stringify(configCopy));
+          if (formState.crawl4aiDeepCrawlConfig && formState.crawl4aiDeepCrawlConfig.strategy !== 'None') {
+            params.append('crawl4ai_deep_crawl_strategy', JSON.stringify(formState.crawl4aiDeepCrawlConfig));
           }
         }
 
@@ -457,78 +378,43 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
     eventSourceRef.current.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        // Update progress message based on type or status
-        if (data.type === "status" && data.status) {
-          setProgressMessage(data.message || data.status || "Processing...");
-        } else if (data.type !== "crawl_result") { // Avoid overwriting crawl_result's own message if any
-          setProgressMessage(data.message || "Processing...");
-        }
-
-
+        setProgressMessage(data.status || data.message || "Processing...");
+        
         let currentProgress = estimateProgress(data.status || data.message);
         if (data.progress && typeof data.progress === 'number') {
             currentProgress = data.progress;
         }
-        // Don't reset progress to 0 if it's an error, keep last known good progress or specific error progress.
-        if (!(data.type === 'error' || data.status?.toLowerCase().includes('error'))) {
-          setProgressPercent(currentProgress);
-        }
+        setProgressPercent(currentProgress);
 
-        if (data.type === 'crawl_result') {
-          // Main content arrives in the crawl_result event
+        if (data.type === 'completed' || data.status?.toLowerCase().includes('completed')) {
+          // The backend sends the final payload inside the 'content' field of the 'completed' message.
+          // Map the backend payload structure to the structure expected by FetchedContentViewer.
+          const backendPayload = data.content || {};
           const viewerData = {
-            title: data.metadata?.title || data.title || `Content from ${data.url}`,
-            htmlContent: data.content, // Raw HTML
-            markdownContent: data.markdown || data.content, // Prefer Markdown, fallback to HTML
-            textContent: data.text,
-            pdf_file_path: data.pdf_path, // Ensure this matches what backend sends
-            metadata: data.metadata,
-            links: data.links,
-            screenshot_base64: data.screenshot_base64, // Add screenshot
-            url: data.url, // Include the URL for context
+            title: backendPayload.title,
+            markdownContent: backendPayload.content, // Map backend 'content' to frontend 'markdownContent'
+            pdf_file_path: backendPayload.pdf_path, // Pass pdf_path as pdf_file_path
+            metadata: backendPayload.metadata,
+            links: backendPayload.links,
+            // pdfUrl is not directly provided by backend, FetchedContentViewer constructs it
           };
-          setFormState(prev => ({ ...prev, result: viewerData, fetchedUrl: data.url })); // Store fetchedUrl for history
-          // Optionally, update progress message if crawl_result has specific info
-          if (data.message) setProgressMessage(data.message);
-
-        } else if (data.type === 'completed' || data.status?.toLowerCase().includes('completed')) {
-          // This event now primarily signals completion.
-          // The main data should have already been set by 'crawl_result'.
-          // If data.content exists here and is substantial, it might indicate an older backend version
-          // or a different flow, but for the current design, we rely on 'crawl_result'.
-          if (data.content && Object.keys(data.content).length > 0 && !formState.result) {
-            // Fallback for old backend behavior or if crawl_result was missed
-            console.warn("Received 'completed' event with content, but expected data via 'crawl_result'. Using this content as a fallback.");
-            const backendPayload = data.content;
-            const viewerData = {
-              title: backendPayload.title,
-              markdownContent: backendPayload.content,
-              pdf_file_path: backendPayload.pdf_path,
-              metadata: backendPayload.metadata,
-              links: backendPayload.links,
-              url: formState.url, // Use the original requested URL as fallback
-            };
-            setFormState(prev => ({ ...prev, result: viewerData, fetchedUrl: formState.url }));
-          } else if (!formState.result) {
-            // If completed is received but no result was set by crawl_result
-            console.warn("Fetch 'completed' but no content was processed via 'crawl_result'.");
-            setMainFetchError("Fetch completed, but no viewable content was received.");
-          }
-
-          setProgressMessage(data.message || "Fetch completed successfully!");
+          setFormState(prev => ({ ...prev, result: viewerData }));
+          setProgressMessage("Fetch completed successfully!");
           setProgressPercent(100);
-          setIsFetchingSse(false);
+          setIsFetchingSse(false); // Use renamed state variable
           if (eventSourceRef.current) {
             eventSourceRef.current.close();
             eventSourceRef.current = null;
           }
+          // Refresh history after successful fetch
+          // TODO: Implement refresh logic for useInfiniteQuery if needed, or rely on its own mechanisms.
+          // For now, this is out of scope as per instructions.
+          // if (typeof initializeHistory === 'function') initializeHistory(); // Example if hook had re-init
           console.log("Fetch successful, history refresh might be needed via useInfiniteQuery's mechanisms.");
-
         } else if (data.type === 'error' || data.status?.toLowerCase().includes('error')) {
           setMainFetchError(data.error || data.message || "An unknown error occurred during fetch.");
           setProgressMessage(data.error || data.message || "Error during fetch.");
-          setProgressPercent(0); // Indicate error in progress if desired
-          setIsFetchingSse(false);
+          setIsFetchingSse(false); // Use renamed state variable
           if (eventSourceRef.current) {
             eventSourceRef.current.close();
             eventSourceRef.current = null;
@@ -817,10 +703,9 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
       // NEW crawl4ai debugging and LLM params for history (Task)
       engineSpecificParams.crawl4ai_verbose_logging = formState.crawl4aiVerboseLogging;
       engineSpecificParams.crawl4ai_log_page_console_output = formState.crawl4aiLogPageConsoleOutput;
-      // Use global LLM settings for history as well
-      engineSpecificParams.crawl4ai_llm_provider_model = formState.llmProvider;
-      engineSpecificParams.llm_api_key = formState.llmApiToken; // ensure 'llm_api_key' is used here too
-      engineSpecificParams.crawl4ai_llm_base_url = formState.llmBaseUrl;
+      engineSpecificParams.crawl4ai_llm_provider_model = formState.crawl4aiLlmProviderModel;
+      engineSpecificParams.crawl4ai_llm_api_token = formState.crawl4aiLlmApiToken; // Consider if this should be stored
+      engineSpecificParams.crawl4ai_llm_base_url = formState.crawl4aiLlmBaseUrl;
       engineSpecificParams.crawl4ai_markdown_generator = formState.crawl4aiMarkdownGenerator; // Added for history
 
       // NEW crawl4ai expert params for history
@@ -833,10 +718,6 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
       // Add crawl4ai strategy configurations for history
       engineSpecificParams.crawl4aiExtractionConfig = formState.crawl4aiExtractionConfig;
       engineSpecificParams.crawl4aiDeepCrawlConfig = formState.crawl4aiDeepCrawlConfig;
-      engineSpecificParams.llm_provider = formState.llmProvider;
-      engineSpecificParams.llm_model_alias = formState.llmProvider;
-      engineSpecificParams.llm_api_key = formState.llmApiToken;
-      engineSpecificParams.llm_base_url = formState.llmBaseUrl;
     }
 
     // Conditionally add extract_tables if it's a property in formState (i.e., was likely sent)
@@ -1060,10 +941,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
           let formKey = espKey; // By default, assume espKey matches formState key
 
           // 1. Handle key name mappings
-          if (espKey === 'crawl4ai_llm_base_url') {
-            newPopulatedState.llmBaseUrl = value; // Directly assign to the correct formState field
-            continue; // Value handled, skip general assignment for this key
-          } else if (espKey.startsWith('crawl4ai_')) {
+          if (espKey.startsWith('crawl4ai_')) {
             formKey = espKey.replace(/_([a-z])/g, (_match, letter) => letter.toUpperCase());
           } else if (espKey === 'excluded_selector') {
             formKey = 'excludedSelectors';
@@ -1071,7 +949,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
             newPopulatedState.crawl4aiExtractionConfig = value || { strategy: 'none', params: {} };
             continue;
           } else if (espKey === 'crawl4aiDeepCrawlConfig') {
-            newPopulatedState.crawl4aiDeepCrawlConfig = value || { strategy: 'none', params: {} };
+            newPopulatedState.crawl4aiDeepCrawlConfig = value || { strategy: 'None', params: {} };
             continue;
           }
           // target_selector_advanced from esp maps directly to formState.targetSelectorAdvanced
@@ -1214,157 +1092,155 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
             {showAdvanced && (
               <AdvancedFetchOptions
                 fetchingEngine={fetchingEngine} // Pass isolated state
-                targetSelectorAdvanced={formState.jinaTargetSelectorAdvanced}
-                setTargetSelectorAdvanced={(value) => handleFormChange('jinaTargetSelectorAdvanced', value)}
-                excludedSelectors={formState.jinaExcludedSelectors}
-                setExcludedSelectors={(value) => handleFormChange('jinaExcludedSelectors', value)}
-                browserEngine={formState.jinaBrowserEngine}
-                setBrowserEngine={(value) => handleFormChange('jinaBrowserEngine', value)}
-                tokenBudget={formState.jinaTokenBudget}
-                setTokenBudget={(value) => handleFormChange('jinaTokenBudget', value)}
-                viewportWidth={formState.jinaViewportWidth}
-                setViewportWidth={(value) => handleFormChange('jinaViewportWidth', value)}
-                viewportHeight={formState.jinaViewportHeight}
-                setViewportHeight={(value) => handleFormChange('jinaViewportHeight', value)}
-                markdownFlavor={formState.jinaMarkdownFlavor}
-                setMarkdownFlavor={(value) => handleFormChange('jinaMarkdownFlavor', value)}
-                timeout={formState.jinaTimeout}
-                setTimeout={(value) => handleFormChange('jinaTimeout', value)}
-                extractTextOnly={formState.jinaExtractTextOnly}
-                setExtractTextOnly={(value) => handleFormChange('jinaExtractTextOnly', value)}
-                extractTables={formState.jinaExtractTables}
-                setExtractTables={(value) => handleFormChange('jinaExtractTables', value)}
-                extractImages={formState.jinaExtractImages}
-                setExtractImages={(value) => handleFormChange('jinaExtractImages', value)}
-                extractLinks={formState.jinaExtractLinks}
-                setExtractLinks={(value) => handleFormChange('jinaExtractLinks', value)}
-                jsonResponse={formState.jinaJsonResponse}
-                setJsonResponse={(value) => handleFormChange('jinaJsonResponse', value)}
-                cleanFormat={formState.jinaCleanFormat}
-                setCleanFormat={(value) => handleFormChange('jinaCleanFormat', value)}
-                imageCaptioning={formState.jinaImageCaptioning}
-                setImageCaptioning={(value) => handleFormChange('jinaImageCaptioning', value)}
-                cacheTtl={formState.jinaCacheTtl}
-                setCacheTtl={(value) => handleFormChange('jinaCacheTtl', value)}
-                browserLocale={formState.jinaBrowserLocale}
-                setBrowserLocale={(value) => handleFormChange('jinaBrowserLocale', value)}
-                extractMetadata={formState.jinaExtractMetadata}
-                setExtractMetadata={(value) => handleFormChange('jinaExtractMetadata', value)}
-                
-                // Crawl4ai specific props
-                crawl4aiUserAgent={formState.crawl4aiUserAgent}
-                setCrawl4aiUserAgent={(value) => handleFormChange('crawl4aiUserAgent', value)}
-                crawl4aiViewportWidth={formState.crawl4aiViewportWidth}
-                setCrawl4aiViewportWidth={(value) => handleFormChange('crawl4aiViewportWidth', value)}
-                crawl4aiViewportHeight={formState.crawl4aiViewportHeight}
-                setCrawl4aiViewportHeight={(value) => handleFormChange('crawl4aiViewportHeight', value)}
-                crawl4aiProxyUrl={formState.crawl4aiProxyUrl}
-                setCrawl4aiProxyUrl={(value) => handleFormChange('crawl4aiProxyUrl', value)}
-                crawl4aiPageLoadWaitCondition={formState.crawl4aiPageLoadWaitCondition}
-                setCrawl4aiPageLoadWaitCondition={(value) => handleFormChange('crawl4aiPageLoadWaitCondition', value)}
-                crawl4aiPageTimeout={formState.crawl4aiPageTimeout}
-                setCrawl4aiPageTimeout={(value) => handleFormChange('crawl4aiPageTimeout', value)}
-                crawl4aiWaitForCondition={formState.crawl4aiWaitForCondition}
-                setCrawl4aiWaitForCondition={(value) => handleFormChange('crawl4aiWaitForCondition', value)}
-                crawl4aiEnableJs={formState.crawl4aiEnableJs}
-                setCrawl4aiEnableJs={(value) => handleFormChange('crawl4aiEnableJs', value)}
-                crawl4aiIgnoreHttpsErrors={formState.crawl4aiIgnoreHttpsErrors}
-                setCrawl4aiIgnoreHttpsErrors={(value) => handleFormChange('crawl4aiIgnoreHttpsErrors', value)}
-                crawl4aiLightMode={formState.crawl4aiLightMode}
-                setCrawl4aiLightMode={(value) => handleFormChange('crawl4aiLightMode', value)}
-                crawl4aiTextMode={formState.crawl4aiTextMode}
-                setCrawl4aiTextMode={(value) => handleFormChange('crawl4aiTextMode', value)}
-                crawl4aiTargetElements={formState.crawl4aiTargetElements}
-                setCrawl4aiTargetElements={(value) => handleFormChange('crawl4aiTargetElements', value)}
-                crawl4aiExcludedElements={formState.crawl4aiExcludedElements}
-                setCrawl4aiExcludedElements={(value) => handleFormChange('crawl4aiExcludedElements', value)}
-                crawl4aiExcludedTags={formState.crawl4aiExcludedTags}
-                setCrawl4aiExcludedTags={(value) => handleFormChange('crawl4aiExcludedTags', value)}
-                crawl4aiExtractOnlyTextContent={formState.crawl4aiExtractOnlyTextContent}
-                setCrawl4aiExtractOnlyTextContent={(value) => handleFormChange('crawl4aiExtractOnlyTextContent', value)}
-                crawl4aiProcessIframes={formState.crawl4aiProcessIframes}
-                setCrawl4aiProcessIframes={(value) => handleFormChange('crawl4aiProcessIframes', value)}
-                crawl4aiWordCountThreshold={formState.crawl4aiWordCountThreshold}
-                setCrawl4aiWordCountThreshold={(value) => handleFormChange('crawl4aiWordCountThreshold', value)}
-                crawl4aiRemoveForms={formState.crawl4aiRemoveForms}
-                setCrawl4aiRemoveForms={(value) => handleFormChange('crawl4aiRemoveForms', value)}
-                crawl4aiKeepDataAttributes={formState.crawl4aiKeepDataAttributes}
-                setCrawl4aiKeepDataAttributes={(value) => handleFormChange('crawl4aiKeepDataAttributes', value)}
-                crawl4aiExecuteJsOnLoad={formState.crawl4aiExecuteJsOnLoad}
-                setCrawl4aiExecuteJsOnLoad={(value) => handleFormChange('crawl4aiExecuteJsOnLoad', value)}
-                crawl4aiScanFullPage={formState.crawl4aiScanFullPage}
-                setCrawl4aiScanFullPage={(value) => handleFormChange('crawl4aiScanFullPage', value)}
-                crawl4aiScrollDelay={formState.crawl4aiScrollDelay}
-                setCrawl4aiScrollDelay={(value) => handleFormChange('crawl4aiScrollDelay', value)}
-                crawl4aiRemoveOverlayElements={formState.crawl4aiRemoveOverlayElements}
-                setCrawl4aiRemoveOverlayElements={(value) => handleFormChange('crawl4aiRemoveOverlayElements', value)}
-                crawl4aiSimulateUserBehavior={formState.crawl4aiSimulateUserBehavior}
-                setCrawl4aiSimulateUserBehavior={(value) => handleFormChange('crawl4aiSimulateUserBehavior', value)}
-                crawl4aiEnableMagic={formState.crawl4aiEnableMagic}
-                setCrawl4aiEnableMagic={(value) => handleFormChange('crawl4aiEnableMagic', value)}
-                crawl4aiOverrideNavigator={formState.crawl4aiOverrideNavigator}
-                setCrawl4aiOverrideNavigator={(value) => handleFormChange('crawl4aiOverrideNavigator', value)}
-                crawl4aiCacheMode={formState.crawl4aiCacheMode}
-                setCrawl4aiCacheMode={(value) => handleFormChange('crawl4aiCacheMode', value)}
-                crawl4aiCaptureScreenshot={formState.crawl4aiCaptureScreenshot}
-                setCrawl4aiCaptureScreenshot={(value) => handleFormChange('crawl4aiCaptureScreenshot', value)}
-                crawl4aiGeneratePdf={formState.crawl4aiGeneratePdf}
-                setCrawl4aiGeneratePdf={(value) => handleFormChange('crawl4aiGeneratePdf', value)}
-                crawl4aiCaptureMhtml={formState.crawl4aiCaptureMhtml}
-                setCrawl4aiCaptureMhtml={(value) => handleFormChange('crawl4aiCaptureMhtml', value)}
-                crawl4aiExcludeExternalImages={formState.crawl4aiExcludeExternalImages}
-                setCrawl4aiExcludeExternalImages={(value) => handleFormChange('crawl4aiExcludeExternalImages', value)}
-                crawl4aiImageAltTextMinWordCount={formState.crawl4aiImageAltTextMinWordCount}
-                setCrawl4aiImageAltTextMinWordCount={(value) => handleFormChange('crawl4aiImageAltTextMinWordCount', value)}
-                crawl4aiImageRelevanceScoreThreshold={formState.crawl4aiImageRelevanceScoreThreshold}
-                setCrawl4aiImageRelevanceScoreThreshold={(value) => handleFormChange('crawl4aiImageRelevanceScoreThreshold', value)}
-                crawl4aiExcludeExternalLinks={formState.crawl4aiExcludeExternalLinks}
-                setCrawl4aiExcludeExternalLinks={(value) => handleFormChange('crawl4aiExcludeExternalLinks', value)}
-                crawl4aiExcludeSocialMediaLinks={formState.crawl4aiExcludeSocialMediaLinks}
-                setCrawl4aiExcludeSocialMediaLinks={(value) => handleFormChange('crawl4aiExcludeSocialMediaLinks', value)}
-                crawl4aiCustomExcludedDomains={formState.crawl4aiCustomExcludedDomains}
-                setCrawl4aiCustomExcludedDomains={(value) => handleFormChange('crawl4aiCustomExcludedDomains', value)}
-                crawl4aiRespectRobotsTxt={formState.crawl4aiRespectRobotsTxt}
-                setCrawl4aiRespectRobotsTxt={(value) => handleFormChange('crawl4aiRespectRobotsTxt', value)}
-                crawl4aiVerboseLogging={formState.crawl4aiVerboseLogging}
-                setCrawl4aiVerboseLogging={(value) => handleFormChange('crawl4aiVerboseLogging', value)}
-                crawl4aiLogPageConsoleOutput={formState.crawl4aiLogPageConsoleOutput}
-                setCrawl4aiLogPageConsoleOutput={(value) => handleFormChange('crawl4aiLogPageConsoleOutput', value)}
-                
-                // Pass LLM configuration from formState
-                llmProvider={formState.llmProvider}
-                setLlmProvider={(value) => handleFormChange('llmProvider', value)}
-                llmApiToken={formState.llmApiToken}
-                setLlmApiToken={(value) => handleFormChange('llmApiToken', value)}
-                llmBaseUrl={formState.llmBaseUrl}
-                setLlmBaseUrl={(value) => handleFormChange('llmBaseUrl', value)}
-                availableLlmModels={availableLlmModels} // This comes from state, not formState
-                isLoadingLlmModels={isLoadingLlmModels} // This comes from state, not formState
-                
-                crawl4aiMarkdownGenerator={formState.crawl4aiMarkdownGenerator}
-                setCrawl4aiMarkdownGenerator={(value) => handleFormChange('crawl4aiMarkdownGenerator', value)}
-
-                // Expert Options
-                crawl4aiBrowserCookies={formState.crawl4aiBrowserCookies}
-                setCrawl4aiBrowserCookies={(value) => handleFormChange('crawl4aiBrowserCookies', value)}
-                crawl4aiBrowserHeaders={formState.crawl4aiBrowserHeaders}
-                setCrawl4aiBrowserHeaders={(value) => handleFormChange('crawl4aiBrowserHeaders', value)}
-                crawl4aiBrowserUsePersistentContext={formState.crawl4aiBrowserUsePersistentContext}
-                setCrawl4aiBrowserUsePersistentContext={(value) => handleFormChange('crawl4aiBrowserUsePersistentContext', value)}
-                crawl4aiCrawlSessionId={formState.crawl4aiCrawlSessionId}
-                setCrawl4aiCrawlSessionId={(value) => handleFormChange('crawl4aiCrawlSessionId', value)}
-                crawl4aiCrawlCssSelector={formState.crawl4aiCrawlCssSelector}
-                setCrawl4aiCrawlCssSelector={(value) => handleFormChange('crawl4aiCrawlCssSelector', value)}
-
-                // Strategy Configs passed directly
-                crawl4aiExtractionConfig={formState.crawl4aiExtractionConfig}
-                onCrawl4aiExtractionConfigChange={handleCrawl4aiExtractionConfigChange} // Use the correct handler
-                crawl4aiDeepCrawlConfig={formState.crawl4aiDeepCrawlConfig}
-                onCrawl4aiDeepCrawlConfigChange={handleCrawl4aiDeepCrawlConfigChange} // Use the correct handler
-
-                // Common options
+                targetSelectorAdvanced={formState.targetSelectorAdvanced}
+                setTargetSelectorAdvanced={setTargetSelectorAdvancedHandler}
+                excludedSelectors={formState.excludedSelectors} // Use renamed state variable
+                setExcludedSelectors={setExcludedSelectorsHandler} // Use renamed state variable
+                browserEngine={formState.browserEngine}
+                setBrowserEngine={setBrowserEngineHandler}
+                tokenBudget={formState.tokenBudget}
+                setTokenBudget={setTokenBudgetHandler}
+                viewportWidth={formState.viewportWidth}
+                setViewportWidth={setViewportWidthHandler}
+                viewportHeight={formState.viewportHeight}
+                setViewportHeight={setViewportHeightHandler}
+                markdownFlavor={formState.markdownFlavor}
+                setMarkdownFlavor={setMarkdownFlavorHandler}
+                timeout={formState.timeout}
+                setTimeout={setTimeoutHandler}
+                extractTextOnly={formState.extractTextOnly}
+                setExtractTextOnly={setExtractTextOnlyHandler}
+                extractTables={formState.extractTables}
+                setExtractTables={setExtractTablesHandler}
+                extractImages={formState.extractImages}
+                setExtractImages={setExtractImagesHandler}
+                extractLinks={formState.extractLinks}
+                setExtractLinks={setExtractLinksHandler}
+                jsonResponse={formState.jsonResponse}
+                setJsonResponse={setJsonResponseHandler}
+                cleanFormat={formState.cleanFormat}
+                setCleanFormat={setCleanFormatHandler}
                 uploadToSupabase={formState.uploadToSupabase}
-                setUploadToSupabase={(value) => handleFormChange('uploadToSupabase', value)}
+                setUploadToSupabase={setUploadToSupabaseHandler}
+                imageCaptioning={formState.imageCaptioning}
+                setImageCaptioning={setImageCaptioningHandler}
+                cacheTtl={formState.cacheTtl}
+                setCacheTtl={setCacheTtlHandler}
+                browserLocale={formState.browserLocale}
+                setBrowserLocale={setBrowserLocaleHandler}
+                extractMetadata={formState.extractMetadata}
+                setExtractMetadata={setExtractMetadataHandler}
+                // crawl4ai browser & nav props
+                crawl4aiUserAgent={formState.crawl4aiUserAgent}
+                setCrawl4aiUserAgent={setCrawl4aiUserAgentHandler}
+                crawl4aiViewportWidth={formState.crawl4aiViewportWidth}
+                setCrawl4aiViewportWidth={setCrawl4aiViewportWidthHandler}
+                crawl4aiViewportHeight={formState.crawl4aiViewportHeight}
+                setCrawl4aiViewportHeight={setCrawl4aiViewportHeightHandler}
+                crawl4aiProxyUrl={formState.crawl4aiProxyUrl}
+                setCrawl4aiProxyUrl={setCrawl4aiProxyUrlHandler}
+                crawl4aiPageLoadWaitCondition={formState.crawl4aiPageLoadWaitCondition}
+                setCrawl4aiPageLoadWaitCondition={setCrawl4aiPageLoadWaitConditionHandler}
+                crawl4aiPageTimeout={formState.crawl4aiPageTimeout}
+                setCrawl4aiPageTimeout={setCrawl4aiPageTimeoutHandler}
+                crawl4aiWaitForCondition={formState.crawl4aiWaitForCondition}
+                setCrawl4aiWaitForCondition={setCrawl4aiWaitForConditionHandler}
+                crawl4aiEnableJs={formState.crawl4aiEnableJs}
+                setCrawl4aiEnableJs={setCrawl4aiEnableJsHandler}
+                crawl4aiIgnoreHttpsErrors={formState.crawl4aiIgnoreHttpsErrors}
+                setCrawl4aiIgnoreHttpsErrors={setCrawl4aiIgnoreHttpsErrorsHandler}
+                crawl4aiLightMode={formState.crawl4aiLightMode}
+                setCrawl4aiLightMode={setCrawl4aiLightModeHandler}
+                crawl4aiTextMode={formState.crawl4aiTextMode}
+                setCrawl4aiTextMode={setCrawl4aiTextModeHandler}
+                // crawl4ai content extraction props (NEW)
+                crawl4aiTargetElements={formState.crawl4aiTargetElements}
+                setCrawl4aiTargetElements={setCrawl4aiTargetElementsHandler}
+                crawl4aiExcludedElements={formState.crawl4aiExcludedElements}
+                setCrawl4aiExcludedElements={setCrawl4aiExcludedElementsHandler}
+                crawl4aiExcludedTags={formState.crawl4aiExcludedTags}
+                setCrawl4aiExcludedTags={setCrawl4aiExcludedTagsHandler}
+                crawl4aiExtractOnlyTextContent={formState.crawl4aiExtractOnlyTextContent}
+                setCrawl4aiExtractOnlyTextContent={setCrawl4aiExtractOnlyTextContentHandler}
+                crawl4aiProcessIframes={formState.crawl4aiProcessIframes}
+                setCrawl4aiProcessIframes={setCrawl4aiProcessIframesHandler}
+                crawl4aiWordCountThreshold={formState.crawl4aiWordCountThreshold}
+                setCrawl4aiWordCountThreshold={setCrawl4aiWordCountThresholdHandler}
+                crawl4aiRemoveForms={formState.crawl4aiRemoveForms}
+                setCrawl4aiRemoveForms={setCrawl4aiRemoveFormsHandler}
+                crawl4aiKeepDataAttributes={formState.crawl4aiKeepDataAttributes}
+                setCrawl4aiKeepDataAttributes={setCrawl4aiKeepDataAttributesHandler}
+                // crawl4ai page interaction props (NEW)
+                crawl4aiExecuteJsOnLoad={formState.crawl4aiExecuteJsOnLoad}
+                setCrawl4aiExecuteJsOnLoad={setCrawl4aiExecuteJsOnLoadHandler}
+                crawl4aiScanFullPage={formState.crawl4aiScanFullPage}
+                setCrawl4aiScanFullPage={setCrawl4aiScanFullPageHandler}
+                crawl4aiScrollDelay={formState.crawl4aiScrollDelay}
+                setCrawl4aiScrollDelay={setCrawl4aiScrollDelayHandler}
+                crawl4aiRemoveOverlayElements={formState.crawl4aiRemoveOverlayElements}
+                setCrawl4aiRemoveOverlayElements={setCrawl4aiRemoveOverlayElementsHandler}
+                crawl4aiSimulateUserBehavior={formState.crawl4aiSimulateUserBehavior}
+                setCrawl4aiSimulateUserBehavior={setCrawl4aiSimulateUserBehaviorHandler}
+                crawl4aiEnableMagic={formState.crawl4aiEnableMagic}
+                setCrawl4aiEnableMagic={setCrawl4aiEnableMagicHandler}
+                crawl4aiOverrideNavigator={formState.crawl4aiOverrideNavigator}
+                setCrawl4aiOverrideNavigator={setCrawl4aiOverrideNavigatorHandler}
+                // crawl4ai caching props (NEW)
+                crawl4aiCacheMode={formState.crawl4aiCacheMode}
+                setCrawl4aiCacheMode={setCrawl4aiCacheModeHandler}
+                // crawl4ai media handling props (NEW)
+                crawl4aiCaptureScreenshot={formState.crawl4aiCaptureScreenshot}
+                setCrawl4aiCaptureScreenshot={setCrawl4aiCaptureScreenshotHandler}
+                crawl4aiGeneratePdf={formState.crawl4aiGeneratePdf}
+                setCrawl4aiGeneratePdf={setCrawl4aiGeneratePdfHandler}
+                crawl4aiCaptureMhtml={formState.crawl4aiCaptureMhtml}
+                setCrawl4aiCaptureMhtml={setCrawl4aiCaptureMhtmlHandler}
+                crawl4aiExcludeExternalImages={formState.crawl4aiExcludeExternalImages}
+                setCrawl4aiExcludeExternalImages={setCrawl4aiExcludeExternalImagesHandler}
+                crawl4aiImageAltTextMinWordCount={formState.crawl4aiImageAltTextMinWordCount}
+                setCrawl4aiImageAltTextMinWordCount={setCrawl4aiImageAltTextMinWordCountHandler}
+                crawl4aiImageRelevanceScoreThreshold={formState.crawl4aiImageRelevanceScoreThreshold}
+                setCrawl4aiImageRelevanceScoreThreshold={setCrawl4aiImageRelevanceScoreThresholdHandler}
+                // crawl4ai link filtering props (NEW)
+                crawl4aiExcludeExternalLinks={formState.crawl4aiExcludeExternalLinks}
+                setCrawl4aiExcludeExternalLinks={setCrawl4aiExcludeExternalLinksHandler}
+                crawl4aiExcludeSocialMediaLinks={formState.crawl4aiExcludeSocialMediaLinks}
+                setCrawl4aiExcludeSocialMediaLinks={setCrawl4aiExcludeSocialMediaLinksHandler}
+                crawl4aiCustomExcludedDomains={formState.crawl4aiCustomExcludedDomains}
+                setCrawl4aiCustomExcludedDomains={setCrawl4aiCustomExcludedDomainsHandler}
+                // crawl4ai compliance props (NEW)
+                crawl4aiRespectRobotsTxt={formState.crawl4aiRespectRobotsTxt}
+                setCrawl4aiRespectRobotsTxt={setCrawl4aiRespectRobotsTxtHandler}
+                // crawl4ai debugging props (NEW - Task)
+                crawl4aiVerboseLogging={formState.crawl4aiVerboseLogging}
+                setCrawl4aiVerboseLogging={setCrawl4aiVerboseLoggingHandler}
+                crawl4aiLogPageConsoleOutput={formState.crawl4aiLogPageConsoleOutput}
+                setCrawl4aiLogPageConsoleOutput={setCrawl4aiLogPageConsoleOutputHandler}
+                // crawl4ai LLM config props (NEW - Task)
+                crawl4aiLlmProviderModel={formState.crawl4aiLlmProviderModel}
+                setCrawl4aiLlmProviderModel={setCrawl4aiLlmProviderModelHandler}
+                crawl4aiLlmApiToken={formState.crawl4aiLlmApiToken}
+                setCrawl4aiLlmApiToken={setCrawl4aiLlmApiTokenHandler}
+                crawl4aiLlmBaseUrl={formState.crawl4aiLlmBaseUrl}
+                setCrawl4aiLlmBaseUrl={setCrawl4aiLlmBaseUrlHandler}
+                crawl4aiMarkdownGenerator={formState.crawl4aiMarkdownGenerator}
+                setCrawl4aiMarkdownGenerator={setCrawl4aiMarkdownGeneratorHandler}
+                // crawl4ai expert props (NEW)
+                crawl4aiBrowserCookies={formState.crawl4aiBrowserCookies}
+                setCrawl4aiBrowserCookies={setCrawl4aiBrowserCookiesHandler}
+                crawl4aiBrowserHeaders={formState.crawl4aiBrowserHeaders}
+                setCrawl4aiBrowserHeaders={setCrawl4aiBrowserHeadersHandler}
+                crawl4aiBrowserUsePersistentContext={formState.crawl4aiBrowserUsePersistentContext}
+                setCrawl4aiBrowserUsePersistentContext={setCrawl4aiBrowserUsePersistentContextHandler}
+                crawl4aiCrawlSessionId={formState.crawl4aiCrawlSessionId}
+                setCrawl4aiCrawlSessionId={setCrawl4aiCrawlSessionIdHandler}
+                crawl4aiCrawlCssSelector={formState.crawl4aiCrawlCssSelector}
+                setCrawl4aiCrawlCssSelector={setCrawl4aiCrawlCssSelectorHandler}
+                
+                crawl4aiExtractionConfig={formState.crawl4aiExtractionConfig}
+                onCrawl4aiExtractionConfigChange={handleCrawl4aiExtractionConfigChange}
+                crawl4aiDeepCrawlConfig={formState.crawl4aiDeepCrawlConfig}
+                onCrawl4aiDeepCrawlConfigChange={handleCrawl4aiDeepCrawlConfigChange}
               />
             )}
 

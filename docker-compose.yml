@@ -34,6 +34,8 @@ services:
         condition: service_started # Ensure LiteLLM proxy is started before starting backend
       minio:
         condition: service_started # Backend depends on MinIO
+      crawl4ai:
+        condition: service_healthy
     networks:
       - pmoves-network
     # Command to run the FastAPI application

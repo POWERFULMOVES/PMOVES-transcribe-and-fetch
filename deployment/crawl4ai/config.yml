@@ -14,7 +14,7 @@ llm:
   # Specify the default model alias configured in your LiteLLM proxy
   provider: "openai/gpt-4o-mini" # Example: Change to your preferred default
   # Point to the LiteLLM service within the Docker network
-  api_base: "http://litellm:4000"
+  api_base: "http://litellm-proxy:4000"
   # API key and env variable are handled by the LiteLLM proxy
   # api_key_env: "OPENAI_API_KEY"
   # api_key: sk-...

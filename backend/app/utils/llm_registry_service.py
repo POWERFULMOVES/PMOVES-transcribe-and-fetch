@@ -49,10 +49,10 @@ class StandardizedLLM(BaseModel):
     family: Optional[str] = None
     context_window: Optional[int] = None
     capabilities: List[ModelCapability] = Field(default_factory=list)
-    status: Optional[str] = "active", # Corresponds to llm_models.status
-    last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc)), # Used for cache logic, not directly in llm_models table (which has created_at, updated_at, last_synced_at)
-    additional_metadata: Optional[Dict[str, Any]] = None, # Potentially for future use, not directly in llm_models
-    pricing: Optional[Dict[str, Any]] = None, # Corresponds to llm_models.pricing (JSONB)
+    status: Optional[str] = "active" # Corresponds to llm_models.statusstatus
+    last_updated: datetime = Field(default_factory=lambda: datetime.now(timezone.utc)) # Used for cache logic, not directly in llm_models table (which has created_at, updated_at, last_synced_at)
+    additional_metadata: Optional[Dict[str, Any]] = None
+    pricing: Optional[Dict[str, Any]] = None
     rate_limits: Optional[Dict[str, Any]] = None # Corresponds to llm_models.rate_limits (JSONB)
     # For LiteLLM, the 'id' field in their /v1/models response is usually the full model name like "openai/gpt-3.5-turbo"
     # We will use this as our primary model_id and also populate crawl4ai_compatible_id if needed.
