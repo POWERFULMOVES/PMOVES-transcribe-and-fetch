@@ -13,6 +13,9 @@ import time
 from typing import Dict, Any, AsyncGenerator, List, Optional, Tuple, Union, Pattern
 from datetime import datetime, timezone
 import httpx # Added for async HTTP requests
+from pathlib import Path # Added for content storage
+import aiofiles # Added for async file operations
+import uuid # Added for unique filenames
 
 from crawl4ai import (
     CrawlResult,
@@ -58,6 +61,15 @@ except ImportError:
     LITELLM_PROXY_URL = os.getenv('LITELLM_PROXY_URL', 'http://localhost:4000')
     LITELLM_PROXY_API_KEY = os.getenv('LITELLM_PROXY_API_KEY')
     PROXY_CONFIG_LOADED = False
+
+# --- Content Storage Path (mirroring fetch_history_routes.py) ---
+CONTENT_STORAGE_BASE_DIR = Path(os.getenv('FETCHED_CONTENT_STORAGE_PATH', './fetched_content')).resolve()
+try:
+    CONTENT_STORAGE_BASE_DIR.mkdir(parents=True, exist_ok=True)
+    logger.info(f"Ensured fetched content storage directory exists for fetcher: {CONTENT_STORAGE_BASE_DIR}")
+except OSError as e_mkdir:
+    logger.error(f"CRITICAL: Could not create fetched content storage directory {CONTENT_STORAGE_BASE_DIR} in fetcher: {e_mkdir}. Content saving will fail.", exc_info=True)
+
 
 try:
     from .models.presets_models import CrawlPresetResponse # Corrected relative import
@@ -661,7 +673,94 @@ async def fetch_with_crawl4ai_docker(url: str, original_request_params: Dict[str
             if hasattr(crawl_result_item, 'llm_log_data') and crawl_result_item.llm_log_data:
                 output_data["llm_log_data"] = crawl_result_item.llm_log_data
                 logger.debug(f"LLM log data included for {crawl_result_item.url}")
-            logger.info(f"Yielding crawl_result event for {crawl_result_item.url} (Content length: {len(output_data.get('content', ''))}, Markdown length: {len(output_data.get('markdown', ''))})")
+
+            # --- Save text-based content and set content_storage_path ---
+            output_data["content_storage_path"] = None # Initialize
+            # output_type will be determined and set here for SSE, used by frontend to know how to handle content
+            # If crawl4ai provides pdf_path, it implies PDF content.
+            # If screenshot_path is provided, it's usually secondary to main content.
+
+            current_output_type = None # Internal variable for saving logic
+            content_to_save = ""
+            file_extension = ""
+
+            # 1. Check for PDF path from crawl4ai library first
+            if hasattr(crawl_result_item, 'pdf_path') and crawl_result_item.pdf_path:
+                # pdf_path from crawl4ai might be absolute or relative depending on its config.
+                # For consistency, we'll assume it's a relative path if it's to be used directly.
+                # If it's absolute, it should ideally be within CONTENT_STORAGE_BASE_DIR or a whitelisted path.
+                # For this task, we are primarily concerned with saving NEW text content.
+                # If pdf_path is present, we assume it's the primary content artifact.
+                # The current `output_data["pdf_path"]` logic already handles base64 or path for PDF.
+                # We need to ensure `content_storage_path` is also set.
+                # The task implies `crawl_result_item.pdf_path` might be set by crawl4ai itself.
+                # If `crawl_result_item.pdf` (base64) is set, `output_data["pdf_path"]` is set to "some_path_if_saved_or_base64"
+                # This part is tricky as the original code doesn't explicitly save base64 PDF from crawl_result_item.pdf to a file here.
+                # Let's assume if crawl_result_item.pdf_path is a string, it's a usable relative path.
+                if isinstance(crawl_result_item.pdf_path, str):
+                    output_data["content_storage_path"] = crawl_result_item.pdf_path
+                    output_data["output_type"] = "pdf" # Ensure this is set
+                    current_output_type = "pdf"
+                    logger.info(f"Using existing pdf_path for content_storage_path: {crawl_result_item.pdf_path}")
+                # If crawl_result_item.pdf is base64, we are not saving it here based on subtask description.
+                # The frontend will handle it via FetchedContentViewer's existing logic for pdf_file_path.
+                # However, if `output_data["pdf_path"]` was set to a path (e.g. if it was saved from base64 by crawl4ai), use that.
+                elif "pdf_path" in output_data and isinstance(output_data["pdf_path"], str) and not output_data["pdf_path"].startswith("data:application/pdf;base64,"):
+                    output_data["content_storage_path"] = output_data["pdf_path"]
+                    output_data["output_type"] = "pdf"
+                    current_output_type = "pdf"
+
+            # 2. Determine primary text content type and what to save
+            if not current_output_type: # If not already determined as PDF
+                if output_data.get("markdown"):
+                    content_to_save = output_data["markdown"]
+                    file_extension = "md"
+                    current_output_type = "markdown"
+                elif output_data.get("content"): # HTML, JSON, or fallback text
+                    # Simple heuristic for content type if not markdown
+                    if isinstance(output_data["content"], str) and output_data["content"].strip().startswith(("{", "[")) and output_data["content"].strip().endswith(("}", "]")):
+                        content_to_save = output_data["content"]
+                        file_extension = "json"
+                        current_output_type = "json"
+                    elif isinstance(output_data["content"], str) and ("<html" in output_data["content"].lower() or "<body" in output_data["content"].lower()):
+                        content_to_save = output_data["content"]
+                        file_extension = "html"
+                        current_output_type = "html"
+                    else: # Fallback to plain text for 'content' if not clearly MD, JSON, HTML
+                        content_to_save = output_data["content"]
+                        file_extension = "txt"
+                        current_output_type = "text"
+                elif output_data.get("text"): # If only 'text' field is populated (e.g. from only_text=True)
+                    content_to_save = output_data["text"]
+                    file_extension = "txt"
+                    current_output_type = "text"
+
+            # 3. Save the determined text content
+            if content_to_save and file_extension and current_output_type != "pdf":
+                try:
+                    relative_filename = f"{uuid.uuid4().hex}.{file_extension}"
+                    full_save_path = CONTENT_STORAGE_BASE_DIR / relative_filename
+
+                    # Ensure parent directory exists (CONTENT_STORAGE_BASE_DIR should already exist from app startup)
+                    # await asyncio.to_thread(lambda: full_save_path.parent.mkdir(parents=True, exist_ok=True))
+
+                    async with aiofiles.open(full_save_path, "w", encoding="utf-8") as f:
+                        await f.write(content_to_save)
+                    output_data["content_storage_path"] = relative_filename
+                    logger.info(f"Saved {current_output_type} content to: {relative_filename} for URL {crawl_result_item.url}")
+                except Exception as e_save:
+                    logger.error(f"Error saving {current_output_type} content for {crawl_result_item.url} to {relative_filename if 'relative_filename' in locals() else 'unknown path'}: {e_save}", exc_info=True)
+                    # output_data["content_storage_path"] remains None
+
+            # 4. Ensure output_type is set in the SSE event for the frontend
+            if current_output_type:
+                output_data["output_type"] = current_output_type
+            elif "output_type" not in output_data: # Fallback if not determined by any means
+                 output_data["output_type"] = "unknown"
+
+            # --- End content saving logic ---
+
+            logger.info(f"Yielding crawl_result event for {crawl_result_item.url} (Content length: {len(output_data.get('content', ''))}, Markdown length: {len(output_data.get('markdown', ''))}, CSP: {output_data.get('content_storage_path')}, Type: {output_data.get('output_type')})")
             yield json.dumps(output_data, default=str)
         elif crawl_result_item is None and not (crawler_config_object and crawler_config_object.stream if crawler_config_object else False) :
             logger.warning("Crawl client returned None for a non-streaming request. This might indicate an issue or no content.")

@@ -72,18 +72,31 @@ async def get_fetch_history_item_content(history_id: uuid.UUID):
     """
     logger.info(f"Request to get content for fetch history ID: {history_id}")
 
-    if get_client is None:
-        logger.error("Supabase client (get_client) not available.")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Database client configuration error."
-        )
-
     supabase_client = None
     try:
-        supabase_client = get_client()
+        # Attempt to get the Supabase client
+        if get_client is None: # This check itself implies a problem with the get_client import/availability
+            logger.error("get_client function itself is None, cannot obtain Supabase client.")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database client source (get_client) is not available."
+            )
+
+        try:
+            supabase_client = get_client()
+        except ValueError as ve:
+            logger.error(f"ValueError obtaining Supabase client: {ve}", exc_info=True)
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail=f"Database client configuration error: {ve}"
+            )
+
         if not supabase_client:
-            raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database client unavailable.")
+            logger.error("get_client() returned None or a falsy value for Supabase client.")
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Database client unavailable (returned None)."
+            )
 
         response = await asyncio.to_thread(
             supabase_client.table("fetch_history")

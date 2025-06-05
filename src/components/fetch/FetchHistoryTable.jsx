@@ -107,7 +107,11 @@ const FetchHistoryTable = ({
                     size="sm"
                     onClick={() => handleCopyMarkdown(item.markdown_content || item.content_markdown || item.content, item.url)} // Fallback for markdown field name
                     disabled={!(item.markdown_content || item.content_markdown || item.content)} // Check multiple possible fields
-                    title={ (item.markdown_content || item.content_markdown || item.content) ? "Copy Markdown to clipboard" : "No Markdown content available"}
+                    title={
+                      (item.markdown_content || item.content_markdown || item.content)
+                        ? "Copy Markdown to clipboard"
+                        : "Markdown not directly available in history list. View item to load full content."
+                    }
                   >
                     Copy MD
                   </Button>

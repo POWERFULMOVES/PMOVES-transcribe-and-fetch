@@ -310,6 +310,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
     setFormState(prev => ({ ...prev, result: null })); // Clear previous results
     setIsSavedToHistory(false); // Reset save status for new fetch
     setIsSavingToHistory(false); // Reset saving status
+    let crawlResultReceived = false; // Flag to track if crawl_result event was processed for this fetch
 
     const params = new URLSearchParams({
       url: formState.url,
@@ -478,16 +479,19 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
           // Main content arrives in the crawl_result event
           const viewerData = {
             title: data.metadata?.title || data.title || `Content from ${data.url}`,
-            htmlContent: data.content, // Raw HTML
-            markdownContent: data.markdown || data.content, // Prefer Markdown, fallback to HTML
+            htmlContent: data.content, // Raw HTML from crawl_result if available
+            markdownContent: data.markdown || data.content, // Prefer Markdown, fallback to HTML/content
             textContent: data.text,
-            pdf_file_path: data.pdf_path, // Ensure this matches what backend sends
+            pdf_file_path: data.pdf_path, // Path if it was a PDF and crawl4ai provided it (distinct from content_storage_path for viewer)
+            content_storage_path: data.content_storage_path, // NEW: Path where backend saved MD/JSON/TXT/HTML
+            output_type: data.output_type, // NEW: Actual type of content in content_storage_path or for display
             metadata: data.metadata,
             links: data.links,
-            screenshot_base64: data.screenshot_base64, // Add screenshot
-            url: data.url, // Include the URL for context
+            screenshot_base64: data.screenshot_base64,
+            url: data.url,
           };
           setFormState(prev => ({ ...prev, result: viewerData, fetchedUrl: data.url })); // Store fetchedUrl for history
+          crawlResultReceived = true; // Set the flag
           // Optionally, update progress message if crawl_result has specific info
           if (data.message) setProgressMessage(data.message);
 
@@ -496,9 +500,9 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
           // The main data should have already been set by 'crawl_result'.
           // If data.content exists here and is substantial, it might indicate an older backend version
           // or a different flow, but for the current design, we rely on 'crawl_result'.
-          if (data.content && Object.keys(data.content).length > 0 && !formState.result) {
+          if (data.content && Object.keys(data.content).length > 0 && !crawlResultReceived) {
             // Fallback for old backend behavior or if crawl_result was missed
-            console.warn("Received 'completed' event with content, but expected data via 'crawl_result'. Using this content as a fallback.");
+            console.warn("Received 'completed' event with content, but expected data via 'crawl_result' (crawlResultReceived is false). Using this content as a fallback.");
             const backendPayload = data.content;
             const viewerData = {
               title: backendPayload.title,
@@ -509,9 +513,10 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
               url: formState.url, // Use the original requested URL as fallback
             };
             setFormState(prev => ({ ...prev, result: viewerData, fetchedUrl: formState.url }));
-          } else if (!formState.result) {
+            crawlResultReceived = true; // Also set flag here as content was processed
+          } else if (!crawlResultReceived) {
             // If completed is received but no result was set by crawl_result
-            console.warn("Fetch 'completed' but no content was processed via 'crawl_result'.");
+            console.warn("Fetch 'completed' but no content was processed via 'crawl_result' (crawlResultReceived is false).");
             setMainFetchError("Fetch completed, but no viewable content was received.");
           }
 
@@ -845,17 +850,17 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
     }
 
     const payload = {
-      url: formState.url,
-      fetching_engine: fetchingEngine, // Use isolated state
-      status: 'completed',
-      title: formState.result.metadata?.title || formState.result.title || "Untitled",
+      url: formState.fetchedUrl || formState.url, // Ensure we use the actually fetched URL
+      fetching_engine: fetchingEngine,
+      status: 'completed', // Assuming save happens on successful fetch
+      title: formState.result.title || "Untitled",
       engine_specific_parameters: engineSpecificParams,
-      output_type: formState.result.pdf_path ? 'pdf_link' : 'markdown',
-      raw_content_summary: typeof formState.result.markdown_content === 'string'
-        ? (formState.result.markdown_content.substring(0, 250) + ((formState.result.markdown_content.length || 0) > 250 ? '...' : ''))
-        : 'Summary not available for non-string content.',
-      content_storage_path: formState.result.pdf_path || formState.result.markdown_path || null,
-      user_id: null,
+      output_type: formState.result.output_type || (formState.result.pdf_file_path ? 'pdf_link' : 'markdown'), // Use the new output_type, fallback if needed
+      raw_content_summary: typeof formState.result.markdownContent === 'string'
+        ? (formState.result.markdownContent.substring(0, 250) + ((formState.result.markdownContent.length || 0) > 250 ? '...' : ''))
+        : 'Summary not available.',
+      content_storage_path: formState.result.content_storage_path || null, // THIS IS THE KEY CHANGE
+      user_id: null, // This would need to come from auth state
     };
 
     try {
@@ -910,20 +915,55 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
 
     console.log("View history item:", item);
     setActiveMainTab("fetchContent"); // Switch to the main fetch tab
-    setFormState(prev => ({ ...prev, result: null, error: null })); // Clear previous result/error
+    // Clear previous result and specific error for this section
+    setFormState(prev => ({ ...prev, result: null }));
+    setMainFetchError(null);
     toast({
       title: "Loading Content...",
-      description: `Fetching content for ${item.title || item.url}.`,
+      description: `Fetching content for ${item.title || item.url || item.id}.`,
     });
     window.scrollTo(0, 0); // Scroll to top
 
     try {
       const response = await fetch(`${BACKEND_URL}/api/fetch-history/${item.id}/content`);
+      let fetchedContentData;
+
       if (!response.ok) {
-        const errorData = await response.json().catch(() => ({ detail: "Failed to fetch content and parse error." }));
-        throw new Error(errorData.detail || `Failed to fetch content. Status: ${response.status}`);
+        let errorDetail = `Failed to fetch content. Status: ${response.status}`;
+        try {
+          // Try to parse error response as JSON, but handle if it's not
+          const errorData = await response.json();
+          errorDetail = errorData.detail || errorData.message || errorDetail;
+        } catch (e) {
+          // If response is not JSON, use the raw text if available
+          try {
+            const rawErrorText = await response.text();
+            console.error("Non-JSON error response from server:", rawErrorText);
+            errorDetail = rawErrorText || errorDetail;
+          } catch (textError) {
+            console.error("Failed to get raw text from error response:", textError);
+          }
+        }
+        throw new Error(errorDetail);
       }
-      const fetchedContentData = await response.json();
+
+      try {
+        fetchedContentData = await response.json();
+      } catch (jsonParseError) {
+        const rawResponseText = await response.text().catch(() => "Could not retrieve raw response text.");
+        console.error("Failed to parse JSON response. Raw response text:", rawResponseText);
+        throw new Error(`Received non-JSON response from server. Raw text: ${rawResponseText.substring(0, 100)}...`);
+      }
+
+      console.debug("Fetched content data structure:", {
+        keys: Object.keys(fetchedContentData),
+        contentType: fetchedContentData.content_type,
+        hasMarkdown: fetchedContentData.hasOwnProperty('markdown_content'),
+        hasRawContent: fetchedContentData.hasOwnProperty('raw_content'),
+        hasPdfPath: fetchedContentData.hasOwnProperty('pdf_file_path') || fetchedContentData.hasOwnProperty('pdf_path'),
+        title: fetchedContentData.title,
+        message: fetchedContentData.message
+      });
 
       // The backend now returns a structure like:
       // { title, url, history_id, content_type, content_storage_path, pdf_path, markdown_content, raw_content }
@@ -934,10 +974,14 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
         markdownContent: fetchedContentData.markdown_content || null,
         // pdf_file_path is what FetchedContentViewer uses to construct a download link if pdfUrl is not present
         pdf_file_path: fetchedContentData.output_type === 'pdf' || fetchedContentData.output_type === 'pdf_link' ? fetchedContentData.content_storage_path : null,
+        output_type: fetchedContentData.output_type, // Pass through the output_type
         // If the backend directly provides a raw_content for JSON/HTML, we can decide how to display it.
         // For now, FetchedContentViewer primarily handles markdown and PDF links.
         // We can add raw_content to the viewerData if we want to display it, or handle it here.
         // For simplicity, if it's JSON, let's put it into markdownContent as a formatted block.
+        // Potentially add metadata and links here if/when backend provides them for history items
+        // metadata: fetchedContentData.metadata, (if available)
+        // links: fetchedContentData.links, (if available)
       };
 
       if (fetchedContentData.output_type === 'json' && fetchedContentData.raw_content) {
@@ -972,10 +1016,14 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
 
     } catch (error) {
       console.error("Error fetching history item content:", error);
-      setFormState(prev => ({ ...prev, result: { markdown_content: `## Error Loading Content\n\nCould not load content for "${item.title || item.url}".\n\n**Error:** ${error.message}` } }));
+      // Ensure error.message is safely accessed and used for user feedback
+      const errorMessage = error.message || "An unexpected error occurred while loading content.";
+      setMainFetchError(`Could not load content for "${item.title || item.url || item.id}". Error: ${errorMessage}`);
+      // Update formState to reflect the error in the content area if desired, or rely on mainFetchError
+      setFormState(prev => ({ ...prev, result: { markdownContent: `## Error Loading Content\n\n${errorMessage}` } }));
       toast({
         title: "Error Loading Content",
-        description: error.message || "An unexpected error occurred.",
+        description: errorMessage,
         variant: "destructive",
       });
     }
