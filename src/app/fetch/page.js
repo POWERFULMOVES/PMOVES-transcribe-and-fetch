@@ -10,9 +10,12 @@ import { useToast } from "@/hooks/use-toast";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog"; // Added
+import { Textarea } from "@/components/ui/textarea"; // Added
 import ReactMarkdown from 'react-markdown';
 import { BACKEND_URL } from '@/lib/constants';
 import FetchForm from '@/components/fetch/FetchForm';
+import PresetManager from '@/components/fetch/PresetManager'; // Added
 import AdvancedFetchOptions from '@/components/fetch/AdvancedFetchOptions';
 import FetchProgressTracker from '@/components/fetch/FetchProgressTracker';
 import FetchHistoryTable from '@/components/fetch/FetchHistoryTable'; // Import history table
@@ -1218,8 +1221,203 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Only run once on mount
 
+// Preset Management Logic
+const [formIsDirty, setFormIsDirty] = useState(false);
+// Add new loading states for preset operations if desired, e.g.:
+// const [isLoadingFullPreset, setIsLoadingFullPreset] = useState(false);
+// const [isSavingPreset, setIsSavingPreset] = useState(false);
+
+const handleLoadPreset = async (presetId) => {
+  if (!presetId) {
+    // This can happen if the "Select a preset..." option is re-selected
+    setCurrentLoadedPreset(null);
+    setOriginalPresetStrategyDefinition(null);
+    // Optionally reset form to default, or leave as is
+    // setFormState(prev => ({ ...DEFAULT_FORM_CONFIG, result: prev.result, fetchedUrl: prev.fetchedUrl }));
+    // setFetchingEngine("jina"); // Or whatever default engine
+    setFormIsDirty(false);
+    return;
+  }
+  // setIsLoadingFullPreset(true); // Optional: manage loading state for UI feedback
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/presets/${presetId}`);
+    if (!response.ok) {
+      const errorData = await response.json().catch(() => ({ detail: 'Failed to load preset definition and parse error' }));
+      throw new Error(errorData.detail || 'Failed to load preset definition');
+    }
+    const presetData = await response.json();
+
+    setCurrentLoadedPreset(presetData);
+    // Deep copy for reliable dirty checking.
+    // Ensure strategy_definition is at least an empty object if null/undefined from backend.
+    const strategyDef = presetData.strategy_definition || {};
+    setOriginalPresetStrategyDefinition(JSON.parse(JSON.stringify(strategyDef)));
+
+    let newFormState = { ...DEFAULT_FORM_CONFIG };
+    for (const key in strategyDef) {
+      if (Object.hasOwnProperty.call(strategyDef, key)) {
+        if (key === 'engine') {
+          setFetchingEngine(strategyDef.engine);
+        } else if (key === 'browser_viewport' && typeof strategyDef[key] === 'string') { // Jina specific viewport
+          const [widthStr, heightStr] = strategyDef[key].split('x');
+          newFormState.viewportWidth = parseInt(widthStr, 10) || 1920;
+          newFormState.viewportHeight = parseInt(heightStr, 10) || 1080;
+        } else if (key === 'remove_images') { // Jina specific image handling
+            if (strategyDef[key] === true) {
+              newFormState.extractTextOnly = true;
+              newFormState.extractImages = false;
+            } else {
+              newFormState.extractTextOnly = false;
+              newFormState.extractImages = true;
+            }
+        } else if (Object.hasOwnProperty.call(newFormState, key)) {
+          newFormState[key] = strategyDef[key];
+        }
+      }
+    }
+
+    // Ensure fields not in strategyDef but in DEFAULT_FORM_CONFIG are reset to their defaults
+    // This is important if a preset was saved with a subset of fields.
+    for (const key in DEFAULT_FORM_CONFIG) {
+        if (!Object.hasOwnProperty.call(strategyDef, key) && Object.hasOwnProperty.call(newFormState, key)) {
+            // If key from DEFAULT_FORM_CONFIG is not in strategyDef, ensure newFormState has the default.
+            // This is already implicitly handled by starting with newFormState = { ...DEFAULT_FORM_CONFIG }
+            // and only overriding with values from strategyDef.
+        }
+    }
+
+
+    setFormState(prev => ({ ...prev, ...newFormState })); // Preserve result, fetchedUrl
+
+    setFormIsDirty(false);
+    toast({ title: "Preset Loaded", description: `Successfully loaded '${presetData.preset_name}'.` });
+
+  } catch (error) {
+    console.error("Error loading preset:", error);
+    toast({ title: "Error Loading Preset", description: error.message, variant: "destructive" });
+    // Optionally clear current preset if loading fails
+    // setCurrentLoadedPreset(null);
+    // setOriginalPresetStrategyDefinition(null);
+  } finally {
+    // setIsLoadingFullPreset(false); // Optional
+  }
+  };
+
+// Effect for Dirty Checking
+useEffect(() => {
+  if (!originalPresetStrategyDefinition || !currentLoadedPreset) {
+    setFormIsDirty(false);
+    return;
+  }
+
+  const currentFormStrategyEquivalent = {};
+  for (const key in DEFAULT_FORM_CONFIG) {
+    if (Object.hasOwnProperty.call(DEFAULT_FORM_CONFIG, key)) {
+      currentFormStrategyEquivalent[key] = formState[key];
+    }
+  }
+  currentFormStrategyEquivalent.engine = fetchingEngine;
+
+  // This simple stringify comparison works if the order of keys is consistent
+  // and if originalPresetStrategyDefinition is structured exactly like currentFormStrategyEquivalent.
+  // Note: handleLoadPreset already tries to map/normalize the loaded preset to formState structure.
+  // However, if presetData.strategy_definition had fields not in DEFAULT_FORM_CONFIG,
+  // they wouldn't be in currentFormStrategyEquivalent.
+  // And if it had, e.g., browser_viewport (combined Jina string) vs split viewportWidth/Height,
+  // the stringify would differ.
+  // The current handleLoadPreset normalizes browser_viewport to split fields in formState.
+  // For a truly robust check, originalPresetStrategyDefinition should ALSO be normalized upon load
+  // before being set, or the comparison here needs to be field-by-field,
+  // reconstructing/normalizing values as needed (like viewport example in previous attempt).
+
+  // For this iteration, we assume originalPresetStrategyDefinition is sufficiently similar
+  // OR that minor discrepancies (like combined vs split viewport if not normalized in original)
+  // might incorrectly flag as dirty, which is a known limitation of simple stringify.
+  const isDirty = JSON.stringify(currentFormStrategyEquivalent) !== JSON.stringify(originalPresetStrategyDefinition);
+  setFormIsDirty(isDirty);
+
+}, [formState, fetchingEngine, originalPresetStrategyDefinition, currentLoadedPreset]); // DEFAULT_FORM_CONFIG is stable (defined outside component)
+
+
+  const handleOpenSavePresetModal = () => {
+  // Clear previous values when modal is opened
+  setNewPresetName("");
+  setNewPresetDescription("");
+    setShowSavePresetModal(true);
+  };
+
+  const handleCloseSavePresetModal = () => {
+    setShowSavePresetModal(false);
+  };
+
+  const handleConfirmSavePreset = () => {
+    console.log("Saving preset:", newPresetName, newPresetDescription);
+    // Actual save logic will be in a future subtask
+    toast({
+      title: "Preset Save (Placeholder)",
+      description: `Name: ${newPresetName}, Desc: ${newPresetDescription}`,
+    });
+    setShowSavePresetModal(false);
+    // Reset fields after save
+    setNewPresetName("");
+    setNewPresetDescription("");
+  };
+
+  const handleUpdatePreset = () => {
+    if (!currentLoadedPreset) {
+      toast({ title: "Error", description: "No preset loaded to update.", variant: "destructive" });
+      return;
+    }
+    console.log("Update preset", currentLoadedPreset.preset_id);
+    // Actual update logic will be in a future subtask
+    toast({
+      title: "Preset Update (Placeholder)",
+      description: `Updating: ${currentLoadedPreset?.preset_name}`,
+    });
+  };
+
+  const formIsDirty = false; // Placeholder, will be implemented later. This will require comparing formState to originalPresetStrategyDefinition or DEFAULT_FORM_CONFIG
+
   return (
     <>
+      {/* Save New Preset Modal */}
+      {showSavePresetModal && (
+        <Dialog open={showSavePresetModal} onOpenChange={(isOpen) => { if (!isOpen) handleCloseSavePresetModal(); }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>Save New Preset</DialogTitle>
+              <DialogDescription>
+                Enter a name and description for your new preset.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="grid gap-4 py-4">
+              <div>
+                <Label htmlFor="new-preset-name">Preset Name</Label>
+                <Input
+                  id="new-preset-name"
+                  value={newPresetName}
+                  onChange={(e) => setNewPresetName(e.target.value)}
+                  placeholder="My Awesome Preset"
+                />
+              </div>
+              <div>
+                <Label htmlFor="new-preset-description">Description</Label>
+                <Textarea
+                  id="new-preset-description"
+                  value={newPresetDescription}
+                  onChange={(e) => setNewPresetDescription(e.target.value)}
+                  placeholder="A brief description of what this preset does..."
+                />
+              </div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={handleCloseSavePresetModal}>Cancel</Button>
+              <Button onClick={handleConfirmSavePreset}>Save Preset</Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
+
       <main className="container mx-auto mt-8 p-4"> {/* Removed max-w-4xl for wider history table */}
         <Tabs value={activeMainTab} onValueChange={setActiveMainTab} className="w-full">
           <TabsList className="grid w-full grid-cols-2">
@@ -1235,6 +1433,15 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
                 </div>
               </CardHeader>
               <CardContent className="space-y-6">
+                <PresetManager
+                  availablePresets={availablePresets}
+                  isLoadingPresets={isLoadingPresets}
+                  currentLoadedPreset={currentLoadedPreset}
+                  formIsDirty={formIsDirty}
+                  onLoadPreset={handleLoadPreset}
+                  onOpenSaveModal={handleOpenSavePresetModal}
+                  onUpdatePreset={handleUpdatePreset}
+                />
                 <FetchForm
                   url={formState.url}
               setUrl={(val) => setFormValue('url', val)}
