@@ -28,7 +28,7 @@ The primary structure for a crawl preset will include:
 
 *(Refer to `docs/crawl4ai/crawl4ai_custom_context.md` for detailed JSON examples of `crawl4ai` strategy, filter_chain, and url_scorer configurations.)*
 
-The `strategy_definition` should be comprehensive enough to include configurations for extraction strategies (like `LLMExtractionStrategy` including its `LLMConfig`), deep crawling strategies (like `BestFirstCrawlingStrategy` with its `url_scorer` and `filter_chain`), and general `BrowserConfig` / `CrawlerRunConfig` parameters, as detailed in the `fetch_page_enhancement_plan.md` (v1.3) and the examples in Section 6.
+The `strategy_definition` should focus *only* on parameters for specific `crawl4ai` strategies (e.g., `LLMExtractionStrategy` including its `LLMConfig`, or `BFSDeepCrawlStrategy` with its specific parameters like `max_depth` or `filter_chain`). It should *not* include general `BrowserConfig` or overarching `CrawlerRunConfig` parameters. These broader configurations (like browser type, headless mode, global crawl timeouts, or caching policies) are expected to be defined and managed separately by the system or agent consuming and applying the preset, potentially merging them with the strategy-specific parameters at runtime. (Refer to `docs/crawl4ai/crawl4ai_custom_context.md` for details on `BrowserConfig` and `CrawlerRunConfig` structures.)
 
 ### 2.2. Preset Metadata
 
@@ -162,6 +162,8 @@ Agents designed to perform web crawls (e.g., a `ResearchAgent`, `DataExtractionA
 
 -   Preset identifiers and, if needed, full preset JSON blobs will be part of the standardized agent communication, likely embedded within the `args` of an `AgentCommand` as described in `AGENT_COMMAND_PROTOCOL.md` and transmitted via Pipecat frames (`PIPECAT_ARCHITECTURE.md`).
 
+> **A Note on `URLPatternFilter` Parameters:** Examples 1 and 2 use a `case_sensitive` parameter within `URLPatternFilter`. Please note that `case_sensitive` might not be a direct constructor (`__init__`) parameter for the standard `URLPatternFilter` class in the `crawl4ai` library. Its inclusion in these presets indicates an intended behavior. The system consuming these presets (e.g., the backend API) may handle this parameter by setting a corresponding attribute on the `URLPatternFilter` instance after its creation or by using a custom `URLPatternFilter` variant that directly supports this parameter. This ensures the desired case sensitivity is applied during the filtering process.
+
 ## 6. Example JSON Preset (for `crawl_presets` table, `strategy_definition` field)
 
 ### Example 1: BFS Crawl with Basic Filters
@@ -241,28 +243,21 @@ This would be stored in the `strategy_definition` JSONB column for a preset name
     "extraction_strategy": {
       "type": "LLMExtractionStrategy",
       "params": {
-        "schema_json": {
+        "schema": { // Renamed from schema_json
           "title": "string",
           "summary": "string",
           "key_topics": ["list", "string"]
         },
-        "instruction": "Extract the title, a concise summary, and key topics from the article."
+        "instruction": "Extract the title, a concise summary, and key topics from the article.",
+        "llm_config": { // Moved inside LLMExtractionStrategy.params
+          "provider": "ollama/mistral:latest", // Updated provider format
+          "model": null, // Model is now part of the provider string
+          "base_url": "http://localhost:11434/api", // Assuming this is for Ollama provider
+          "api_token": null
+        }
       }
-    },
-    "llm_config": {
-      "provider": "ollama",
-      "model": "mistral:latest",
-      "base_url": "http://localhost:11434/api",
-      "api_token": null
-    },
-    "browser_config": {
-      "user_agent": "MyExtractionBot/1.0",
-      "text_mode": true
-    },
-    "run_config": {
-      "page_timeout": 60000,
-      "only_text": true
     }
+    // browser_config and run_config removed from this preset example
   }
 }
 ```
