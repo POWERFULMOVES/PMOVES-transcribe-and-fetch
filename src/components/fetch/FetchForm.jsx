@@ -1,8 +1,10 @@
 "use client";
 
-import React, { useState } from 'react'; // useEffect removed if no longer needed for other purposes
+import React, { useState, useEffect, useCallback } from 'react';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { useToast } from "@/components/ui/use-toast"; // Or from "@/hooks/use-toast"
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Label } from "@/components/ui/label";
 // Duplicate Label import removed
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -13,27 +15,75 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch"; // Assuming a toggle for advanced options
+import { Switch } from "@/components/ui/switch";
+import { Loader2 } from 'lucide-react'; // For loading indicator
+
+const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
 const FetchForm = ({
   url,
   setUrl,
+  // Props for preset selection
+  selectedPresetId, // New prop to receive current selection from parent
+  onPresetChange,   // New prop to notify parent of selection change
   fetchDepth,
   setFetchDepth,
   targetContentArea,
   setTargetContentArea,
   advancedSelector,
   setAdvancedSelector,
-  fetchingEngine, // Add fetchingEngine prop
-  setFetchingEngine, // Add setFetchingEngine prop
+  fetchingEngine,
+  setFetchingEngine,
   handleFetch,
   showAdvanced,
   setShowAdvanced,
 }) => {
+  const [availablePresets, setAvailablePresets] = useState([]);
+  const [isLoadingPresets, setIsLoadingPresets] = useState(false);
+  const [errorPresets, setErrorPresets] = useState(null);
+  const { toast } = useToast();
+
+  const fetchAvailablePresets = useCallback(async () => {
+    if (fetchingEngine !== 'crawl4ai') {
+      setAvailablePresets([]); // Clear presets if not using crawl4ai
+      return;
+    }
+    setIsLoadingPresets(true);
+    setErrorPresets(null);
+    try {
+      const response = await fetch(`${BACKEND_URL}/api/presets`);
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({ detail: "Failed to fetch presets" }));
+        throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
+      }
+      const data = await response.json();
+      setAvailablePresets(data || []);
+    } catch (error) {
+      console.error("Error fetching presets:", error);
+      setErrorPresets(error.message);
+      toast({
+        title: "Error loading presets",
+        description: error.message,
+        variant: "destructive",
+      });
+      setAvailablePresets([]);
+    } finally {
+      setIsLoadingPresets(false);
+    }
+  }, [fetchingEngine, toast]);
+
+  useEffect(() => {
+    fetchAvailablePresets();
+  }, [fetchAvailablePresets]);
+
+  const handleLocalPresetChange = (presetId) => {
+    onPresetChange(presetId === "none" ? "" : presetId); // Notify parent. "none" value maps to empty string.
+  };
+
   const handleTargetContentChange = (value) => {
     setTargetContentArea(value);
     if (value !== "advanced") {
-      setAdvancedSelector(""); // Clear advanced selector if a preset is chosen
+      setAdvancedSelector("");
     }
   };
 
@@ -60,17 +110,57 @@ const FetchForm = ({
         >
           <div className="flex items-center space-x-2">
             <RadioGroupItem value="jina" id="engine-standard" />
-            <Label htmlFor="engine-standard" className="font-normal pt-0.5">Standard Fetch</Label> {/* Adjusted padding */}
+            <Label htmlFor="engine-standard" className="font-normal pt-0.5">Standard Fetch</Label>
           </div>
           <div className="flex items-center space-x-2">
             <RadioGroupItem value="crawl4ai" id="engine-advanced" />
-            <Label htmlFor="engine-advanced" className="font-normal pt-0.5">Advanced Crawl (`crawl4ai`)</Label> {/* Adjusted padding */}
+            <Label htmlFor="engine-advanced" className="font-normal pt-0.5">Advanced Crawl (`crawl4ai`)</Label>
           </div>
         </RadioGroup>
       </div>
 
       {fetchingEngine === 'crawl4ai' && (
         <>
+          <div>
+            <Label htmlFor="crawl-preset-select">Crawl Preset (Optional)</Label>
+            <Select value={selectedPresetId || "none"} onValueChange={handleLocalPresetChange} disabled={isLoadingPresets}>
+              <SelectTrigger id="crawl-preset-select" className="w-full">
+                <SelectValue placeholder="No Preset" />
+              </SelectTrigger>
+              <SelectContent>
+                {isLoadingPresets ? (
+                  <div className="flex items-center justify-center p-2">
+                    <Loader2 className="h-4 w-4 animate-spin mr-2" /> Loading...
+                  </div>
+                ) : (
+                  <>
+                    <SelectItem value="none">No Preset</SelectItem>
+                    {availablePresets.map((preset) => (
+                      <SelectItem key={preset.preset_id} value={preset.preset_id}>
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span>{preset.preset_name} (v{preset.version})</span>
+                            </TooltipTrigger>
+                            <TooltipContent side="right" className="max-w-xs">
+                              <p className="font-bold mb-1">{preset.preset_name}</p>
+                              <p className="text-xs text-muted-foreground mb-1">Capability: {preset.target_capability || 'N/A'}</p>
+                              <p className="text-xs">{preset.description || "No description."}</p>
+                              {preset.tags && preset.tags.length > 0 && (
+                                <p className="text-xs mt-1">Tags: {preset.tags.join(', ')}</p>
+                              )}
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                      </SelectItem>
+                    ))}
+                  </>
+                )}
+              </SelectContent>
+            </Select>
+            {errorPresets && <p className="text-xs text-destructive mt-1">{errorPresets}</p>}
+          </div>
+
           <div>
             <Label htmlFor="fetch-depth-select">Fetch Depth</Label>
             <Select value={fetchDepth} onValueChange={setFetchDepth}>

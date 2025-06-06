@@ -17,6 +17,7 @@ import AdvancedFetchOptions from '@/components/fetch/AdvancedFetchOptions';
 import FetchProgressTracker from '@/components/fetch/FetchProgressTracker';
 import FetchHistoryTable from '@/components/fetch/FetchHistoryTable'; // Import history table
 import FetchedContentViewer from '@/components/fetch/FetchedContentViewer'; // Import the new viewer
+import PresetsManager from '@/components/fetch/PresetsManager'; // Import PresetsManager
 import { createClient } from '@/lib/client'; // Import Supabase client creator
 import { useInfiniteQuery } from '@/hooks/use-infinite-query'; // Import the hook
 
@@ -203,14 +204,15 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
     llmProvider: '', // Canonical LLM provider/model
     llmApiToken: '',
     llmBaseUrl: '',
+    selectedPresetIdentifier: null, // Added for preset selection
   });
 
-  const handleFormChange = (fieldName, value) => {
-    setFormState(prevState => ({
-      ...prevState,
-      [fieldName]: value,
-    }));
-  };
+  // const handleFormChange = (fieldName, value) => { // Replaced by setFormValue
+  //   setFormState(prevState => ({
+  //     ...prevState,
+  //     [fieldName]: value,
+  //   }));
+  // };
 
   // Effect to handle the conceptual mapping of extractTextOnly and extractImages
   // removeImages is the old backend parameter.
@@ -329,7 +331,12 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
       engine: fetchingEngine, // Use isolated state
     });
 
-    if (fetchingEngine === 'jina') { // Use isolated state
+    // Add preset_id if selected (for crawl4ai engine)
+    if (fetchingEngine === 'crawl4ai' && formState.selectedPresetIdentifier) {
+      params.append('preset_id', formState.selectedPresetIdentifier);
+    }
+
+    if (fetchingEngine === 'jina') {
       params.append('target_selector_advanced', formState.targetSelectorAdvanced);
       params.append('json_response', formState.jsonResponse.toString());
       params.append('clean_format', formState.cleanFormat.toString());
@@ -1222,9 +1229,10 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
     <>
       <main className="container mx-auto mt-8 p-4"> {/* Removed max-w-4xl for wider history table */}
         <Tabs value={activeMainTab} onValueChange={setActiveMainTab} className="w-full">
-          <TabsList className="grid w-full grid-cols-2">
+          <TabsList className="grid w-full grid-cols-3"> {/* Updated grid-cols-2 to grid-cols-3 */}
             <TabsTrigger value="fetchContent">Fetch New Content</TabsTrigger>
             <TabsTrigger value="fetchHistory">Fetch History</TabsTrigger>
+            <TabsTrigger value="managePresets">Manage Presets</TabsTrigger> {/* Added PresetsManager Tab */}
           </TabsList>
           
           <TabsContent value="fetchContent">
@@ -1238,14 +1246,16 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
                 <FetchForm
                   url={formState.url}
               setUrl={(val) => setFormValue('url', val)}
+              selectedPresetId={formState.selectedPresetIdentifier} // Pass down selected preset
+              onPresetChange={(presetId) => setFormValue('selectedPresetIdentifier', presetId)} // Handle preset change
               fetchDepth={formState.fetchDepth}
               setFetchDepth={(val) => setFormValue('fetchDepth', val)}
               targetContentArea={formState.targetContentArea}
               setTargetContentArea={(val) => setFormValue('targetContentArea', val)}
               advancedSelector={formState.advancedSelector}
               setAdvancedSelector={(val) => setFormValue('advancedSelector', val)}
-              fetchingEngine={fetchingEngine} // Pass isolated state
-              setFetchingEngine={setFetchingEngine} // Pass isolated state setter
+              fetchingEngine={fetchingEngine}
+              setFetchingEngine={setFetchingEngine}
               handleFetch={handleFetchContent}
               showAdvanced={showAdvanced}
               setShowAdvanced={setShowAdvanced}
@@ -1535,6 +1545,10 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
                 />
               </CardContent>
             </Card>
+          </TabsContent>
+
+          <TabsContent value="managePresets"> {/* Added PresetsManager Content */}
+            <PresetsManager />
           </TabsContent>
         </Tabs>
       </main>
