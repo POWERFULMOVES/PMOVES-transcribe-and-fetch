@@ -278,7 +278,9 @@ try:
         generate_pdf_from_markdown_string,  # Added for PDF generation
     )
     from .fetch_content import fetch_content_from_url, generate_unique_filename
-    from .crawl4ai_docker_fetcher import fetch_with_crawl4ai_docker as fetch_with_crawl4ai # Use docker fetcher
+    from .crawl4ai_docker_fetcher import (
+        fetch_with_crawl4ai_docker as fetch_with_crawl4ai,
+    )  # Use docker fetcher
     from .app_config import WORKSPACE_ROOT, SUBFOLDERS
     from .psearchworking import (
         search_all,
@@ -301,7 +303,7 @@ try:
     )
     from .routes.llm_routes import router as llm_router
     from .routes import configurations_routes, agent_registry_routes
-    from .routes import presets_routes # ADDED FOR PRESETS API
+    from .routes import presets_routes  # ADDED FOR PRESETS API
     from .monitoring.sse_monitor import sse_monitoring_middleware
     from .monitoring.routes import router as monitoring_router
     from .utils.llm_logging import log_llm_call
@@ -314,6 +316,9 @@ try:
         ensure_ollama_model_loaded,
     )
     from .middleware.security_middleware import APIKeySecurityMiddleware
+    from .dependencies import (
+        get_client as get_supabase_client,
+    )  # Import from dependencies
 
     PROJECT_MODULES_LOADED = True
 except ImportError as e:
@@ -461,7 +466,7 @@ except ImportError as e:
     metrics_router = None
     monitoring_router = None
     sse_monitoring_middleware = None
-    presets_routes = None # ADDED DUMMY FOR PRESETS
+    presets_routes = None  # ADDED DUMMY FOR PRESETS
 
 # --- Initialize Core Components ---
 if PROJECT_MODULES_LOADED:
@@ -607,9 +612,7 @@ class ComprehensiveSearchRequest(BaseModel):
 
 class ComprehensiveSearchResponse(BaseModel):
     query: str
-    results: List[
-        Dict[str, Any]
-    ]
+    results: List[Dict[str, Any]]
     openai_analysis: Optional[str] = None
     groq_analysis: Optional[str] = None
     metadata: Dict[str, Any] = Field(
@@ -754,6 +757,9 @@ class FetchHistoryBase(BaseModel):
     content_summary: Optional[str] = Field(
         None, description="A brief summary or preview of the fetched content."
     )
+    content_storage_path: Optional[str] = Field(
+        None, description="Path to the stored content file (e.g., markdown, json)."
+    )
     raw_content_path: Optional[str] = Field(
         None, description="Path to the stored raw fetched content, if applicable."
     )
@@ -805,7 +811,10 @@ app = FastAPI(
             "name": "LLM Endpoints",
             "description": "Endpoints for interacting with LLM capabilities.",
         },
-         {"name": "Crawl Presets", "description": "Manage crawl presets."}, # ADDED TAG FOR PRESETS
+        {
+            "name": "Crawl Presets",
+            "description": "Manage crawl presets.",
+        },  # ADDED TAG FOR PRESETS
     ],
 )
 
@@ -843,6 +852,7 @@ if (
     except Exception as e:
         logger.warning(f"Failed to enable SSE monitoring middleware: {e}")
 
+
 @app.middleware("http")
 async def error_handling_middleware(request: Request, call_next):
     try:
@@ -868,6 +878,7 @@ async def error_handling_middleware(request: Request, call_next):
                 logger.error(f"Error handler itself failed: {handler_err}")
         return JSONResponse(status_code=status_code, content=error_details)
 
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start_time = time.time()
@@ -881,13 +892,17 @@ async def log_requests(request: Request, call_next):
     logger.info(f"<-- {method} {path} - Status={status_code} ({process_time:.3f}s)")
     return response
 
+
 if PROJECT_MODULES_LOADED:
     try:
         from monitoring.backend_integration import setup_backend_monitoring
-        monitor = setup_backend_monitoring(app, "pmoves-backend") 
+
+        monitor = setup_backend_monitoring(app, "pmoves-backend")
         logger.info("Backend monitoring setup successfully.")
     except ImportError as e_mon_import:
-        logger.error(f"Failed to import or setup monitoring: {e_mon_import}", exc_info=True)
+        logger.error(
+            f"Failed to import or setup monitoring: {e_mon_import}", exc_info=True
+        )
     except Exception as e_mon_setup:
         logger.error(f"Error during monitoring setup: {e_mon_setup}", exc_info=True)
 else:
@@ -901,23 +916,21 @@ app.include_router(
 app.include_router(
     content_upserter_router, prefix="/api/content-upserter", tags=["Content Upserter"]
 )
-app.include_router(
-    metrics_router, prefix="/api/metrics", tags=["Metrics"]
-)
-app.include_router(
-    monitoring_router, prefix="/api/monitoring", tags=["Monitoring"]
-)
+app.include_router(metrics_router, prefix="/api/metrics", tags=["Metrics"])
+app.include_router(monitoring_router, prefix="/api/monitoring", tags=["Monitoring"])
 # ADDING PRESETS ROUTER HERE
-if PROJECT_MODULES_LOADED and presets_routes: # Check if presets_routes was imported
+if PROJECT_MODULES_LOADED and presets_routes:  # Check if presets_routes was imported
     try:
-        app.include_router(presets_routes.router) # It already has /api/presets prefix
+        app.include_router(presets_routes.router)  # It already has /api/presets prefix
         logger.info("Crawl Presets API router included.")
     except Exception as e:
         logger.warning(f"Failed to include presets_routes.router: {e}")
 elif not PROJECT_MODULES_LOADED:
-     logger.warning("Presets router not included as PROJECT_MODULES_LOADED is False.")
-else: # presets_routes is None
-     logger.warning("Presets router (presets_routes) not imported correctly, skipping inclusion.")
+    logger.warning("Presets router not included as PROJECT_MODULES_LOADED is False.")
+else:  # presets_routes is None
+    logger.warning(
+        "Presets router (presets_routes) not imported correctly, skipping inclusion."
+    )
 
 
 # --- App Lifecycle Events ---
@@ -970,9 +983,7 @@ async def startup_event():
         if yt_dlp is None:
             logger.error("yt-dlp is missing, download features will be unavailable.")
 
-    except (
-        Exception
-    ) as e:
+    except Exception as e:
         logger.error(f"Error during application startup: {e}", exc_info=True)
 
 
@@ -1029,9 +1040,7 @@ def format_sse_message(
 
     try:
         json_str = json.dumps(message)
-        return (
-            json_str
-        )
+        return json_str
     except TypeError as e:
         logger.error(
             f"FINAL fallback: Failed to serialize SSE message of type {message_type}: {e}. Content: {str(serializable_content)[:100]}"
@@ -1357,9 +1366,7 @@ async def get_download_status(request: Request):
                         logger.warning(
                             f"Download SSE received non-JSON: {status_update_str[:100]}... Error: {e}"
                         )
-                        yield format_sse_message(
-                            "status", status_update_str
-                        )
+                        yield format_sse_message("status", status_update_str)
                     q.task_done()
                     last_activity_time = time.time()
 
@@ -1422,12 +1429,8 @@ def _handle_options_request(request: Request, allowed_origins_list: List[str]):
         response.headers["Access-Control-Allow-Methods"] = (
             "GET, POST, OPTIONS, PUT, DELETE"
         )
-        response.headers["Access-Control-Allow-Headers"] = (
-            "*"
-        )
-        response.headers["Access-Control-Max-Age"] = (
-            "86400"
-        )
+        response.headers["Access-Control-Allow-Headers"] = "*"
+        response.headers["Access-Control-Max-Age"] = "86400"
         logger.debug(f"OPTIONS response headers: {response.headers}")
         return response
     else:
@@ -2035,9 +2038,7 @@ async def create_fetch_history_entry(payload: FetchHistoryCreate):
                 detail="Database client unavailable.",
             )
 
-        data_to_insert = payload.model_dump(
-            exclude_unset=True
-        )
+        data_to_insert = payload.model_dump(exclude_unset=True)
 
         response = await asyncio.to_thread(
             supabase_client.table("fetch_history").insert(data_to_insert).execute
@@ -2246,11 +2247,11 @@ async def upsert_content_to_supabase(
     markdown_content: str,
     embedding: Optional[List[float]],
     pdf_path: Optional[str] = None,
-    metadata_payload: Optional[Dict[str, Any]] = None, # ADDED metadata_payload
-    raw_html_content: Optional[str] = None, # ADDED raw_html_content
-    text_content: Optional[str] = None, # ADDED text_content
-    screenshot_base64: Optional[str] = None # ADDED screenshot_base64
-) -> Optional[str]: # Changed to str to match what SQL function returns (content_id)
+    metadata_payload: Optional[Dict[str, Any]] = None,  # ADDED metadata_payload
+    raw_html_content: Optional[str] = None,  # ADDED raw_html_content
+    text_content: Optional[str] = None,  # ADDED text_content
+    screenshot_base64: Optional[str] = None,  # ADDED screenshot_base64
+) -> Optional[str]:  # Changed to str to match what SQL function returns (content_id)
     """Upserts fetched content, embedding, and PDF path to Supabase using the SQL function."""
     supabase_client = None
     try:
@@ -2265,13 +2266,13 @@ async def upsert_content_to_supabase(
             "p_content_id": content_id,
             "p_title": title,
             "p_url": url,
-            "p_content": markdown_content, # This is the markdown content
+            "p_content": markdown_content,  # This is the markdown content
             "p_embedding": embedding,
             "p_pdf_path": pdf_path,
-            "p_metadata": metadata_payload if metadata_payload else {}, # Pass metadata
-            "p_raw_html": raw_html_content, # Pass raw HTML
-            "p_text_content": text_content, # Pass plain text
-            "p_screenshot_base64": screenshot_base64 # Pass screenshot
+            "p_metadata": metadata_payload if metadata_payload else {},  # Pass metadata
+            "p_raw_html": raw_html_content,  # Pass raw HTML
+            "p_text_content": text_content,  # Pass plain text
+            "p_screenshot_base64": screenshot_base64,  # Pass screenshot
         }
 
         logger.info(f"Calling Supabase RPC upsert_webpage_content for URL: {url}")
@@ -2285,13 +2286,13 @@ async def upsert_content_to_supabase(
             # If it's a list with one item (common for single row returns from RPC)
             if isinstance(returned_value, list) and len(returned_value) > 0:
                 returned_id_str = str(returned_value[0])
-            else: # Direct value
+            else:  # Direct value
                 returned_id_str = str(returned_value)
 
             logger.info(
                 f"Successfully upserted content for URL {url}. Returned ID string: {returned_id_str}"
             )
-            return returned_id_str # Return the string representation of the ID
+            return returned_id_str  # Return the string representation of the ID
         elif hasattr(response, "error") and response.error:
             logger.error(
                 f"Supabase RPC error upserting content for {url}: {response.error}"
@@ -2316,9 +2317,7 @@ async def _update_fetch_history_record(
     history_id: Optional[uuid.UUID],
     update_data: Dict[str, Any],
     all_request_params_for_history: Dict[str, Any],
-) -> Tuple[
-    Optional[str], bool
-]:
+) -> Tuple[Optional[str], bool]:
     """
     Helper to update a fetch_history record.
     Returns an SSE message string for the event_generator to yield,
@@ -2338,15 +2337,18 @@ async def _update_fetch_history_record(
 
     payload_to_send = {
         **update_data,
-        "engine_specific_parameters": all_request_params_for_history, # Store all original params
+        "engine_specific_parameters": all_request_params_for_history,  # Store all original params
     }
     payload_to_send = {
         k: v for k, v in payload_to_send.items() if v is not None or k in update_data
     }
     # Ensure UUIDs are strings for JSONB, or handle conversion if Supabase client expects UUID objects
-    if 'supabase_content_id' in payload_to_send and isinstance(payload_to_send['supabase_content_id'], uuid.UUID):
-        payload_to_send['supabase_content_id'] = str(payload_to_send['supabase_content_id'])
-
+    if "supabase_content_id" in payload_to_send and isinstance(
+        payload_to_send["supabase_content_id"], uuid.UUID
+    ):
+        payload_to_send["supabase_content_id"] = str(
+            payload_to_send["supabase_content_id"]
+        )
 
     sse_message_to_yield: Optional[str] = None
     db_write_successful = False
@@ -2425,86 +2427,285 @@ async def fetch_content_endpoint(
         description="Upload content and embedding to Supabase (post-fetch process)",
     ),
     # --- Browser/Crawling Generic Parameters ---
-    headless: Optional[bool] = Query(True, description="Run browser in headless mode (crawl4ai)"),
-    user_agent: Optional[str] = Query(None, description="Custom user agent string for the browser (crawl4ai)"),
-    proxy_url: Optional[str] = Query(None, description="Proxy URL for browser requests (crawl4ai)"),
-    enable_javascript: Optional[bool] = Query(True, description="Enable JavaScript execution (crawl4ai)"),
-    ignore_https_errors: Optional[bool] = Query(True, description="Ignore HTTPS errors (crawl4ai)"),
-    light_mode: Optional[bool] = Query(False, description="Enable light mode (reduces resource usage) (crawl4ai)"),
-    text_mode: Optional[bool] = Query(False, description="Enable text-only mode (crawl4ai)"),
-    browser_cookies: Optional[str] = Query(None, description="JSON string of cookies to set (crawl4ai)"),
-    browser_headers: Optional[str] = Query(None, description="JSON string of headers to set (crawl4ai)"),
-    browser_use_persistent_context: Optional[bool] = Query(False, description="Use persistent browser context (crawl4ai)"),
-    browser_user_data_dir: Optional[str] = Query(None, description="Path to browser user data directory (crawl4ai)"),
-    browser_extra_args: Optional[str] = Query(None, description="Comma-separated list of extra browser arguments (crawl4ai)"),
-    viewport_width: Optional[int] = Query(None, description="Browser viewport width (crawl4ai)"),
-    viewport_height: Optional[int] = Query(None, description="Browser viewport height (crawl4ai)"),
-    browser_engine: str = Query("playwright", description="Browser engine ('playwright' or 'selenium') (crawl4ai, Jina)"),
-    browser_viewport: str = Query("1920x1080", description="Browser viewport (e.g., '1920x1080') (Jina specific, use viewport_width/height for crawl4ai)"),
-    browser_locale: str = Query("en-US", description="Browser locale (e.g., 'en-US') (crawl4ai, Jina)"),
-    take_screenshot: Optional[bool] = Query(False, description="Enable screenshot capture (crawl4ai)"),
-    take_screenshot_on_error: Optional[bool] = Query(True, description="Capture screenshot if an error occurs during crawling (crawl4ai)"),
-    respect_robots_txt: Optional[bool] = Query(True, description="Whether to respect robots.txt rules (crawl4ai)"),
-    jina_timeout_seconds: int = Query(300, description="Timeout in seconds for Jina fetch operation"),
-    crawl4ai_interaction_timeout_ms: Optional[int] = Query(30000, description="Page interaction timeout for crawl4ai in ms (e.g., for JS execution)"),
-    navigation_timeout_ms: Optional[int] = Query(60000, description="Page navigation timeout for crawl4ai in ms"),
-    page_load_timeout_ms: Optional[int] = Query(None, description="Overall page load timeout for crawl4ai in ms (defaults to navigation_timeout_ms if None)"),
-    page_load_wait_condition: Optional[str] = Query(None, description="Page load wait condition (e.g., 'load', 'domcontentloaded', 'networkidle') (crawl4ai)"),
-    wait_for_element_js_condition: Optional[str] = Query(None, description="JavaScript expression to wait for before proceeding (crawl4ai)"),
-    target_selector: Optional[str] = Query(None, description="CSS Selector for target elements to focus on (crawl4ai, Jina)"),
-    excluded_selector: Optional[str] = Query(None, description="CSS Selector for elements to exclude (crawl4ai, Jina)"),
-    excluded_tags: Optional[str] = Query(None, description="Comma-separated list of HTML tags to exclude (crawl4ai)"),
-    extract_only_text_content: Optional[bool] = Query(False, description="Extract only text content, no HTML structure (crawl4ai)"),
-    process_iframes_content: Optional[bool] = Query(False, description="Process content within iframes (crawl4ai)"),
-    word_count_threshold: Optional[int] = Query(None, description="Minimum word count for content to be considered valid (crawl4ai)"),
-    remove_forms: Optional[bool] = Query(False, description="Remove form elements from content (crawl4ai)"),
-    keep_data_attributes: Optional[bool] = Query(False, description="Keep data-* attributes in HTML (crawl4ai)"),
-    execute_javascript_on_page_load: Optional[str] = Query(None, description="JavaScript code to execute on page load (crawl4ai)"),
-    scan_full_page_auto_scroll: Optional[bool] = Query(False, description="Enable auto-scroll to capture full page content (crawl4ai)"),
-    scroll_delay_seconds: Optional[float] = Query(None, description="Delay in seconds between scrolls for full page capture (crawl4ai)"),
-    attempt_remove_overlay_elements: Optional[bool] = Query(False, description="Attempt to remove overlay elements (crawl4ai)"),
-    simulate_user_behavior: Optional[bool] = Query(False, description="Simulate user behavior like mouse movements (crawl4ai)"),
-    enable_magic_handling: Optional[bool] = Query(False, description="Enable crawl4ai's 'magic' handling for complex sites (crawl4ai)"),
-    override_navigator_properties: Optional[bool] = Query(False, description="Override browser navigator properties (crawl4ai)"),
-    cache_mode: Optional[str] = Query(None, description="Cache mode for crawl4ai (e.g., 'ENABLED', 'BYPASS', 'REFRESH')"),
-    capture_screenshot_base64: Optional[bool] = Query(False, description="Capture screenshot as base64 (crawl4ai)"),
-    capture_mhtml_snapshot: Optional[bool] = Query(False, description="Capture MHTML snapshot of the page (crawl4ai)"),
-    exclude_external_images: Optional[bool] = Query(False, description="Exclude external images from extraction (crawl4ai)"),
-    image_alt_text_min_word_count: Optional[int] = Query(None, description="Min word count for image alt text to be considered (crawl4ai)"),
-    image_relevance_score_threshold: Optional[int] = Query(None, description="Relevance score threshold for images (crawl4ai)"),
-    exclude_external_links: Optional[bool] = Query(False, description="Exclude external links from extraction (crawl4ai)"),
-    exclude_social_media_links: Optional[bool] = Query(False, description="Exclude social media links (crawl4ai)"),
-    custom_excluded_domains: Optional[str] = Query(None, description="Comma-separated list of custom domains to exclude (crawl4ai)"),
-    verbose_logging: Optional[bool] = Query(False, description="Enable verbose logging for crawl4ai"),
-    log_page_console_output: Optional[bool] = Query(False, description="Log page console output during crawl (crawl4ai)"),
-    crawl_session_id: Optional[str] = Query(None, description="Session ID for crawl4ai"),
-    crawl_css_selector: Optional[str] = Query(None, description="Global CSS selector for crawl4ai (distinct from target_selector)"),
-    crawl4ai_markdown_generator: Optional[str] = Query(None, description="Specify markdown generator for crawl4ai (e.g., 'Default')"),
-    deep_crawl_strategy_name: Optional[str] = Query(None, alias="deep_crawl_strategy_name", description="Name of the deep crawl strategy (e.g., BFSDeepCrawlStrategy)"),
-    deep_crawl_max_depth: Optional[int] = Query(None, alias="deep_crawl_max_depth", description="Maximum depth for deep crawling"),
-    deep_crawl_max_pages: Optional[int] = Query(None, alias="deep_crawl_max_pages", description="Maximum number of pages for deep crawling"),
-    deep_crawl_include_external: Optional[bool] = Query(None, alias="deep_crawl_include_external", description="Include external links in deep crawl"),
-    deep_crawl_score_threshold: Optional[float] = Query(None, alias="deep_crawl_score_threshold", description="Score threshold for deep crawl strategies like BFS/DFS"),
-    deep_crawl_filter_regexes: Optional[str] = Query(None, alias="deep_crawl_filter_regexes", description="Comma-separated regex patterns for URL filtering in deep crawl"),
-    deep_crawl_url_scorer_type: Optional[str] = Query(None, alias="deep_crawl_url_scorer_type", description="Type of URL scorer for BestFirstCrawlingStrategy (e.g., KeywordRelevanceScorer)"),
-    deep_crawl_scorer_keywords: Optional[str] = Query(None, alias="deep_crawl_scorer_keywords", description="Comma-separated keywords for KeywordRelevanceScorer"),
-    deep_crawl_scorer_weight: Optional[float] = Query(None, alias="deep_crawl_scorer_weight", description="Weight for KeywordRelevanceScorer"),
-    deep_crawl_config: Optional[str] = Query(None, description="JSON string for deep crawl strategy configuration (crawl4ai)"),
-    extraction_config: Optional[str] = Query(None, description="JSON string for extraction strategy configuration (crawl4ai)"),
-    extraction_strategy: Optional[str] = Query(None, description="Content extraction strategy for crawl4ai (e.g., 'llm', 'cosine', 'jsoncss', or None for default processing)"),
-    output_format: Optional[str] = Query("markdown", description="Desired output format from crawl4ai (e.g., 'markdown', 'text')"),
-    token_budget: int = Query(4000, description="Max tokens for content processing (crawl4ai token_limit, Jina token_budget)"),
-    remove_images: bool = Query(False, description="Remove images from content (crawl4ai, Jina)"),
-    extract_links: bool = Query(True, description="Extract links from content (crawl4ai, Jina)"),
-    extract_metadata: bool = Query(True, description="Extract page metadata (crawl4ai, Jina)"),
-    markdown_flavor: str = Query("github", description="Markdown flavor for output (crawl4ai, Jina)"),
-    image_captioning: bool = Query(False, description="Enable image captioning (crawl4ai with LLM, Jina)"),
-    llm_provider: Optional[str] = Query(None, alias="crawl4ai_llm_provider_model", description="LLM provider and model for crawl4ai (e.g., 'gemini/gemini-pro', 'openai/gpt-3.5-turbo', 'ollama/mistral')"),
-    llm_api_key: Optional[str] = Query(None, description="API key for the LLM provider (use environment variables if None)"),
-    crawl4ai_llm_base_url: Optional[str] = Query(None, description="Base URL for the LLM provider (crawl4ai)"),
-    llm_temperature: Optional[float] = Query(0.7, ge=0.0, le=2.0, description="LLM temperature for crawl4ai"),
-    llm_max_tokens: Optional[int] = Query(1000, ge=1, description="LLM max tokens for generation for crawl4ai"),
-    json_response: bool = Query(True, description="Request raw JSON response from Jina (contains metadata) (Jina specific)"),
+    headless: Optional[bool] = Query(
+        True, description="Run browser in headless mode (crawl4ai)"
+    ),
+    user_agent: Optional[str] = Query(
+        None, description="Custom user agent string for the browser (crawl4ai)"
+    ),
+    proxy_url: Optional[str] = Query(
+        None, description="Proxy URL for browser requests (crawl4ai)"
+    ),
+    enable_javascript: Optional[bool] = Query(
+        True, description="Enable JavaScript execution (crawl4ai)"
+    ),
+    ignore_https_errors: Optional[bool] = Query(
+        True, description="Ignore HTTPS errors (crawl4ai)"
+    ),
+    light_mode: Optional[bool] = Query(
+        False, description="Enable light mode (reduces resource usage) (crawl4ai)"
+    ),
+    text_mode: Optional[bool] = Query(
+        False, description="Enable text-only mode (crawl4ai)"
+    ),
+    browser_cookies: Optional[str] = Query(
+        None, description="JSON string of cookies to set (crawl4ai)"
+    ),
+    browser_headers: Optional[str] = Query(
+        None, description="JSON string of headers to set (crawl4ai)"
+    ),
+    browser_use_persistent_context: Optional[bool] = Query(
+        False, description="Use persistent browser context (crawl4ai)"
+    ),
+    browser_user_data_dir: Optional[str] = Query(
+        None, description="Path to browser user data directory (crawl4ai)"
+    ),
+    browser_extra_args: Optional[str] = Query(
+        None, description="Comma-separated list of extra browser arguments (crawl4ai)"
+    ),
+    viewport_width: Optional[int] = Query(
+        None, description="Browser viewport width (crawl4ai)"
+    ),
+    viewport_height: Optional[int] = Query(
+        None, description="Browser viewport height (crawl4ai)"
+    ),
+    browser_engine: str = Query(
+        "playwright",
+        description="Browser engine ('playwright' or 'selenium') (crawl4ai, Jina)",
+    ),
+    browser_viewport: str = Query(
+        "1920x1080",
+        description="Browser viewport (e.g., '1920x1080') (Jina specific, use viewport_width/height for crawl4ai)",
+    ),
+    browser_locale: str = Query(
+        "en-US", description="Browser locale (e.g., 'en-US') (crawl4ai, Jina)"
+    ),
+    take_screenshot: Optional[bool] = Query(
+        False, description="Enable screenshot capture (crawl4ai)"
+    ),
+    take_screenshot_on_error: Optional[bool] = Query(
+        True,
+        description="Capture screenshot if an error occurs during crawling (crawl4ai)",
+    ),
+    respect_robots_txt: Optional[bool] = Query(
+        True, description="Whether to respect robots.txt rules (crawl4ai)"
+    ),
+    jina_timeout_seconds: int = Query(
+        300, description="Timeout in seconds for Jina fetch operation"
+    ),
+    crawl4ai_interaction_timeout_ms: Optional[int] = Query(
+        30000,
+        description="Page interaction timeout for crawl4ai in ms (e.g., for JS execution)",
+    ),
+    navigation_timeout_ms: Optional[int] = Query(
+        60000, description="Page navigation timeout for crawl4ai in ms"
+    ),
+    page_load_timeout_ms: Optional[int] = Query(
+        None,
+        description="Overall page load timeout for crawl4ai in ms (defaults to navigation_timeout_ms if None)",
+    ),
+    page_load_wait_condition: Optional[str] = Query(
+        None,
+        description="Page load wait condition (e.g., 'load', 'domcontentloaded', 'networkidle') (crawl4ai)",
+    ),
+    wait_for_element_js_condition: Optional[str] = Query(
+        None,
+        description="JavaScript expression to wait for before proceeding (crawl4ai)",
+    ),
+    target_selector: Optional[str] = Query(
+        None,
+        description="CSS Selector for target elements to focus on (crawl4ai, Jina)",
+    ),
+    excluded_selector: Optional[str] = Query(
+        None, description="CSS Selector for elements to exclude (crawl4ai, Jina)"
+    ),
+    excluded_tags: Optional[str] = Query(
+        None, description="Comma-separated list of HTML tags to exclude (crawl4ai)"
+    ),
+    extract_only_text_content: Optional[bool] = Query(
+        False, description="Extract only text content, no HTML structure (crawl4ai)"
+    ),
+    process_iframes_content: Optional[bool] = Query(
+        False, description="Process content within iframes (crawl4ai)"
+    ),
+    word_count_threshold: Optional[int] = Query(
+        None,
+        description="Minimum word count for content to be considered valid (crawl4ai)",
+    ),
+    remove_forms: Optional[bool] = Query(
+        False, description="Remove form elements from content (crawl4ai)"
+    ),
+    keep_data_attributes: Optional[bool] = Query(
+        False, description="Keep data-* attributes in HTML (crawl4ai)"
+    ),
+    execute_javascript_on_page_load: Optional[str] = Query(
+        None, description="JavaScript code to execute on page load (crawl4ai)"
+    ),
+    scan_full_page_auto_scroll: Optional[bool] = Query(
+        False, description="Enable auto-scroll to capture full page content (crawl4ai)"
+    ),
+    scroll_delay_seconds: Optional[float] = Query(
+        None,
+        description="Delay in seconds between scrolls for full page capture (crawl4ai)",
+    ),
+    attempt_remove_overlay_elements: Optional[bool] = Query(
+        False, description="Attempt to remove overlay elements (crawl4ai)"
+    ),
+    simulate_user_behavior: Optional[bool] = Query(
+        False, description="Simulate user behavior like mouse movements (crawl4ai)"
+    ),
+    enable_magic_handling: Optional[bool] = Query(
+        False,
+        description="Enable crawl4ai's 'magic' handling for complex sites (crawl4ai)",
+    ),
+    override_navigator_properties: Optional[bool] = Query(
+        False, description="Override browser navigator properties (crawl4ai)"
+    ),
+    cache_mode: Optional[str] = Query(
+        None,
+        description="Cache mode for crawl4ai (e.g., 'ENABLED', 'BYPASS', 'REFRESH')",
+    ),
+    capture_screenshot_base64: Optional[bool] = Query(
+        False, description="Capture screenshot as base64 (crawl4ai)"
+    ),
+    capture_mhtml_snapshot: Optional[bool] = Query(
+        False, description="Capture MHTML snapshot of the page (crawl4ai)"
+    ),
+    exclude_external_images: Optional[bool] = Query(
+        False, description="Exclude external images from extraction (crawl4ai)"
+    ),
+    image_alt_text_min_word_count: Optional[int] = Query(
+        None,
+        description="Min word count for image alt text to be considered (crawl4ai)",
+    ),
+    image_relevance_score_threshold: Optional[int] = Query(
+        None, description="Relevance score threshold for images (crawl4ai)"
+    ),
+    exclude_external_links: Optional[bool] = Query(
+        False, description="Exclude external links from extraction (crawl4ai)"
+    ),
+    exclude_social_media_links: Optional[bool] = Query(
+        False, description="Exclude social media links (crawl4ai)"
+    ),
+    custom_excluded_domains: Optional[str] = Query(
+        None, description="Comma-separated list of custom domains to exclude (crawl4ai)"
+    ),
+    verbose_logging: Optional[bool] = Query(
+        False, description="Enable verbose logging for crawl4ai"
+    ),
+    log_page_console_output: Optional[bool] = Query(
+        False, description="Log page console output during crawl (crawl4ai)"
+    ),
+    crawl_session_id: Optional[str] = Query(
+        None, description="Session ID for crawl4ai"
+    ),
+    crawl_css_selector: Optional[str] = Query(
+        None,
+        description="Global CSS selector for crawl4ai (distinct from target_selector)",
+    ),
+    crawl4ai_markdown_generator: Optional[str] = Query(
+        None, description="Specify markdown generator for crawl4ai (e.g., 'Default')"
+    ),
+    deep_crawl_strategy_name: Optional[str] = Query(
+        None,
+        alias="deep_crawl_strategy_name",
+        description="Name of the deep crawl strategy (e.g., BFSDeepCrawlStrategy)",
+    ),
+    deep_crawl_max_depth: Optional[int] = Query(
+        None,
+        alias="deep_crawl_max_depth",
+        description="Maximum depth for deep crawling",
+    ),
+    deep_crawl_max_pages: Optional[int] = Query(
+        None,
+        alias="deep_crawl_max_pages",
+        description="Maximum number of pages for deep crawling",
+    ),
+    deep_crawl_include_external: Optional[bool] = Query(
+        None,
+        alias="deep_crawl_include_external",
+        description="Include external links in deep crawl",
+    ),
+    deep_crawl_score_threshold: Optional[float] = Query(
+        None,
+        alias="deep_crawl_score_threshold",
+        description="Score threshold for deep crawl strategies like BFS/DFS",
+    ),
+    deep_crawl_filter_regexes: Optional[str] = Query(
+        None,
+        alias="deep_crawl_filter_regexes",
+        description="Comma-separated regex patterns for URL filtering in deep crawl",
+    ),
+    deep_crawl_url_scorer_type: Optional[str] = Query(
+        None,
+        alias="deep_crawl_url_scorer_type",
+        description="Type of URL scorer for BestFirstCrawlingStrategy (e.g., KeywordRelevanceScorer)",
+    ),
+    deep_crawl_scorer_keywords: Optional[str] = Query(
+        None,
+        alias="deep_crawl_scorer_keywords",
+        description="Comma-separated keywords for KeywordRelevanceScorer",
+    ),
+    deep_crawl_scorer_weight: Optional[float] = Query(
+        None,
+        alias="deep_crawl_scorer_weight",
+        description="Weight for KeywordRelevanceScorer",
+    ),
+    deep_crawl_config: Optional[str] = Query(
+        None, description="JSON string for deep crawl strategy configuration (crawl4ai)"
+    ),
+    extraction_config: Optional[str] = Query(
+        None, description="JSON string for extraction strategy configuration (crawl4ai)"
+    ),
+    extraction_strategy: Optional[str] = Query(
+        None,
+        description="Content extraction strategy for crawl4ai (e.g., 'llm', 'cosine', 'jsoncss', or None for default processing)",
+    ),
+    output_format: Optional[str] = Query(
+        "markdown",
+        description="Desired output format from crawl4ai (e.g., 'markdown', 'text')",
+    ),
+    token_budget: int = Query(
+        4000,
+        description="Max tokens for content processing (crawl4ai token_limit, Jina token_budget)",
+    ),
+    remove_images: bool = Query(
+        False, description="Remove images from content (crawl4ai, Jina)"
+    ),
+    extract_links: bool = Query(
+        True, description="Extract links from content (crawl4ai, Jina)"
+    ),
+    extract_metadata: bool = Query(
+        True, description="Extract page metadata (crawl4ai, Jina)"
+    ),
+    markdown_flavor: str = Query(
+        "github", description="Markdown flavor for output (crawl4ai, Jina)"
+    ),
+    image_captioning: bool = Query(
+        False, description="Enable image captioning (crawl4ai with LLM, Jina)"
+    ),
+    llm_provider: Optional[str] = Query(
+        None,
+        alias="crawl4ai_llm_provider_model",
+        description="LLM provider and model for crawl4ai (e.g., 'gemini/gemini-pro', 'openai/gpt-3.5-turbo', 'ollama/mistral')",
+    ),
+    llm_api_key: Optional[str] = Query(
+        None,
+        description="API key for the LLM provider (use environment variables if None)",
+    ),
+    crawl4ai_llm_base_url: Optional[str] = Query(
+        None, description="Base URL for the LLM provider (crawl4ai)"
+    ),
+    llm_temperature: Optional[float] = Query(
+        0.7, ge=0.0, le=2.0, description="LLM temperature for crawl4ai"
+    ),
+    llm_max_tokens: Optional[int] = Query(
+        1000, ge=1, description="LLM max tokens for generation for crawl4ai"
+    ),
+    json_response: bool = Query(
+        True,
+        description="Request raw JSON response from Jina (contains metadata) (Jina specific)",
+    ),
     cache_ttl: int = Query(3600, description="Cache TTL in seconds (Jina specific)"),
 ):
     """
@@ -2526,44 +2727,91 @@ async def fetch_content_endpoint(
         return EventSourceResponse(error_gen_no_modules())
 
     all_request_params = {
-        "url": url, "engine": engine, "generate_pdf": generate_pdf, "upload_to_supabase": upload_to_supabase,
-        "headless": headless, "user_agent": user_agent, "proxy_url": proxy_url, "enable_javascript": enable_javascript,
-        "ignore_https_errors": ignore_https_errors, "light_mode": light_mode, "text_mode": text_mode,
-        "browser_cookies": browser_cookies, "browser_headers": browser_headers,
-        "browser_use_persistent_context": browser_use_persistent_context, "browser_user_data_dir": browser_user_data_dir,
-        "browser_extra_args": browser_extra_args, "viewport_width": viewport_width, "viewport_height": viewport_height,
-        "browser_engine": browser_engine, "browser_viewport": browser_viewport, "browser_locale": browser_locale,
-        "take_screenshot": take_screenshot, "take_screenshot_on_error": take_screenshot_on_error,
-        "respect_robots_txt": respect_robots_txt, "jina_timeout_seconds": jina_timeout_seconds,
-        "crawl4ai_interaction_timeout_ms": crawl4ai_interaction_timeout_ms, "navigation_timeout_ms": navigation_timeout_ms,
-        "page_load_timeout_ms": page_load_timeout_ms, "page_load_wait_condition": page_load_wait_condition,
-        "wait_for_element_js_condition": wait_for_element_js_condition, "target_selector": target_selector,
-        "excluded_selector": excluded_selector, "excluded_tags": excluded_tags,
-        "extract_only_text_content": extract_only_text_content, "process_iframes_content": process_iframes_content,
-        "word_count_threshold": word_count_threshold, "remove_forms": remove_forms, "keep_data_attributes": keep_data_attributes,
+        "url": url,
+        "engine": engine,
+        "generate_pdf": generate_pdf,
+        "upload_to_supabase": upload_to_supabase,
+        "headless": headless,
+        "user_agent": user_agent,
+        "proxy_url": proxy_url,
+        "enable_javascript": enable_javascript,
+        "ignore_https_errors": ignore_https_errors,
+        "light_mode": light_mode,
+        "text_mode": text_mode,
+        "browser_cookies": browser_cookies,
+        "browser_headers": browser_headers,
+        "browser_use_persistent_context": browser_use_persistent_context,
+        "browser_user_data_dir": browser_user_data_dir,
+        "browser_extra_args": browser_extra_args,
+        "viewport_width": viewport_width,
+        "viewport_height": viewport_height,
+        "browser_engine": browser_engine,
+        "browser_viewport": browser_viewport,
+        "browser_locale": browser_locale,
+        "take_screenshot": take_screenshot,
+        "take_screenshot_on_error": take_screenshot_on_error,
+        "respect_robots_txt": respect_robots_txt,
+        "jina_timeout_seconds": jina_timeout_seconds,
+        "crawl4ai_interaction_timeout_ms": crawl4ai_interaction_timeout_ms,
+        "navigation_timeout_ms": navigation_timeout_ms,
+        "page_load_timeout_ms": page_load_timeout_ms,
+        "page_load_wait_condition": page_load_wait_condition,
+        "wait_for_element_js_condition": wait_for_element_js_condition,
+        "target_selector": target_selector,
+        "excluded_selector": excluded_selector,
+        "excluded_tags": excluded_tags,
+        "extract_only_text_content": extract_only_text_content,
+        "process_iframes_content": process_iframes_content,
+        "word_count_threshold": word_count_threshold,
+        "remove_forms": remove_forms,
+        "keep_data_attributes": keep_data_attributes,
         "execute_javascript_on_page_load": execute_javascript_on_page_load,
-        "scan_full_page_auto_scroll": scan_full_page_auto_scroll, "scroll_delay_seconds": scroll_delay_seconds,
-        "attempt_remove_overlay_elements": attempt_remove_overlay_elements, "simulate_user_behavior": simulate_user_behavior,
-        "enable_magic_handling": enable_magic_handling, "override_navigator_properties": override_navigator_properties,
-        "cache_mode": cache_mode, "capture_screenshot_base64": capture_screenshot_base64,
-        "capture_mhtml_snapshot": capture_mhtml_snapshot, "exclude_external_images": exclude_external_images,
+        "scan_full_page_auto_scroll": scan_full_page_auto_scroll,
+        "scroll_delay_seconds": scroll_delay_seconds,
+        "attempt_remove_overlay_elements": attempt_remove_overlay_elements,
+        "simulate_user_behavior": simulate_user_behavior,
+        "enable_magic_handling": enable_magic_handling,
+        "override_navigator_properties": override_navigator_properties,
+        "cache_mode": cache_mode,
+        "capture_screenshot_base64": capture_screenshot_base64,
+        "capture_mhtml_snapshot": capture_mhtml_snapshot,
+        "exclude_external_images": exclude_external_images,
         "image_alt_text_min_word_count": image_alt_text_min_word_count,
         "image_relevance_score_threshold": image_relevance_score_threshold,
-        "exclude_external_links": exclude_external_links, "exclude_social_media_links": exclude_social_media_links,
-        "custom_excluded_domains": custom_excluded_domains, "verbose_logging": verbose_logging,
-        "log_page_console_output": log_page_console_output, "crawl_session_id": crawl_session_id,
-        "crawl_css_selector": crawl_css_selector, "crawl4ai_markdown_generator": crawl4ai_markdown_generator,
-        "deep_crawl_strategy_name": deep_crawl_strategy_name, "deep_crawl_max_depth": deep_crawl_max_depth,
-        "deep_crawl_max_pages": deep_crawl_max_pages, "deep_crawl_include_external": deep_crawl_include_external,
-        "deep_crawl_score_threshold": deep_crawl_score_threshold, "deep_crawl_filter_regexes": deep_crawl_filter_regexes,
-        "deep_crawl_url_scorer_type": deep_crawl_url_scorer_type, "deep_crawl_scorer_keywords": deep_crawl_scorer_keywords,
-        "deep_crawl_scorer_weight": deep_crawl_scorer_weight, "deep_crawl_config": deep_crawl_config,
-        "extraction_config": extraction_config, "extraction_strategy": extraction_strategy,
-        "output_format": output_format, "token_budget": token_budget, "remove_images": remove_images,
-        "extract_links": extract_links, "extract_metadata": extract_metadata, "markdown_flavor": markdown_flavor,
-        "image_captioning": image_captioning, "llm_provider": llm_provider, "llm_api_key": llm_api_key,
-        "crawl4ai_llm_base_url": crawl4ai_llm_base_url, "llm_temperature": llm_temperature,
-        "llm_max_tokens": llm_max_tokens, "json_response": json_response, "cache_ttl": cache_ttl,
+        "exclude_external_links": exclude_external_links,
+        "exclude_social_media_links": exclude_social_media_links,
+        "custom_excluded_domains": custom_excluded_domains,
+        "verbose_logging": verbose_logging,
+        "log_page_console_output": log_page_console_output,
+        "crawl_session_id": crawl_session_id,
+        "crawl_css_selector": crawl_css_selector,
+        "crawl4ai_markdown_generator": crawl4ai_markdown_generator,
+        "deep_crawl_strategy_name": deep_crawl_strategy_name,
+        "deep_crawl_max_depth": deep_crawl_max_depth,
+        "deep_crawl_max_pages": deep_crawl_max_pages,
+        "deep_crawl_include_external": deep_crawl_include_external,
+        "deep_crawl_score_threshold": deep_crawl_score_threshold,
+        "deep_crawl_filter_regexes": deep_crawl_filter_regexes,
+        "deep_crawl_url_scorer_type": deep_crawl_url_scorer_type,
+        "deep_crawl_scorer_keywords": deep_crawl_scorer_keywords,
+        "deep_crawl_scorer_weight": deep_crawl_scorer_weight,
+        "deep_crawl_config": deep_crawl_config,
+        "extraction_config": extraction_config,
+        "extraction_strategy": extraction_strategy,
+        "output_format": output_format,
+        "token_budget": token_budget,
+        "remove_images": remove_images,
+        "extract_links": extract_links,
+        "extract_metadata": extract_metadata,
+        "markdown_flavor": markdown_flavor,
+        "image_captioning": image_captioning,
+        "llm_provider": llm_provider,
+        "llm_api_key": llm_api_key,
+        "crawl4ai_llm_base_url": crawl4ai_llm_base_url,
+        "llm_temperature": llm_temperature,
+        "llm_max_tokens": llm_max_tokens,
+        "json_response": json_response,
+        "cache_ttl": cache_ttl,
     }
 
     async def event_generator():
@@ -2583,165 +2831,557 @@ async def fetch_content_endpoint(
                 supabase_client_for_history = get_client()
                 if not supabase_client_for_history:
                     logger.error("Failed to get Supabase client for fetch history.")
-                    yield format_sse_message("error", "database_client_unavailable", {"message": "Database client is essential for history tracking and is unavailable."})
+                    yield format_sse_message(
+                        "error",
+                        "database_client_unavailable",
+                        {
+                            "message": "Database client is essential for history tracking and is unavailable."
+                        },
+                    )
                     return
             except Exception as e_db_client_other:
-                logger.error(f"Unexpected error getting Supabase client for fetch history: {e_db_client_other}", exc_info=True)
-                yield format_sse_message("error", "database_client_error", {"message": f"Unexpected database client error for history: {str(e_db_client_other)}"})
+                logger.error(
+                    f"Unexpected error getting Supabase client for fetch history: {e_db_client_other}",
+                    exc_info=True,
+                )
+                yield format_sse_message(
+                    "error",
+                    "database_client_error",
+                    {
+                        "message": f"Unexpected database client error for history: {str(e_db_client_other)}"
+                    },
+                )
                 return
 
             if supabase_client_for_history:
                 try:
-                    initial_history_payload_dict = {"url": url, "fetching_engine": engine, "status": "pending"}
-                    FetchHistoryCreate(**initial_history_payload_dict) # Validate
-                    create_response = await asyncio.to_thread(supabase_client_for_history.table("fetch_history").insert(initial_history_payload_dict).execute)
+                    initial_history_payload_dict = {
+                        "url": url,
+                        "fetching_engine": engine,
+                        "status": "pending",
+                    }
+                    FetchHistoryCreate(**initial_history_payload_dict)  # Validate
+                    create_response = await asyncio.to_thread(
+                        supabase_client_for_history.table("fetch_history")
+                        .insert(initial_history_payload_dict)
+                        .execute
+                    )
                     if hasattr(create_response, "data") and create_response.data:
                         fetch_history_id = create_response.data[0].get("id")
                         if fetch_history_id:
-                            logger.info(f"Initial fetch history record created with ID: {fetch_history_id} for URL: {url}")
-                            yield format_sse_message("status", "history_created", {"message": f"Fetch history record created: {fetch_history_id}", "history_id": str(fetch_history_id)})
-                        else: logger.error(f"Initial fetch history for {url} created but ID not returned: {create_response.data}")
+                            logger.info(
+                                f"Initial fetch history record created with ID: {fetch_history_id} for URL: {url}"
+                            )
+                            yield format_sse_message(
+                                "status",
+                                "history_created",
+                                {
+                                    "message": f"Fetch history record created: {fetch_history_id}",
+                                    "history_id": str(fetch_history_id),
+                                },
+                            )
+                        else:
+                            logger.error(
+                                f"Initial fetch history for {url} created but ID not returned: {create_response.data}"
+                            )
                     elif hasattr(create_response, "error") and create_response.error:
-                        err_msg = create_response.error.message if hasattr(create_response.error, "message") else str(create_response.error)
-                        logger.error(f"Failed to create initial fetch history for {url}: {err_msg}")
+                        err_msg = (
+                            create_response.error.message
+                            if hasattr(create_response.error, "message")
+                            else str(create_response.error)
+                        )
+                        logger.error(
+                            f"Failed to create initial fetch history for {url}: {err_msg}"
+                        )
                 except Exception as e_hist_create:
-                    logger.error(f"Exception creating initial fetch history for {url}: {e_hist_create}", exc_info=True)
+                    logger.error(
+                        f"Exception creating initial fetch history for {url}: {e_hist_create}",
+                        exc_info=True,
+                    )
 
-            yield format_sse_message("status", "initializing", {"message": f"Initializing fetch process for {url} with {engine}..."})
+            yield format_sse_message(
+                "status",
+                "initializing",
+                {"message": f"Initializing fetch process for {url} with {engine}..."},
+            )
             await asyncio.sleep(0.1)
 
             if engine.lower() == "crawl4ai":
                 if fetch_with_crawl4ai is None:
-                    yield format_sse_message("error", "Crawl4ai fetcher module not available.")
-                    if fetch_history_id and supabase_client_for_history and not terminal_status_written_to_db:
-                        _, terminal_status_written_to_db = await _update_fetch_history_record(supabase_client_for_history, fetch_history_id, {"status": "failed", "error_message": "Crawl4ai fetcher module not available on server."}, all_request_params)
+                    yield format_sse_message(
+                        "error", "Crawl4ai fetcher module not available."
+                    )
+                    if (
+                        fetch_history_id
+                        and supabase_client_for_history
+                        and not terminal_status_written_to_db
+                    ):
+                        (
+                            _,
+                            terminal_status_written_to_db,
+                        ) = await _update_fetch_history_record(
+                            supabase_client_for_history,
+                            fetch_history_id,
+                            {
+                                "status": "failed",
+                                "error_message": "Crawl4ai fetcher module not available on server.",
+                            },
+                            all_request_params,
+                        )
                     return
                 logger.info(f"Using crawl4ai engine for URL: {url}")
-                async for sse_event_json_str_from_fetcher in fetch_with_crawl4ai(url=url, original_request_params=all_request_params):
+                async for sse_event_json_str_from_fetcher in fetch_with_crawl4ai(
+                    url=url, original_request_params=all_request_params
+                ):
                     try:
-                        event_data_from_fetcher = json.loads(sse_event_json_str_from_fetcher)
+                        event_data_from_fetcher = json.loads(
+                            sse_event_json_str_from_fetcher
+                        )
                         if event_data_from_fetcher.get("type") == "llm_log_event":
                             # ... (LLM logging logic remains the same)
                             continue
 
                         if event_data_from_fetcher.get("type") == "crawl_result":
-                            logger.info(f"Storing data from crawl_result event for URL: {event_data_from_fetcher.get('url')}")
-                            current_title = event_data_from_fetcher.get("metadata", {}).get("title") or (re.search(r"^#\s*(.+)", event_data_from_fetcher.get("markdown", ""), re.MULTILINE).group(1).strip() if re.search(r"^#\s*(.+)", event_data_from_fetcher.get("markdown", ""), re.MULTILINE) else None) or f"Content from {event_data_from_fetcher.get('url', url)}"
+                            logger.info(
+                                f"Storing data from crawl_result event for URL: {event_data_from_fetcher.get('url')}"
+                            )
+                            current_title = (
+                                event_data_from_fetcher.get("metadata", {}).get("title")
+                                or (
+                                    re.search(
+                                        r"^#\s*(.+)",
+                                        event_data_from_fetcher.get("markdown", ""),
+                                        re.MULTILINE,
+                                    )
+                                    .group(1)
+                                    .strip()
+                                    if re.search(
+                                        r"^#\s*(.+)",
+                                        event_data_from_fetcher.get("markdown", ""),
+                                        re.MULTILINE,
+                                    )
+                                    else None
+                                )
+                                or f"Content from {event_data_from_fetcher.get('url', url)}"
+                            )
                             fetched_data_dict = {
-                                "url": event_data_from_fetcher.get("url", url), "title": current_title,
-                                "markdown": event_data_from_fetcher.get("markdown"), "content": event_data_from_fetcher.get("content"),
-                                "text": event_data_from_fetcher.get("text"), "links": event_data_from_fetcher.get("links", []),
-                                "metadata": event_data_from_fetcher.get("metadata", {}), "screenshot_base64": event_data_from_fetcher.get("screenshot_base64"),
-                                "status_code": event_data_from_fetcher.get("status_code"), "error": event_data_from_fetcher.get("error_message") or event_data_from_fetcher.get("error"),
+                                "url": event_data_from_fetcher.get("url", url),
+                                "title": current_title,
+                                "markdown": event_data_from_fetcher.get("markdown"),
+                                "content": event_data_from_fetcher.get("content"),
+                                "text": event_data_from_fetcher.get("text"),
+                                "links": event_data_from_fetcher.get("links", []),
+                                "metadata": event_data_from_fetcher.get("metadata", {}),
+                                "screenshot_base64": event_data_from_fetcher.get(
+                                    "screenshot_base64"
+                                ),
+                                "status_code": event_data_from_fetcher.get(
+                                    "status_code"
+                                ),
+                                "error": event_data_from_fetcher.get("error_message")
+                                or event_data_from_fetcher.get("error"),
                             }
-                        
-                        # Simplified SSE event construction
-                        yield json.dumps(event_data_from_fetcher) # Pass through most events
 
-                        if event_data_from_fetcher.get("type") == "error" or event_data_from_fetcher.get("status") == "error":
-                            error_message_for_db = str(event_data_from_fetcher.get("message", "Unknown error from fetcher"))
+                        # Simplified SSE event construction
+                        yield json.dumps(
+                            event_data_from_fetcher
+                        )  # Pass through most events
+
+                        if (
+                            event_data_from_fetcher.get("type") == "error"
+                            or event_data_from_fetcher.get("status") == "error"
+                        ):
+                            error_message_for_db = str(
+                                event_data_from_fetcher.get(
+                                    "message", "Unknown error from fetcher"
+                                )
+                            )
                             if fetch_history_id and supabase_client_for_history:
-                                _, terminal_status_written_to_db = await _update_fetch_history_record(supabase_client_for_history, fetch_history_id, {"status": "failed", "error_message": error_message_for_db[:1000]}, all_request_params)
+                                (
+                                    _,
+                                    terminal_status_written_to_db,
+                                ) = await _update_fetch_history_record(
+                                    supabase_client_for_history,
+                                    fetch_history_id,
+                                    {
+                                        "status": "failed",
+                                        "error_message": error_message_for_db[:1000],
+                                    },
+                                    all_request_params,
+                                )
                             return
-                    except Exception as e_inner_crawl: # Simplified inner error handling
-                        logger.error(f"Error processing event from crawl4ai_fetcher: {e_inner_crawl}", exc_info=True)
-                        yield format_sse_message("error", f"Internal error processing crawl4ai event: {str(e_inner_crawl)}")
+                    except (
+                        Exception
+                    ) as e_inner_crawl:  # Simplified inner error handling
+                        logger.error(
+                            f"Error processing event from crawl4ai_fetcher: {e_inner_crawl}",
+                            exc_info=True,
+                        )
+                        yield format_sse_message(
+                            "error",
+                            f"Internal error processing crawl4ai event: {str(e_inner_crawl)}",
+                        )
                         if fetch_history_id and supabase_client_for_history:
-                            _, terminal_status_written_to_db = await _update_fetch_history_record(supabase_client_for_history, fetch_history_id, {"status": "failed", "error_message": f"Internal error processing crawl4ai event: {str(e_inner_crawl)}"[:1000]}, all_request_params)
+                            (
+                                _,
+                                terminal_status_written_to_db,
+                            ) = await _update_fetch_history_record(
+                                supabase_client_for_history,
+                                fetch_history_id,
+                                {
+                                    "status": "failed",
+                                    "error_message": f"Internal error processing crawl4ai event: {str(e_inner_crawl)}"[
+                                        :1000
+                                    ],
+                                },
+                                all_request_params,
+                            )
                         return
 
-            elif engine.lower() == "jina": # Jina specific logic (remains largely the same)
+            elif (
+                engine.lower() == "jina"
+            ):  # Jina specific logic (remains largely the same)
                 # ... (Jina logic as before) ...
-                if fetch_content_from_url is None: # Ensure this check is inside the Jina block
-                    yield format_sse_message("error", "Jina fetcher (fetch_content_from_url) not available.")
+                if (
+                    fetch_content_from_url is None
+                ):  # Ensure this check is inside the Jina block
+                    yield format_sse_message(
+                        "error", "Jina fetcher (fetch_content_from_url) not available."
+                    )
                     return
                 logger.info(f"Using Jina engine for URL: {url}")
                 # ... rest of Jina logic ...
-                jina_handler_output = await fetch_content_from_url(url=url, json_response=json_response, timeout=jina_timeout_seconds, target_selector=target_selector, excluded_selector=excluded_selector, browser_engine=browser_engine, token_budget=token_budget, remove_images=remove_images, extract_links=extract_links, image_captioning=image_captioning, cache_ttl=cache_ttl, markdown_flavor=markdown_flavor, browser_viewport=browser_viewport, browser_locale=browser_locale, extract_metadata=extract_metadata)
-                if json_response: fetched_data_dict = jina_handler_output
-                else: # Plain text
-                    title_match = re.search(r"^(?:# |\*\*Title:\*\*|Title:)\s*(.+)", jina_handler_output, re.IGNORECASE | re.MULTILINE)
-                    extracted_title = title_match.group(1).strip() if title_match else "Untitled (from Text)"
-                    fetched_data_dict = {"markdown": jina_handler_output, "content": jina_handler_output, "title": extracted_title, "url": url, "links": [], "metadata": {}, "pdf_path": None}
+                jina_handler_output = await fetch_content_from_url(
+                    url=url,
+                    json_response=json_response,
+                    timeout=jina_timeout_seconds,
+                    target_selector=target_selector,
+                    excluded_selector=excluded_selector,
+                    browser_engine=browser_engine,
+                    token_budget=token_budget,
+                    remove_images=remove_images,
+                    extract_links=extract_links,
+                    image_captioning=image_captioning,
+                    cache_ttl=cache_ttl,
+                    markdown_flavor=markdown_flavor,
+                    browser_viewport=browser_viewport,
+                    browser_locale=browser_locale,
+                    extract_metadata=extract_metadata,
+                )
+                if json_response:
+                    fetched_data_dict = jina_handler_output
+                else:  # Plain text
+                    title_match = re.search(
+                        r"^(?:# |\*\*Title:\*\*|Title:)\s*(.+)",
+                        jina_handler_output,
+                        re.IGNORECASE | re.MULTILINE,
+                    )
+                    extracted_title = (
+                        title_match.group(1).strip()
+                        if title_match
+                        else "Untitled (from Text)"
+                    )
+                    fetched_data_dict = {
+                        "markdown": jina_handler_output,
+                        "content": jina_handler_output,
+                        "title": extracted_title,
+                        "url": url,
+                        "links": [],
+                        "metadata": {},
+                        "pdf_path": None,
+                    }
 
-            else: # Unknown engine
+            else:  # Unknown engine
                 yield format_sse_message("error", f"Unknown engine: {engine}")
                 if fetch_history_id and supabase_client_for_history:
-                    _, terminal_status_written_to_db = await _update_fetch_history_record(supabase_client_for_history, fetch_history_id, {"status": "failed", "error_message": f"Unknown engine specified: {engine}"}, all_request_params)
+                    (
+                        _,
+                        terminal_status_written_to_db,
+                    ) = await _update_fetch_history_record(
+                        supabase_client_for_history,
+                        fetch_history_id,
+                        {
+                            "status": "failed",
+                            "error_message": f"Unknown engine specified: {engine}",
+                        },
+                        all_request_params,
+                    )
                 return
 
             # --- Post-fetch processing (PDF, Supabase) ---
-            final_data_for_db_and_pdf: Dict[str, Any] = {"status": "processing_failed", "output_type": "unknown"}
+            final_data_for_db_and_pdf: Dict[str, Any] = {
+                "status": "processing_failed",
+                "output_type": "unknown",
+            }
 
-            if fetched_data_dict and not (fetched_data_dict.get("error") and fetched_data_dict.get("status_code", 200) >= 400):
+            if fetched_data_dict and not (
+                fetched_data_dict.get("error")
+                and fetched_data_dict.get("status_code", 200) >= 400
+            ):
                 markdown_content = fetched_data_dict.get("markdown")
-                text_content_for_embedding = fetched_data_dict.get("text", markdown_content or "")
+                text_content_for_embedding = fetched_data_dict.get(
+                    "text", markdown_content or ""
+                )
                 title = fetched_data_dict.get("title", "Untitled")
                 fetched_url_actual = fetched_data_dict.get("url", url)
-                
-                if markdown_content: final_data_for_db_and_pdf["output_type"] = "markdown"
-                elif fetched_data_dict.get("content"): final_data_for_db_and_pdf["output_type"] = "html"
-                elif text_content_for_embedding: final_data_for_db_and_pdf["output_type"] = "text"
 
-                summary_source = text_content_for_embedding if text_content_for_embedding else markdown_content
-                if summary_source: final_data_for_db_and_pdf["content_summary"] = (summary_source[:297] + "...") if len(summary_source) > 300 else summary_source
+                if markdown_content:
+                    final_data_for_db_and_pdf["output_type"] = "markdown"
+                elif fetched_data_dict.get("content"):
+                    final_data_for_db_and_pdf["output_type"] = "html"
+                elif text_content_for_embedding:
+                    final_data_for_db_and_pdf["output_type"] = "text"
 
-                yield format_sse_message("status", "content_extracted", {"message": f"Content extracted for {fetched_url_actual}. Title: {title}", "title": title, "url": fetched_url_actual, "output_type": final_data_for_db_and_pdf["output_type"]})
+                summary_source = (
+                    text_content_for_embedding
+                    if text_content_for_embedding
+                    else markdown_content
+                )
+                if summary_source:
+                    final_data_for_db_and_pdf["content_summary"] = (
+                        (summary_source[:297] + "...")
+                        if len(summary_source) > 300
+                        else summary_source
+                    )
+
+                yield format_sse_message(
+                    "status",
+                    "content_extracted",
+                    {
+                        "message": f"Content extracted for {fetched_url_actual}. Title: {title}",
+                        "title": title,
+                        "url": fetched_url_actual,
+                        "output_type": final_data_for_db_and_pdf["output_type"],
+                    },
+                )
                 await asyncio.sleep(0.1)
 
-                if not markdown_content and not text_content_for_embedding and not fetched_data_dict.get("content"):
-                    final_data_for_db_and_pdf.update({"status": "completed_no_content", "error_message": "Fetcher returned no substantive content.", "output_type": "no_content"})
-                    yield format_sse_message("warning", "no_substantive_content", {"message": "No substantive content found."})
+                if (
+                    not markdown_content
+                    and not text_content_for_embedding
+                    and not fetched_data_dict.get("content")
+                ):
+                    final_data_for_db_and_pdf.update(
+                        {
+                            "status": "completed_no_content",
+                            "error_message": "Fetcher returned no substantive content.",
+                            "output_type": "no_content",
+                        }
+                    )
+                    yield format_sse_message(
+                        "warning",
+                        "no_substantive_content",
+                        {"message": "No substantive content found."},
+                    )
                 else:
                     if generate_pdf:
                         # ... (PDF generation logic as before, updating final_data_for_db_and_pdf) ...
                         if markdown_content:
-                             pdf_relative_path = await convert_md_to_pdf_util(markdown_content, fetched_url_actual, title)
-                             if pdf_relative_path: final_data_for_db_and_pdf["processed_content_path"] = pdf_relative_path; final_data_for_db_and_pdf["output_type"] += "_and_pdf" if "_pdf" not in final_data_for_db_and_pdf["output_type"] else ""
-                        elif fetched_data_dict.get("pdf_path"): # Jina might provide this
-                             final_data_for_db_and_pdf["processed_content_path"] = fetched_data_dict.get("pdf_path"); final_data_for_db_and_pdf["output_type"] = "pdf_direct"
+                            # Use the title or a sanitized URL for the PDF filename base
+                            pdf_filename_base = (
+                                sanitize_filename(title)
+                                if title
+                                else generate_unique_filename(url, "")
+                            )
+                            pdf_filename = f"{pdf_filename_base}.pdf"
+                            pdf_full_path = PDF_STORAGE_BASE_DIR / pdf_filename
+
+                            pdf_generation_successful = (
+                                await generate_pdf_from_markdown_string(
+                                    markdown_content, str(pdf_full_path)
+                                )
+                            )
+                            if pdf_generation_successful:
+                                logger.info(
+                                    f"Successfully generated PDF at: {pdf_full_path}"
+                                )
+                                # Store the relative path for the database and client
+                                pdf_relative_path = str(
+                                    pdf_full_path.relative_to(
+                                        PDF_STORAGE_BASE_DIR.parent
+                                    )
+                                )
+                                final_data_for_db_and_pdf["pdf_path"] = (
+                                    pdf_relative_path
+                                )
+                                final_data_for_db_and_pdf["output_type"] = "pdf_link"
+                                # Also update the history record with the path
+                                if history_id and supabase_client_for_history:
+                                    update_payload = {
+                                        "processed_content_path": pdf_relative_path,
+                                        "output_type": "pdf_link",
+                                    }
+                                    (
+                                        sse_msg,
+                                        _,
+                                    ) = await _update_fetch_history_record(
+                                        supabase_client_for_history,
+                                        history_id,
+                                        update_payload,
+                                        all_request_params_for_history,
+                                    )
+                                    if sse_msg:
+                                        yield sse_msg
+                            else:
+                                logger.error(
+                                    f"Failed to generate PDF for {fetched_url_actual}"
+                                )
+                                final_data_for_db_and_pdf["pdf_path"] = None
+                                # Update history to show PDF failed? Could add a note.
 
                     if upload_to_supabase:
                         # ... (Supabase upload logic as before, updating final_data_for_db_and_pdf) ...
                         if text_content_for_embedding and supabase_client_for_history:
-                            embedding = await get_embedding_with_registry(text_content_for_embedding)
-                            supabase_content_id_str = await upsert_content_to_supabase(supabase_client=supabase_client_for_history, url=fetched_url_actual, title=title, markdown_content=markdown_content, embedding=embedding, pdf_path=final_data_for_db_and_pdf.get("processed_content_path"), metadata_payload=fetched_data_dict.get("metadata"), raw_html_content=fetched_data_dict.get("content"), text_content=text_content_for_embedding, screenshot_base64=fetched_data_dict.get("screenshot_base64"))
-                            if supabase_content_id_str: final_data_for_db_and_pdf["supabase_content_id"] = supabase_content_id_str
-                    
+                            embedding = await get_embedding_with_registry(
+                                text_content_for_embedding
+                            )
+                            supabase_content_id_str = await upsert_content_to_supabase(
+                                supabase_client=supabase_client_for_history,
+                                url=fetched_url_actual,
+                                title=title,
+                                markdown_content=markdown_content,
+                                embedding=embedding,
+                                pdf_path=final_data_for_db_and_pdf.get(
+                                    "processed_content_path"
+                                ),
+                                metadata_payload=fetched_data_dict.get("metadata"),
+                                raw_html_content=fetched_data_dict.get("content"),
+                                text_content=text_content_for_embedding,
+                                screenshot_base64=fetched_data_dict.get(
+                                    "screenshot_base64"
+                                ),
+                            )
+                            if supabase_content_id_str:
+                                final_data_for_db_and_pdf["supabase_content_id"] = (
+                                    supabase_content_id_str
+                                )
+
                     final_data_for_db_and_pdf["status"] = "success"
-            
-            elif fetched_data_dict: # Error in fetched_data_dict
-                error_msg = fetched_data_dict.get("error", "Unknown error from fetcher payload.")
-                final_data_for_db_and_pdf.update({"status": "failed", "error_message": f"Fetcher Error: {error_msg}", "output_type": "error_payload"})
-                yield format_sse_message("error", "fetcher_payload_error", {"message": f"Fetcher reported error: {error_msg}"})
-            else: # No fetched_data_dict
-                final_data_for_db_and_pdf.update({"status": "failed", "error_message": f"{engine.capitalize()} did not produce data.", "output_type": "processing_failure"})
-                yield format_sse_message("error", "no_valid_data_dictionary", {"message": f"{engine.capitalize()} did not produce data."})
 
-            if fetch_history_id and supabase_client_for_history and not terminal_status_written_to_db:
-                logger.info(f"Attempting final history update for ID {fetch_history_id} with status: {final_data_for_db_and_pdf.get('status')}")
-                sse_hist_update_msg, db_write_ok = await _update_fetch_history_record(supabase_client_for_history, fetch_history_id, final_data_for_db_and_pdf, all_request_params)
-                if sse_hist_update_msg: yield sse_hist_update_msg
-                if db_write_ok and final_data_for_db_and_pdf.get("status") in ["success", "failed", "completed_no_content", "processing_failed"]:
-                     terminal_status_written_to_db = True
+            elif fetched_data_dict:  # Error in fetched_data_dict
+                error_msg = fetched_data_dict.get(
+                    "error", "Unknown error from fetcher payload."
+                )
+                final_data_for_db_and_pdf.update(
+                    {
+                        "status": "failed",
+                        "error_message": f"Fetcher Error: {error_msg}",
+                        "output_type": "error_payload",
+                    }
+                )
+                yield format_sse_message(
+                    "error",
+                    "fetcher_payload_error",
+                    {"message": f"Fetcher reported error: {error_msg}"},
+                )
+            else:  # No fetched_data_dict
+                final_data_for_db_and_pdf.update(
+                    {
+                        "status": "failed",
+                        "error_message": f"{engine.capitalize()} did not produce data.",
+                        "output_type": "processing_failure",
+                    }
+                )
+                yield format_sse_message(
+                    "error",
+                    "no_valid_data_dictionary",
+                    {"message": f"{engine.capitalize()} did not produce data."},
+                )
 
-            yield format_sse_message("status", "completed", {"message": f"Fetch process for {url} concluded with overall status: {final_data_for_db_and_pdf.get('status', 'unknown')}."})
+            if (
+                fetch_history_id
+                and supabase_client_for_history
+                and not terminal_status_written_to_db
+            ):
+                logger.info(
+                    f"Attempting final history update for ID {fetch_history_id} with status: {final_data_for_db_and_pdf.get('status')}"
+                )
+                sse_hist_update_msg, db_write_ok = await _update_fetch_history_record(
+                    supabase_client_for_history,
+                    fetch_history_id,
+                    final_data_for_db_and_pdf,
+                    all_request_params,
+                )
+                if sse_hist_update_msg:
+                    yield sse_hist_update_msg
+                if db_write_ok and final_data_for_db_and_pdf.get("status") in [
+                    "success",
+                    "failed",
+                    "completed_no_content",
+                    "processing_failed",
+                ]:
+                    terminal_status_written_to_db = True
+
+            yield format_sse_message(
+                "status",
+                "completed",
+                {
+                    "message": f"Fetch process for {url} concluded with overall status: {final_data_for_db_and_pdf.get('status', 'unknown')}."
+                },
+            )
 
         except asyncio.CancelledError:
             logger.info(f"Fetch process for {url} was cancelled by client.")
-            yield format_sse_message("status", "cancelled", {"message": "Process cancelled by client."})
-            if fetch_history_id and supabase_client_for_history and not terminal_status_written_to_db:
-                await _update_fetch_history_record(supabase_client_for_history, fetch_history_id, {"status": "cancelled", "error_message": "Process cancelled by client."}, all_request_params)
+            yield format_sse_message(
+                "status", "cancelled", {"message": "Process cancelled by client."}
+            )
+            if (
+                fetch_history_id
+                and supabase_client_for_history
+                and not terminal_status_written_to_db
+            ):
+                await _update_fetch_history_record(
+                    supabase_client_for_history,
+                    fetch_history_id,
+                    {
+                        "status": "cancelled",
+                        "error_message": "Process cancelled by client.",
+                    },
+                    all_request_params,
+                )
         except Exception as e_outer:
-            logger.error(f"Unhandled error in fetch content event generator for {url}: {e_outer}", exc_info=True)
-            yield format_sse_message("error", "unhandled_exception", {"message": f"Server error: {str(e_outer)}"})
-            if fetch_history_id and supabase_client_for_history and not terminal_status_written_to_db:
-                await _update_fetch_history_record(supabase_client_for_history, fetch_history_id, {"status": "failed", "error_message": f"Unhandled exception: {str(e_outer)[:500]}" }, all_request_params)
+            logger.error(
+                f"Unhandled error in fetch content event generator for {url}: {e_outer}",
+                exc_info=True,
+            )
+            yield format_sse_message(
+                "error",
+                "unhandled_exception",
+                {"message": f"Server error: {str(e_outer)}"},
+            )
+            if (
+                fetch_history_id
+                and supabase_client_for_history
+                and not terminal_status_written_to_db
+            ):
+                await _update_fetch_history_record(
+                    supabase_client_for_history,
+                    fetch_history_id,
+                    {
+                        "status": "failed",
+                        "error_message": f"Unhandled exception: {str(e_outer)[:500]}",
+                    },
+                    all_request_params,
+                )
         finally:
             logger.info(f"SSE event stream for {url} finished.")
-            if fetch_history_id and supabase_client_for_history and not terminal_status_written_to_db:
-                logger.warning(f"Fetch for {url} (ID: {fetch_history_id}) ended without a confirmed terminal status in DB. Attempting final 'unknown_outcome' update.")
-                await _update_fetch_history_record(supabase_client_for_history, fetch_history_id, {"status": "unknown_outcome", "error_message": "Process ended; terminal status could not be confirmed."}, all_request_params)
+            if (
+                fetch_history_id
+                and supabase_client_for_history
+                and not terminal_status_written_to_db
+            ):
+                logger.warning(
+                    f"Fetch for {url} (ID: {fetch_history_id}) ended without a confirmed terminal status in DB. Attempting final 'unknown_outcome' update."
+                )
+                await _update_fetch_history_record(
+                    supabase_client_for_history,
+                    fetch_history_id,
+                    {
+                        "status": "unknown_outcome",
+                        "error_message": "Process ended; terminal status could not be confirmed.",
+                    },
+                    all_request_params,
+                )
 
     return EventSourceResponse(event_generator())
 
@@ -2760,10 +3400,14 @@ def secure_path_join(base: Path, requested_path: str) -> Optional[Path]:
             if str(relative_part) == normalized_req_path:
                 return full_path
             else:
-                logger.warning(f"Path validation failed: Relative part mismatch. Base='{base}', Req='{requested_path}', Resolved='{full_path}', Relative='{relative_part}'")
+                logger.warning(
+                    f"Path validation failed: Relative part mismatch. Base='{base}', Req='{requested_path}', Resolved='{full_path}', Relative='{relative_part}'"
+                )
                 return None
         else:
-            logger.warning(f"Directory traversal attempt blocked: Base='{base}', Req='{requested_path}', Resolved='{full_path}'")
+            logger.warning(
+                f"Directory traversal attempt blocked: Base='{base}', Req='{requested_path}', Resolved='{full_path}'"
+            )
             return None
     except Exception as e:
         logger.error(f"Error during secure path join: {e}", exc_info=True)
@@ -2771,74 +3415,140 @@ def secure_path_join(base: Path, requested_path: str) -> Optional[Path]:
 
 
 @app.get("/view-pdf", tags=["Files"])
-async def view_pdf_endpoint(path: str = Query(..., description="Relative path to the PDF file within the storage directory")):
+async def view_pdf_endpoint(
+    path: str = Query(
+        ..., description="Relative path to the PDF file within the storage directory"
+    ),
+):
     logger.info(f"Request to view PDF: {path}")
     secure_full_path = secure_path_join(PDF_STORAGE_BASE_DIR, path)
-    if secure_full_path is None: raise HTTPException(status_code=400, detail="Invalid file path requested.")
+    if secure_full_path is None:
+        raise HTTPException(status_code=400, detail="Invalid file path requested.")
     if not await asyncio.to_thread(os.path.isfile, secure_full_path):
         logger.error(f"PDF not found for viewing at resolved path: {secure_full_path}")
         raise HTTPException(status_code=404, detail="PDF file not found.")
     try:
-        return FileResponse(path=str(secure_full_path), media_type="application/pdf", filename=secure_full_path.name, content_disposition_type="inline")
+        return FileResponse(
+            path=str(secure_full_path),
+            media_type="application/pdf",
+            filename=secure_full_path.name,
+            content_disposition_type="inline",
+        )
     except Exception as e:
-        logger.error(f"Error serving PDF {secure_full_path} for viewing: {e}", exc_info=True)
+        logger.error(
+            f"Error serving PDF {secure_full_path} for viewing: {e}", exc_info=True
+        )
         raise HTTPException(status_code=500, detail="Could not serve PDF file.")
 
 
 @app.get("/download-pdf", tags=["Files"])
-async def download_pdf_endpoint(path: str = Query(..., description="Relative path to the PDF file within the storage directory")):
+async def download_pdf_endpoint(
+    path: str = Query(
+        ..., description="Relative path to the PDF file within the storage directory"
+    ),
+):
     logger.info(f"Request to download PDF: {path}")
     secure_full_path = secure_path_join(PDF_STORAGE_BASE_DIR, path)
-    if secure_full_path is None: raise HTTPException(status_code=400, detail="Invalid file path requested.")
+    if secure_full_path is None:
+        raise HTTPException(status_code=400, detail="Invalid file path requested.")
     if not await asyncio.to_thread(os.path.isfile, secure_full_path):
         logger.error(f"PDF not found for download at resolved path: {secure_full_path}")
         raise HTTPException(status_code=404, detail="PDF file not found.")
     try:
         download_filename = f"downloaded_{secure_full_path.name}"
-        return FileResponse(path=str(secure_full_path), media_type="application/pdf", filename=download_filename, content_disposition_type="attachment")
+        return FileResponse(
+            path=str(secure_full_path),
+            media_type="application/pdf",
+            filename=download_filename,
+            content_disposition_type="attachment",
+        )
     except Exception as e:
-        logger.error(f"Error serving PDF {secure_full_path} for download: {e}", exc_info=True)
+        logger.error(
+            f"Error serving PDF {secure_full_path} for download: {e}", exc_info=True
+        )
         raise HTTPException(status_code=500, detail="Could not serve PDF file.")
 
 
 # --- Include Other Routers ---
 if PROJECT_MODULES_LOADED:
     if "content_upserter_router" in locals() and content_upserter_router:
-        try: app.include_router(content_upserter_router, prefix="/api/content", tags=["Content Management"])
-        except Exception as e: logger.warning(f"Failed to include content_upserter_router: {e}")
+        try:
+            app.include_router(
+                content_upserter_router,
+                prefix="/api/content",
+                tags=["Content Management"],
+            )
+        except Exception as e:
+            logger.warning(f"Failed to include content_upserter_router: {e}")
 
     if "fetch_history_router" in locals() and fetch_history_router:
-        try: app.include_router(fetch_history_router, prefix="/api", tags=["Fetch History"])
-        except Exception as e: logger.warning(f"Failed to include fetch_history_router: {e}")
+        try:
+            app.include_router(
+                fetch_history_router,
+                prefix="/api/fetch-history",
+                tags=["Fetch History"],
+            )
+        except Exception as e:
+            logger.warning(f"Failed to include fetch_history_router: {e}")
 
     if "llm_router" in locals() and llm_router:
         try:
             app.include_router(llm_router, prefix="/api/v1", tags=["LLM Endpoints"])
-            app.include_router(configurations_routes.router, prefix="/api/v1/configurations", tags=["App Configurations"])
-            app.include_router(agent_registry_routes.router, prefix="/api/v1/agent-registry", tags=["Agent Registry"])
-            if presets_routes: # Check if presets_routes was imported successfully
-                app.include_router(presets_routes.router) # It already has /api/presets prefix in its definition
+            app.include_router(
+                configurations_routes.router,
+                prefix="/api/v1/configurations",
+                tags=["App Configurations"],
+            )
+            app.include_router(
+                agent_registry_routes.router,
+                prefix="/api/v1/agent-registry",
+                tags=["Agent Registry"],
+            )
+            if presets_routes:  # Check if presets_routes was imported successfully
+                app.include_router(
+                    presets_routes.router
+                )  # It already has /api/presets prefix in its definition
                 logger.info("Crawl Presets API router included.")
             else:
                 logger.warning("presets_routes not available, skipping its inclusion.")
 
-        except Exception as e: logger.warning(f"Failed to include llm_router or new system routers: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to include llm_router or new system routers: {e}")
 
     if "metrics_router" in locals() and metrics_router:
-        try: app.include_router(metrics_router, prefix="/monitoring", tags=["Monitoring"])
-        except Exception as e: logger.warning(f"Failed to include metrics_router: {e}")
+        try:
+            app.include_router(
+                metrics_router, prefix="/monitoring", tags=["Monitoring"]
+            )
+        except Exception as e:
+            logger.warning(f"Failed to include metrics_router: {e}")
 
-    if "monitoring_router" in locals() and metrics_router != monitoring_router and monitoring_router:
-        try: app.include_router(monitoring_router, prefix="/monitoring", tags=["Monitoring"])
-        except Exception as e: logger.warning(f"Failed to include monitoring_router: {e}")
+    if (
+        "monitoring_router" in locals()
+        and metrics_router != monitoring_router
+        and monitoring_router
+    ):
+        try:
+            app.include_router(
+                monitoring_router, prefix="/monitoring", tags=["Monitoring"]
+            )
+        except Exception as e:
+            logger.warning(f"Failed to include monitoring_router: {e}")
 
     if "search_config_router" in locals() and search_config_router:
-        try: app.include_router(search_config_router, prefix="/api/search-config", tags=["Search Configuration"])
-        except Exception as e: logger.warning(f"Failed to include search_config_router: {e}")
+        try:
+            app.include_router(
+                search_config_router,
+                prefix="/api/search-config",
+                tags=["Search Configuration"],
+            )
+        except Exception as e:
+            logger.warning(f"Failed to include search_config_router: {e}")
 
 # --- Include Debug Endpoints ---
 try:
     from .debug_endpoints import router as debug_router
+
     app.include_router(debug_router)
     logger.info("Debug endpoints included.")
 except Exception as e:
@@ -2849,40 +3559,103 @@ except Exception as e:
 @app.post("/api/vector-search", response_model=VectorSearchResponse, tags=["Search"])
 async def vector_search_endpoint(request: VectorSearchRequest):
     """Perform vector search using the advanced_hybrid_search SQL function."""
-    logger.info(f"Vector search request: Query='{request.query[:50]}...', Max={request.max_results}, Threshold={request.threshold}")
+    logger.info(
+        f"Vector search request: Query='{request.query[:50]}...', Max={request.max_results}, Threshold={request.threshold}"
+    )
     supabase_client = None
     try:
         supabase_client = get_client()
-        if not supabase_client: raise HTTPException(status_code=503, detail="Database client unavailable.")
+        if not supabase_client:
+            raise HTTPException(status_code=503, detail="Database client unavailable.")
 
         embedding_model_id_from_request = getattr(request, "embedding_model_id", None)
-        default_embedding_model_id = os.getenv("DEFAULT_EMBEDDING_MODEL_ID", "openai/text-embedding-ada-002")
-        chosen_embedding_model_id = embedding_model_id_from_request or default_embedding_model_id
-        query_embedding = await get_embedding_with_registry(request.query, model_id=chosen_embedding_model_id)
+        default_embedding_model_id = os.getenv(
+            "DEFAULT_EMBEDDING_MODEL_ID", "openai/text-embedding-ada-002"
+        )
+        chosen_embedding_model_id = (
+            embedding_model_id_from_request or default_embedding_model_id
+        )
+        query_embedding = await get_embedding_with_registry(
+            request.query, model_id=chosen_embedding_model_id
+        )
 
         if query_embedding is None:
-            error_detail_payload = { "error_code": "EMBEDDING_GENERATION_FAILED", "message": f"Failed to generate query embedding for vector search using model '{chosen_embedding_model_id}'.", "llm_error_type": "EmbeddingError", "details": { "query_preview": (request.query[:100] + "...") if request.query and len(request.query) > 100 else request.query, "model_used": chosen_embedding_model_id, "suggestion": "Check server logs for detailed error information from the LLM registry and embedding service."}}
-            logger.error(f"Raising HTTPException for vector search due to embedding failure (via registry). Payload: {json.dumps(error_detail_payload)}")
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=error_detail_payload)
+            error_detail_payload = {
+                "error_code": "EMBEDDING_GENERATION_FAILED",
+                "message": f"Failed to generate query embedding for vector search using model '{chosen_embedding_model_id}'.",
+                "llm_error_type": "EmbeddingError",
+                "details": {
+                    "query_preview": (request.query[:100] + "...")
+                    if request.query and len(request.query) > 100
+                    else request.query,
+                    "model_used": chosen_embedding_model_id,
+                    "suggestion": "Check server logs for detailed error information from the LLM registry and embedding service.",
+                },
+            }
+            logger.error(
+                f"Raising HTTPException for vector search due to embedding failure (via registry). Payload: {json.dumps(error_detail_payload)}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=error_detail_payload,
+            )
 
-        params_rpc = { "query_embedding": query_embedding, "match_count": request.max_results, "min_similarity": request.threshold, "content_weight": request.content_weight, "summary_weight": request.summary_weight, "video_filter": request.video_filter }
-        logger.debug(f"Calling Supabase RPC advanced_hybrid_search with params: match_count={params_rpc['match_count']}, min_similarity={params_rpc['min_similarity']}, content_weight={params_rpc['content_weight']}, summary_weight={params_rpc['summary_weight']}, video_filter={params_rpc['video_filter']}")
-        response = await asyncio.to_thread(supabase_client.rpc("advanced_hybrid_search", params_rpc).execute)
+        params_rpc = {
+            "query_embedding": query_embedding,
+            "match_count": request.max_results,
+            "min_similarity": request.threshold,
+            "content_weight": request.content_weight,
+            "summary_weight": request.summary_weight,
+            "video_filter": request.video_filter,
+        }
+        logger.debug(
+            f"Calling Supabase RPC advanced_hybrid_search with params: match_count={params_rpc['match_count']}, min_similarity={params_rpc['min_similarity']}, content_weight={params_rpc['content_weight']}, summary_weight={params_rpc['summary_weight']}, video_filter={params_rpc['video_filter']}"
+        )
+        response = await asyncio.to_thread(
+            supabase_client.rpc("advanced_hybrid_search", params_rpc).execute
+        )
 
         search_results = []
         if hasattr(response, "data") and response.data:
             search_results = response.data
-            logger.info(f"Advanced hybrid search returned {len(search_results)} results.")
+            logger.info(
+                f"Advanced hybrid search returned {len(search_results)} results."
+            )
         elif hasattr(response, "error") and response.error:
-            logger.error(f"Supabase RPC error during advanced_hybrid_search: {response.error}")
-            raise HTTPException(status_code=500, detail=f"Database search error: {response.error}")
-        else: logger.warning(f"Unexpected response structure from Supabase search RPC: {response}")
+            logger.error(
+                f"Supabase RPC error during advanced_hybrid_search: {response.error}"
+            )
+            raise HTTPException(
+                status_code=500, detail=f"Database search error: {response.error}"
+            )
+        else:
+            logger.warning(
+                f"Unexpected response structure from Supabase search RPC: {response}"
+            )
 
-        metadata = { "query": request.query, "results_count": len(search_results), "search_function": "advanced_hybrid_search", "parameters_used": { "threshold": request.threshold, "max_results": request.max_results, "content_weight": request.content_weight, "summary_weight": request.summary_weight, "video_filter": request.video_filter, }, "token_usage": token_counter.get_stats()}
-        return VectorSearchResponse(results=search_results, ai_response=None, metadata=metadata)
-    except HTTPException as http_exc: raise http_exc
+        metadata = {
+            "query": request.query,
+            "results_count": len(search_results),
+            "search_function": "advanced_hybrid_search",
+            "parameters_used": {
+                "threshold": request.threshold,
+                "max_results": request.max_results,
+                "content_weight": request.content_weight,
+                "summary_weight": request.summary_weight,
+                "video_filter": request.video_filter,
+            },
+            "token_usage": token_counter.get_stats(),
+        }
+        return VectorSearchResponse(
+            results=search_results, ai_response=None, metadata=metadata
+        )
+    except HTTPException as http_exc:
+        raise http_exc
     except Exception as e:
-        logger.error(f"Error during vector search for query '{request.query[:50]}...': {e}", exc_info=True)
+        logger.error(
+            f"Error during vector search for query '{request.query[:50]}...': {e}",
+            exc_info=True,
+        )
         raise HTTPException(status_code=500, detail=f"Vector search failed: {e}")
 
 
@@ -2890,140 +3663,362 @@ async def vector_search_endpoint(request: VectorSearchRequest):
 @app.post("/api/search", response_model=ComprehensiveSearchResponse, tags=["Search"])
 async def comprehensive_search_endpoint(
     request: ComprehensiveSearchRequest,
-    fg_similarity_threshold: Optional[float] = Query(None, alias="fine_grained_similarity_threshold"),
-    fg_content_weight: Optional[float] = Query(None, alias="fine_grained_content_weight"),
-    fg_result_percentage: Optional[float] = Query(None, alias="fine_grained_result_percentage"),
+    fg_similarity_threshold: Optional[float] = Query(
+        None, alias="fine_grained_similarity_threshold"
+    ),
+    fg_content_weight: Optional[float] = Query(
+        None, alias="fine_grained_content_weight"
+    ),
+    fg_result_percentage: Optional[float] = Query(
+        None, alias="fine_grained_result_percentage"
+    ),
     fg_max_results: Optional[int] = Query(None, alias="fine_grained_max_results"),
-    ctx_similarity_threshold: Optional[float] = Query(None, alias="contextual_similarity_threshold"),
-    ctx_content_weight: Optional[float] = Query(None, alias="contextual_content_weight"),
-    ctx_result_percentage: Optional[float] = Query(None, alias="contextual_result_percentage"),
+    ctx_similarity_threshold: Optional[float] = Query(
+        None, alias="contextual_similarity_threshold"
+    ),
+    ctx_content_weight: Optional[float] = Query(
+        None, alias="contextual_content_weight"
+    ),
+    ctx_result_percentage: Optional[float] = Query(
+        None, alias="contextual_result_percentage"
+    ),
     ctx_max_results: Optional[int] = Query(None, alias="contextual_max_results"),
-    ov_similarity_threshold: Optional[float] = Query(None, alias="overview_similarity_threshold"),
+    ov_similarity_threshold: Optional[float] = Query(
+        None, alias="overview_similarity_threshold"
+    ),
     ov_content_weight: Optional[float] = Query(None, alias="overview_content_weight"),
-    ov_result_percentage: Optional[float] = Query(None, alias="overview_result_percentage"),
+    ov_result_percentage: Optional[float] = Query(
+        None, alias="overview_result_percentage"
+    ),
     ov_max_results: Optional[int] = Query(None, alias="overview_max_results"),
     preset: Optional[str] = Query(None),
 ):
     if not PROJECT_MODULES_LOADED or search_all is None or global_search_params is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Search feature is unavailable due to import errors.")
-    logger.info(f"Search request: Query='{request.query[:50]}...', MaxRes={request.max_results}, Analysis={request.run_analysis}, Preset='{preset}'")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Search feature is unavailable due to import errors.",
+        )
+    logger.info(
+        f"Search request: Query='{request.query[:50]}...', MaxRes={request.max_results}, Analysis={request.run_analysis}, Preset='{preset}'"
+    )
     try:
-        update_successful = global_search_params.update_from_frontend(preset=preset, fine_grained_similarity_threshold=fg_similarity_threshold, fine_grained_content_weight=fg_content_weight, fine_grained_result_percentage=fg_result_percentage, fine_grained_max_results=fg_max_results, contextual_similarity_threshold=ctx_similarity_threshold, contextual_content_weight=ctx_content_weight, contextual_result_percentage=ctx_result_percentage, contextual_max_results=ctx_max_results, overview_similarity_threshold=ov_similarity_threshold, overview_content_weight=ov_content_weight, overview_result_percentage=ov_result_percentage, overview_max_results=ov_max_results)
-        if not update_successful: logger.warning("Search parameters updated from frontend might be invalid")
-        logger.debug(f"Effective search params used: {global_search_params.get_all_params()}")
+        update_successful = global_search_params.update_from_frontend(
+            preset=preset,
+            fine_grained_similarity_threshold=fg_similarity_threshold,
+            fine_grained_content_weight=fg_content_weight,
+            fine_grained_result_percentage=fg_result_percentage,
+            fine_grained_max_results=fg_max_results,
+            contextual_similarity_threshold=ctx_similarity_threshold,
+            contextual_content_weight=ctx_content_weight,
+            contextual_result_percentage=ctx_result_percentage,
+            contextual_max_results=ctx_max_results,
+            overview_similarity_threshold=ov_similarity_threshold,
+            overview_content_weight=ov_content_weight,
+            overview_result_percentage=ov_result_percentage,
+            overview_max_results=ov_max_results,
+        )
+        if not update_successful:
+            logger.warning("Search parameters updated from frontend might be invalid")
+        logger.debug(
+            f"Effective search params used: {global_search_params.get_all_params()}"
+        )
     except Exception as param_err:
         logger.error(f"Error updating search parameters: {param_err}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid search parameters provided.")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid search parameters provided.",
+        )
     start_time = time.time()
     try:
-        results, openai_analysis, groq_analysis = await asyncio.to_thread(search_all, query=request.query, max_results=request.max_results, skip_prompts=True, run_analysis=request.run_analysis)
+        results, openai_analysis, groq_analysis = await asyncio.to_thread(
+            search_all,
+            query=request.query,
+            max_results=request.max_results,
+            skip_prompts=True,
+            run_analysis=request.run_analysis,
+        )
         search_duration = time.time() - start_time
-        logger.info(f"Search completed in {search_duration:.2f}s. Found {len(results)} results.")
+        logger.info(
+            f"Search completed in {search_duration:.2f}s. Found {len(results)} results."
+        )
         formatted_results = []
         if results:
-            try: formatted_results = [res.to_dict() for res in results]
+            try:
+                formatted_results = [res.to_dict() for res in results]
             except (AttributeError, TypeError) as e:
-                logger.warning(f"Error converting SearchResult objects to dictionaries: {e}")
-                formatted_results = [] # Fallback to manual conversion if to_dict fails
+                logger.warning(
+                    f"Error converting SearchResult objects to dictionaries: {e}"
+                )
+                formatted_results = []  # Fallback to manual conversion if to_dict fails
                 for res in results:
                     try:
-                        result_dict = { "id": f"{getattr(res, 'content_id', 'N/A')}_{getattr(res, 'segment_id', '0')}_{getattr(res, 'start_time', '0')}", "content_id": getattr(res, "content_id", None), "content": getattr(res, "content", None), "similarity": getattr(res, "similarity", 0.0), "source": getattr(res, "source", "unknown"), "title": getattr(res, "title", ""), "start_time": getattr(res, "start_time", None), "end_time": getattr(res, "end_time", None), "url": getattr(res, "url", ""), "watch_url": getattr(res, "watch_url", ""), "video_id": getattr(res, "video_id", None), "segment_id": getattr(res, "segment_id", None), "summary": getattr(res, "summary", ""), "metadata": getattr(res, "metadata", {}), "search_method": getattr(res, "search_method", "unknown"), "content_type": getattr(res, "content_type", "unknown")}
+                        result_dict = {
+                            "id": f"{getattr(res, 'content_id', 'N/A')}_{getattr(res, 'segment_id', '0')}_{getattr(res, 'start_time', '0')}",
+                            "content_id": getattr(res, "content_id", None),
+                            "content": getattr(res, "content", None),
+                            "similarity": getattr(res, "similarity", 0.0),
+                            "source": getattr(res, "source", "unknown"),
+                            "title": getattr(res, "title", ""),
+                            "start_time": getattr(res, "start_time", None),
+                            "end_time": getattr(res, "end_time", None),
+                            "url": getattr(res, "url", ""),
+                            "watch_url": getattr(res, "watch_url", ""),
+                            "video_id": getattr(res, "video_id", None),
+                            "segment_id": getattr(res, "segment_id", None),
+                            "summary": getattr(res, "summary", ""),
+                            "metadata": getattr(res, "metadata", {}),
+                            "search_method": getattr(res, "search_method", "unknown"),
+                            "content_type": getattr(res, "content_type", "unknown"),
+                        }
                         formatted_results.append(result_dict)
-                    except Exception as item_err: logger.error(f"Error formatting individual result: {item_err}")
-        metadata = { "query": request.query, "total_results_found": len(results), "search_duration_seconds": round(search_duration, 2), "analysis_run": request.run_analysis, "effective_params": global_search_params.get_all_params(), "search_complete": True, "analysis_complete": request.run_analysis and (openai_analysis is not None or groq_analysis is not None)}
+                    except Exception as item_err:
+                        logger.error(f"Error formatting individual result: {item_err}")
+        metadata = {
+            "query": request.query,
+            "total_results_found": len(results),
+            "search_duration_seconds": round(search_duration, 2),
+            "analysis_run": request.run_analysis,
+            "effective_params": global_search_params.get_all_params(),
+            "search_complete": True,
+            "analysis_complete": request.run_analysis
+            and (openai_analysis is not None or groq_analysis is not None),
+        }
         try:
             from .psearchworking import token_counter as psearch_token_counter
+
             metadata["token_usage"] = psearch_token_counter.get_stats()
         except (ImportError, AttributeError, NameError) as tk_err:  # Added NameError
-            logger.warning(f"Could not get psearch_token_counter stats: {tk_err}, falling back to global token_counter.")
-            try: metadata["token_usage"] = token_counter.get_stats()
-            except NameError: logger.warning("Global token_counter also not available.")
-        return ComprehensiveSearchResponse(query=request.query, results=formatted_results, openai_analysis=openai_analysis, groq_analysis=groq_analysis, metadata=metadata)
+            logger.warning(
+                f"Could not get psearch_token_counter stats: {tk_err}, falling back to global token_counter."
+            )
+            try:
+                metadata["token_usage"] = token_counter.get_stats()
+            except NameError:
+                logger.warning("Global token_counter also not available.")
+        return ComprehensiveSearchResponse(
+            query=request.query,
+            results=formatted_results,
+            openai_analysis=openai_analysis,
+            groq_analysis=groq_analysis,
+            metadata=metadata,
+        )
     except Exception as e:
         search_duration = time.time() - start_time
-        logger.error(f"Error during search execution ({search_duration:.2f}s): {e}", exc_info=True)
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Search execution failed: {e}")
+        logger.error(
+            f"Error during search execution ({search_duration:.2f}s): {e}",
+            exc_info=True,
+        )
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Search execution failed: {e}",
+        )
 
 
 # --- Search SSE Endpoint (Using psearchworking) ---
 @app.get("/api/search-sse", tags=["Search"])
 async def search_sse_endpoint(
-    request: Request, query: str = Query(..., min_length=1), max_results: int = Query(30, ge=10, le=100),
-    run_analysis: bool = Query(True), preset: Optional[str] = Query(None),
-    fg_similarity_threshold: Optional[float] = Query(None, alias="fine_grained_similarity_threshold"),
-    fg_content_weight: Optional[float] = Query(None, alias="fine_grained_content_weight"),
-    fg_result_percentage: Optional[float] = Query(None, alias="fine_grained_result_percentage"),
+    request: Request,
+    query: str = Query(..., min_length=1),
+    max_results: int = Query(30, ge=10, le=100),
+    run_analysis: bool = Query(True),
+    preset: Optional[str] = Query(None),
+    fg_similarity_threshold: Optional[float] = Query(
+        None, alias="fine_grained_similarity_threshold"
+    ),
+    fg_content_weight: Optional[float] = Query(
+        None, alias="fine_grained_content_weight"
+    ),
+    fg_result_percentage: Optional[float] = Query(
+        None, alias="fine_grained_result_percentage"
+    ),
     fg_max_results: Optional[int] = Query(None, alias="fine_grained_max_results"),
-    ctx_similarity_threshold: Optional[float] = Query(None, alias="contextual_similarity_threshold"),
-    ctx_content_weight: Optional[float] = Query(None, alias="contextual_content_weight"),
-    ctx_result_percentage: Optional[float] = Query(None, alias="contextual_result_percentage"),
+    ctx_similarity_threshold: Optional[float] = Query(
+        None, alias="contextual_similarity_threshold"
+    ),
+    ctx_content_weight: Optional[float] = Query(
+        None, alias="contextual_content_weight"
+    ),
+    ctx_result_percentage: Optional[float] = Query(
+        None, alias="contextual_result_percentage"
+    ),
     ctx_max_results: Optional[int] = Query(None, alias="contextual_max_results"),
-    ov_similarity_threshold: Optional[float] = Query(None, alias="overview_similarity_threshold"),
+    ov_similarity_threshold: Optional[float] = Query(
+        None, alias="overview_similarity_threshold"
+    ),
     ov_content_weight: Optional[float] = Query(None, alias="overview_content_weight"),
-    ov_result_percentage: Optional[float] = Query(None, alias="overview_result_percentage"),
+    ov_result_percentage: Optional[float] = Query(
+        None, alias="overview_result_percentage"
+    ),
     ov_max_results: Optional[int] = Query(None, alias="overview_max_results"),
 ):
     if not PROJECT_MODULES_LOADED or search_all is None or global_search_params is None:
-        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Search feature is unavailable due to import errors.")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Search feature is unavailable due to import errors.",
+        )
     client_host = request.client.host if request.client else "unknown"
-    logger.info(f"SSE search request from {client_host}: Query='{query[:50]}...', MaxRes={max_results}, Analysis={run_analysis}, Preset='{preset}'")
+    logger.info(
+        f"SSE search request from {client_host}: Query='{query[:50]}...', MaxRes={max_results}, Analysis={run_analysis}, Preset='{preset}'"
+    )
 
     async def event_generator():
         try:
-            yield format_sse_message("status", "Starting search operation", {"stage": "start"})
+            yield format_sse_message(
+                "status", "Starting search operation", {"stage": "start"}
+            )
             await asyncio.sleep(0.5)
-            yield format_sse_message("status", "Configuring search parameters", {"stage": "search"})
+            yield format_sse_message(
+                "status", "Configuring search parameters", {"stage": "search"}
+            )
             try:
-                update_successful = global_search_params.update_from_frontend(preset=preset, fine_grained_similarity_threshold=fg_similarity_threshold, fine_grained_content_weight=fg_content_weight, fine_grained_result_percentage=fg_result_percentage, fine_grained_max_results=fg_max_results, contextual_similarity_threshold=ctx_similarity_threshold, contextual_content_weight=ctx_content_weight, contextual_result_percentage=ctx_result_percentage, contextual_max_results=ctx_max_results, overview_similarity_threshold=ov_similarity_threshold, overview_content_weight=ov_content_weight, overview_result_percentage=ov_result_percentage, overview_max_results=ov_max_results)
-                if not update_successful: yield format_sse_message("status", "Warning: Some search parameters may be invalid", {"stage": "search"})
-                logger.debug(f"Effective search params used: {global_search_params.get_all_params()}")
+                update_successful = global_search_params.update_from_frontend(
+                    preset=preset,
+                    fine_grained_similarity_threshold=fg_similarity_threshold,
+                    fine_grained_content_weight=fg_content_weight,
+                    fine_grained_result_percentage=fg_result_percentage,
+                    fine_grained_max_results=fg_max_results,
+                    contextual_similarity_threshold=ctx_similarity_threshold,
+                    contextual_content_weight=ctx_content_weight,
+                    contextual_result_percentage=ctx_result_percentage,
+                    contextual_max_results=ctx_max_results,
+                    overview_similarity_threshold=ov_similarity_threshold,
+                    overview_content_weight=ov_content_weight,
+                    overview_result_percentage=ov_result_percentage,
+                    overview_max_results=ov_max_results,
+                )
+                if not update_successful:
+                    yield format_sse_message(
+                        "status",
+                        "Warning: Some search parameters may be invalid",
+                        {"stage": "search"},
+                    )
+                logger.debug(
+                    f"Effective search params used: {global_search_params.get_all_params()}"
+                )
             except Exception as param_err:
-                logger.error(f"Error updating search parameters: {param_err}", exc_info=True)
-                yield format_sse_message("error", f"Invalid search parameters: {param_err}")
+                logger.error(
+                    f"Error updating search parameters: {param_err}", exc_info=True
+                )
+                yield format_sse_message(
+                    "error", f"Invalid search parameters: {param_err}"
+                )
                 return
             start_time = time.time()
-            yield format_sse_message("status", "Executing search query", {"stage": "filter"})
+            yield format_sse_message(
+                "status", "Executing search query", {"stage": "filter"}
+            )
             try:
-                results, openai_analysis, groq_analysis = await asyncio.to_thread(search_all, query=query, max_results=max_results, skip_prompts=True, run_analysis=run_analysis)
+                results, openai_analysis, groq_analysis = await asyncio.to_thread(
+                    search_all,
+                    query=query,
+                    max_results=max_results,
+                    skip_prompts=True,
+                    run_analysis=run_analysis,
+                )
                 search_duration = time.time() - start_time
-                logger.info(f"Search completed in {search_duration:.2f}s. Found {len(results)} results.")
-                yield format_sse_message("status", "Combining search results", {"stage": "combine"})
+                logger.info(
+                    f"Search completed in {search_duration:.2f}s. Found {len(results)} results."
+                )
+                yield format_sse_message(
+                    "status", "Combining search results", {"stage": "combine"}
+                )
                 await asyncio.sleep(0.5)
                 formatted_results = []
                 if results:
-                    try: formatted_results = [res.to_dict() for res in results]
+                    try:
+                        formatted_results = [res.to_dict() for res in results]
                     except (AttributeError, TypeError) as e:
-                        logger.warning(f"Error converting SearchResult objects to dictionaries: {e}")
+                        logger.warning(
+                            f"Error converting SearchResult objects to dictionaries: {e}"
+                        )
                         formatted_results = []
                         for res in results:
                             try:
-                                result_dict = { "id": f"{getattr(res, 'content_id', 'N/A')}_{getattr(res, 'segment_id', '0')}_{getattr(res, 'start_time', '0')}", "content_id": getattr(res, "content_id", None), "content": getattr(res, "content", None), "similarity": getattr(res, "similarity", 0.0), "source": getattr(res, "source", "unknown"), "title": getattr(res, "title", ""), "start_time": getattr(res, "start_time", None), "end_time": getattr(res, "end_time", None), "url": getattr(res, "url", ""), "watch_url": getattr(res, "watch_url", ""), "video_id": getattr(res, "video_id", None), "segment_id": getattr(res, "segment_id", None), "summary": getattr(res, "summary", ""), "metadata": getattr(res, "metadata", {}), "search_method": getattr(res, "search_method", "unknown"), "content_type": getattr(res, "content_type", "unknown")}
+                                result_dict = {
+                                    "id": f"{getattr(res, 'content_id', 'N/A')}_{getattr(res, 'segment_id', '0')}_{getattr(res, 'start_time', '0')}",
+                                    "content_id": getattr(res, "content_id", None),
+                                    "content": getattr(res, "content", None),
+                                    "similarity": getattr(res, "similarity", 0.0),
+                                    "source": getattr(res, "source", "unknown"),
+                                    "title": getattr(res, "title", ""),
+                                    "start_time": getattr(res, "start_time", None),
+                                    "end_time": getattr(res, "end_time", None),
+                                    "url": getattr(res, "url", ""),
+                                    "watch_url": getattr(res, "watch_url", ""),
+                                    "video_id": getattr(res, "video_id", None),
+                                    "segment_id": getattr(res, "segment_id", None),
+                                    "summary": getattr(res, "summary", ""),
+                                    "metadata": getattr(res, "metadata", {}),
+                                    "search_method": getattr(
+                                        res, "search_method", "unknown"
+                                    ),
+                                    "content_type": getattr(
+                                        res, "content_type", "unknown"
+                                    ),
+                                }
                                 formatted_results.append(result_dict)
-                            except Exception as item_err: logger.error(f"Error formatting individual result: {item_err}")
-                metadata = { "query": query, "total_results_found": len(results), "search_duration_seconds": round(search_duration, 2), "analysis_run": run_analysis, "effective_params": global_search_params.get_all_params(), "search_complete": True, "stage": "complete"}
+                            except Exception as item_err:
+                                logger.error(
+                                    f"Error formatting individual result: {item_err}"
+                                )
+                metadata = {
+                    "query": query,
+                    "total_results_found": len(results),
+                    "search_duration_seconds": round(search_duration, 2),
+                    "analysis_run": run_analysis,
+                    "effective_params": global_search_params.get_all_params(),
+                    "search_complete": True,
+                    "stage": "complete",
+                }
                 try:
                     from .psearchworking import token_counter as psearch_token_counter
+
                     metadata["token_usage"] = psearch_token_counter.get_stats()
                 except (ImportError, AttributeError, NameError) as tk_err:
-                    logger.warning(f"Could not get psearch_token_counter stats: {tk_err}, falling back to global token_counter.")
-                    try: metadata["token_usage"] = token_counter.get_stats()
-                    except NameError: logger.warning("Global token_counter also not available.")
+                    logger.warning(
+                        f"Could not get psearch_token_counter stats: {tk_err}, falling back to global token_counter."
+                    )
+                    try:
+                        metadata["token_usage"] = token_counter.get_stats()
+                    except NameError:
+                        logger.warning("Global token_counter also not available.")
                 if run_analysis:
-                    yield format_sse_message("status", "Analyzing search results", {"stage": "analyze"})
-                    if openai_analysis: yield format_sse_message("analysis", openai_analysis, {"provider": "openai"})
-                    if groq_analysis: yield format_sse_message("analysis", groq_analysis, {"provider": "groq"})
-                    metadata["analysis_complete"] = bool(openai_analysis or groq_analysis)
-                yield format_sse_message("results", formatted_results, {**metadata, "stage": "complete"})
-                yield format_sse_message("complete", "Search process completed", {"stage": "complete"})
+                    yield format_sse_message(
+                        "status", "Analyzing search results", {"stage": "analyze"}
+                    )
+                    if openai_analysis:
+                        yield format_sse_message(
+                            "analysis", openai_analysis, {"provider": "openai"}
+                        )
+                    if groq_analysis:
+                        yield format_sse_message(
+                            "analysis", groq_analysis, {"provider": "groq"}
+                        )
+                    metadata["analysis_complete"] = bool(
+                        openai_analysis or groq_analysis
+                    )
+                yield format_sse_message(
+                    "results", formatted_results, {**metadata, "stage": "complete"}
+                )
+                yield format_sse_message(
+                    "complete", "Search process completed", {"stage": "complete"}
+                )
             except Exception as e:
                 search_duration = time.time() - start_time
                 error_msg = f"Search execution failed: {e}"
-                logger.error(f"Error during search execution ({search_duration:.2f}s): {e}", exc_info=True)
+                logger.error(
+                    f"Error during search execution ({search_duration:.2f}s): {e}",
+                    exc_info=True,
+                )
                 yield format_sse_message("error", error_msg)
-        except asyncio.CancelledError: logger.info(f"SSE connection closed by client {client_host}")
+        except asyncio.CancelledError:
+            logger.info(f"SSE connection closed by client {client_host}")
         except Exception as e:
-            logger.error(f"Unexpected error in search SSE generator: {e}", exc_info=True)
+            logger.error(
+                f"Unexpected error in search SSE generator: {e}", exc_info=True
+            )
             yield format_sse_message("error", f"Unexpected error: {e}")
+
     return EventSourceResponse(event_generator())
 
 
@@ -3131,5 +4126,3 @@ async def list_workspace():
 
     tree = list_dir(WORKSPACE_ROOT)
     return {"root": WORKSPACE_ROOT, "tree": tree}
-
-

@@ -18,6 +18,8 @@ from datetime import datetime
 from tiktoken import get_encoding
 import asyncio  # Added for async calls to registry
 
+from .dependencies import get_client
+
 # Attempt to import from llm_registry_service
 LLM_REGISTRY_AVAILABLE = False
 # generate_text_from_registry is removed from here
