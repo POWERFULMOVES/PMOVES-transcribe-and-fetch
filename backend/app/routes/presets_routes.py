@@ -1,251 +1,166 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, Path
-from typing import List, Union, Dict, Any, Optional # Added Dict, Any, Optional
-from uuid import UUID, uuid4 # Added uuid4
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, Path
+from typing import List, Union
+from uuid import UUID
 import logging
-from datetime import datetime, timezone # Added timezone
+# from datetime import datetime, timezone # timezone might not be needed if DB handles timestamps
 
-# Assuming Supabase client is available via a dependency, e.g., get_supabase_client
-# from ..dependencies import get_supabase_client # Adjust import as per project structure
-# For now, mock or assume direct Supabase usage if dependency is not clear.
-# from supabase_py_async import AsyncClient  # Example if using supabase-py-async directly
+# Import Supabase client and dependency function
+from supabase import Client  # Renamed from AsyncClient for supabase-py v2
+from ..dependencies import get_client
 
 # Import Pydantic models
 from ..models.presets_models import CrawlPresetCreate, CrawlPresetUpdate, CrawlPresetResponse
-
-# Placeholder for Supabase client dependency
-# This will need to be adapted to how Supabase is integrated in the actual project
-# For the subtask, we'll write the logic assuming a 'supabase_client' object exists.
-
-# A mock Supabase client for subtask execution if a real one isn't injectable
-class MockSupabaseDBResponse:
-    def __init__(self, data: Optional[List[Dict[str, Any]]] = None, error: Optional[Any] = None, count: Optional[int] = None):
-        self.data = data if data is not None else []
-        self.error = error
-        self.count = count
-
-class MockSupabaseQueryBuilder:
-    def __init__(self, client: Any, table_name: str):
-        self._client = client
-        self._table_name = table_name
-        self._select_columns: Optional[str] = None
-        self._filters: List[tuple] = []
-        self._insert_data: Optional[dict] = None
-        self._update_data: Optional[dict] = None
-        self._limit_count: Optional[int] = None
-        self._offset_count: Optional[int] = None
-        self._or_conditions: Optional[str] = None
-
-
-    async def insert(self, data: Union[List[Dict[str, Any]], Dict[str, Any]], returning: str = "representation"): # Adjusted to match supabase-py v1 type hints
-        self._insert_data = data[0] if isinstance(data, list) else data # Supabase typically takes a list
-        logger.info(f"MOCK DB INSERT into {self._table_name}: {self._insert_data}")
-        # Simulate database behavior
-        if not self._insert_data.get('preset_id'): self._insert_data['preset_id'] = uuid4()
-        self._insert_data['created_at'] = datetime.now(timezone.utc)
-        self._insert_data['updated_at'] = datetime.now(timezone.utc)
-        # created_by should be set by application logic using auth.uid()
-        return MockSupabaseDBResponse(data=[self._insert_data])
-
-    async def select(self, columns: str = "*"):
-        self._select_columns = columns
-        return self
-
-    async def eq(self, column: str, value: Any):
-        self._filters.append(('eq', column, value))
-        return self
-
-    async def or_(self, or_conditions: str): # Simplified for mock
-        self._or_conditions = or_conditions
-        return self
-
-    async def limit(self, count: int):
-        self._limit_count = count
-        return self
-
-    async def offset(self, count: int): # Added offset for pagination
-        self._offset_count = count
-        return self
-
-    async def update(self, data: Dict[str, Any]):
-        self._update_data = data
-        logger.info(f"MOCK DB UPDATE {self._table_name} with data {self._update_data} and filters: {self._filters}")
-        # Simulate returning updated data, RLS would restrict this in reality
-        updated_item = {'preset_id': self._filters[0][2] if self._filters else uuid4(), **self._update_data} # Assuming filter is on preset_id
-        updated_item['updated_at'] = datetime.now(timezone.utc)
-        # Ensure all fields for CrawlPresetResponse are present if possible
-        updated_item.setdefault('preset_name', 'Updated Preset Name')
-        updated_item.setdefault('strategy_definition', {})
-        updated_item.setdefault('created_at', datetime.now(timezone.utc) - timezone.utc.dst()) # Example past time
-        return MockSupabaseDBResponse(data=[updated_item])
-
-
-    async def delete(self):
-        logger.info(f"MOCK DB DELETE from {self._table_name} with filters: {self._filters}")
-        # Supabase delete returns the deleted records
-        if self._filters: # Simulate a record was found and deleted
-             return MockSupabaseDBResponse(data=[{'preset_id': self._filters[0][2]}]) # Assuming filter is on preset_id
-        return MockSupabaseDBResponse(data=[])
-
-
-    async def execute(self) -> MockSupabaseDBResponse: # Common execute method
-        logger.info(f"MOCK DB EXECUTE on {self._table_name} with filters: {self._filters}, select: {self._select_columns}, or: {self._or_conditions}, limit: {self._limit_count}, offset: {self._offset_count}")
-        # This mock execute needs to handle different operations based on what was called before
-        if self._insert_data: # Should have been handled by .insert() itself for this mock
-            return MockSupabaseDBResponse(data=[self._insert_data])
-        if self._update_data: # Should have been handled by .update()
-             updated_item = {'preset_id': self._filters[0][2] if self._filters else uuid4(), **self._update_data}
-             return MockSupabaseDBResponse(data=[updated_item])
-        if self._select_columns: # Handle select
-            # Simplified: if filtering by a UUID preset_id or a name, return a mock item
-            if any(f[0] == 'eq' and f[1] == 'preset_id' for f in self._filters) or \
-               any(f[0] == 'eq' and f[1] == 'preset_name' for f in self._filters):
-                # Try to get the ID/name from the filter for more realistic mock
-                identifier_val = None
-                for f_type, f_col, f_val in self._filters:
-                    if f_col in ['preset_id', 'preset_name']:
-                        identifier_val = f_val
-                        break
-                mock_item = {
-                    'preset_id': identifier_val if isinstance(identifier_val, UUID) else uuid4(),
-                    'preset_name': identifier_val if isinstance(identifier_val, str) else 'Test Preset from DB',
-                    'description': 'A test preset description',
-                    'version': 1,
-                    'crawl_tool': 'crawl4ai',
-                    'strategy_definition': {"strategy": "ExampleStrategy"},
-                    'target_capability': 'web_research',
-                    'tags': ['test', 'example'],
-                    'created_by': uuid4(),
-                    'created_at': datetime.now(timezone.utc),
-                    'updated_at': datetime.now(timezone.utc)
-                }
-                return MockSupabaseDBResponse(data=[mock_item])
-            # Default for list presets (no specific filter or other filters)
-            return MockSupabaseDBResponse(data=[
-                {'preset_id': uuid4(), 'preset_name': 'Preset 1', 'description': 'Desc 1', 'version': 1, 'crawl_tool': 'crawl4ai', 'strategy_definition': {}, 'target_capability': 'data_extraction', 'tags':['tag1'], 'created_by': uuid4(), 'created_at': datetime.now(timezone.utc) , 'updated_at': datetime.now(timezone.utc)},
-                {'preset_id': uuid4(), 'preset_name': 'Preset 2', 'description': 'Desc 2', 'version': 2, 'crawl_tool': 'crawl4ai', 'strategy_definition': {}, 'target_capability': 'web_research', 'tags':['tag2'], 'created_by': uuid4(), 'created_at': datetime.now(timezone.utc) , 'updated_at': datetime.now(timezone.utc)}
-            ])
-        # Fallback for delete or other operations not returning data explicitly in mock
-        return MockSupabaseDBResponse(data=[])
-
-
-class MockSupabaseClient:
-    def table(self, table_name: str) -> MockSupabaseQueryBuilder:
-        return MockSupabaseQueryBuilder(self, table_name)
-
-supabase_client = MockSupabaseClient()
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/presets", tags=["Crawl Presets"])
 
 @router.post("", response_model=CrawlPresetResponse, status_code=201)
-async def create_crawl_preset(preset_data: CrawlPresetCreate = Body(...)):
-    # In a real app, created_by would be set from authenticated user's ID.
-    # For Supabase RLS to work on insert, the user must be authenticated.
-    # The 'created_by' field would typically be set by a trigger or application logic.
-    # preset_dict = preset_data.model_dump()
-    # preset_dict["created_by"] = current_user_id  # This needs actual auth integration
+async def create_crawl_preset(
+    preset_data: CrawlPresetCreate = Body(...),
+    supabase: Client = Depends(get_client) # Changed from supabase_client
+):
+    # The created_by field is now part of CrawlPresetCreate and validated by Pydantic.
+    # RLS policies in Supabase will use auth.uid() against this provided created_by.
+    # It's assumed the frontend or calling service, if authenticated, passes the correct user ID.
 
-    response = await supabase_client.table("crawl_presets").insert(preset_data.model_dump()).execute() # Supabase insert expects a list
+    preset_dict = preset_data.model_dump()
+    # preset_id is generated by the database by default (see V7 migration)
+    # created_at and updated_at are also handled by the database (DEFAULT NOW())
 
-    if response.error:
-        logger.error(f"Error creating preset: {response.error}")
-        # Attempt to access error details more safely
-        error_detail = "Database error during preset creation."
-        if hasattr(response.error, 'message') and response.error.message:
-            error_detail = str(response.error.message)
-        elif isinstance(response.error, dict) and response.error.get('message'):
-            error_detail = response.error.get('message')
-        raise HTTPException(status_code=400, detail=error_detail)
-    if not response.data:
-        raise HTTPException(status_code=500, detail="Failed to create preset, no data returned.")
-    return CrawlPresetResponse(**response.data[0])
+    try:
+        response = await supabase.table("crawl_presets").insert(preset_dict).execute()
+
+        if response.error:
+            logger.error(f"Error creating preset: {response.error.message if response.error else 'Unknown error'}")
+            raise HTTPException(status_code=400, detail=response.error.message if response.error else "Database error during preset creation.")
+        if not response.data:
+            logger.error("Failed to create preset, no data returned from Supabase.")
+            raise HTTPException(status_code=500, detail="Failed to create preset, no data returned.")
+
+        # Ensure the response data can be parsed by CrawlPresetResponse
+        # The DB now automatically sets preset_id, created_at, updated_at.
+        # created_by is passed in.
+        return CrawlPresetResponse(**response.data[0])
+    except Exception as e:
+        logger.error(f"Unexpected error creating preset: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
 
 @router.get("", response_model=List[CrawlPresetResponse])
-async def list_crawl_presets(skip: int = Query(0, ge=0), limit: int = Query(100, ge=1, le=1000)):
-    response = await supabase_client.table("crawl_presets").select("*").offset(skip).limit(limit).execute()
-    if response.error:
-        logger.error(f"Error listing presets: {response.error}")
-        error_detail = "Database error listing presets."
-        if hasattr(response.error, 'message') and response.error.message: error_detail = str(response.error.message)
-        raise HTTPException(status_code=500, detail=error_detail)
-    return [CrawlPresetResponse(**item) for item in response.data]
+async def list_crawl_presets(
+    skip: int = Query(0, ge=0),
+    limit: int = Query(100, ge=1, le=1000),
+    supabase: Client = Depends(get_client)
+):
+    try:
+        response = await supabase.table("crawl_presets").select("*").offset(skip).limit(limit).execute()
+        if response.error:
+            logger.error(f"Error listing presets: {response.error.message if response.error else 'Unknown error'}")
+            raise HTTPException(status_code=500, detail=response.error.message if response.error else "Database error listing presets.")
+        return [CrawlPresetResponse(**item) for item in response.data]
+    except Exception as e:
+        logger.error(f"Unexpected error listing presets: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
 
 @router.get("/{preset_identifier}", response_model=CrawlPresetResponse)
-async def get_crawl_preset(preset_identifier: Union[UUID, str] = Path(...)):
-    query_builder = supabase_client.table("crawl_presets").select("*")
+async def get_crawl_preset(
+    preset_identifier: Union[UUID, str] = Path(...),
+    supabase: Client = Depends(get_client)
+):
+    query = supabase.table("crawl_presets").select("*")
     try:
-        # Attempt to convert to UUID first
         uuid_val = UUID(str(preset_identifier))
-        query_builder = query_builder.eq("preset_id", uuid_val)
+        query = query.eq("preset_id", uuid_val)
     except ValueError:
-        # If not a UUID, assume it's a name
-        query_builder = query_builder.eq("preset_name", str(preset_identifier))
+        query = query.eq("preset_name", str(preset_identifier))
 
-    response = await query_builder.limit(1).execute() # Ensure only one record is fetched
+    try:
+        response = await query.limit(1).execute() # Ensure only one record is fetched
 
-    if response.error:
-        logger.error(f"Error getting preset '{preset_identifier}': {response.error}")
-        error_detail = f"Database error retrieving preset '{preset_identifier}'."
-        if hasattr(response.error, 'message') and response.error.message: error_detail = str(response.error.message)
-        raise HTTPException(status_code=500, detail=error_detail)
-    if not response.data:
-        raise HTTPException(status_code=404, detail=f"Preset '{preset_identifier}' not found")
-    return CrawlPresetResponse(**response.data[0])
+        if response.error:
+            logger.error(f"Error getting preset '{preset_identifier}': {response.error.message if response.error else 'Unknown error'}")
+            raise HTTPException(status_code=500, detail=response.error.message if response.error else f"Database error retrieving preset '{preset_identifier}'.")
+        if not response.data:
+            raise HTTPException(status_code=404, detail=f"Preset '{preset_identifier}' not found")
+        return CrawlPresetResponse(**response.data[0])
+    except HTTPException as e:
+        raise e # Re-raise HTTPException directly
+    except Exception as e:
+        logger.error(f"Unexpected error getting preset '{preset_identifier}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
 
 @router.put("/{preset_identifier}", response_model=CrawlPresetResponse)
-async def update_crawl_preset(preset_data: CrawlPresetUpdate = Body(...), preset_identifier: Union[UUID, str] = Path(...)):
+async def update_crawl_preset(
+    preset_data: CrawlPresetUpdate = Body(...),
+    preset_identifier: Union[UUID, str] = Path(...),
+    supabase: Client = Depends(get_client)
+):
     update_dict = preset_data.model_dump(exclude_unset=True)
     if not update_dict:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    # RLS policies should handle ownership checks (auth.uid() = created_by)
-    # The application does not need to re-verify created_by here if RLS is correctly set up.
-    # update_dict["updated_at"] = datetime.now(timezone.utc).isoformat() # DB will set this with DEFAULT NOW() or trigger
+    # updated_at is set by DB trigger or DEFAULT NOW()
+    # RLS policies handle ownership checks (auth.uid() = created_by).
+    # The application does not need to re-verify created_by here.
 
-    query_builder = supabase_client.table("crawl_presets").update(update_dict)
+    query = supabase.table("crawl_presets").update(update_dict)
     try:
         uuid_val = UUID(str(preset_identifier))
-        query_builder = query_builder.eq("preset_id", uuid_val)
+        query = query.eq("preset_id", uuid_val)
     except ValueError:
-        query_builder = query_builder.eq("preset_name", str(preset_identifier))
+        query = query.eq("preset_name", str(preset_identifier))
 
-    response = await query_builder.execute()
+    try:
+        # Ensure returning the representation to get the updated data
+        response = await query.execute() # For supabase-py v2, .execute() is fine, data is returned by default if matched
 
-    if response.error:
-        logger.error(f"Error updating preset '{preset_identifier}': {response.error}")
-        error_detail = f"Database error updating preset '{preset_identifier}'."
-        if hasattr(response.error, 'message') and response.error.message: error_detail = str(response.error.message)
-        raise HTTPException(status_code=400, detail=error_detail)
-    if not response.data: # Supabase update returns the updated items
-        raise HTTPException(status_code=404, detail=f"Preset '{preset_identifier}' not found or update failed (possibly RLS restriction or no actual change).")
-    return CrawlPresetResponse(**response.data[0])
+        if response.error:
+            logger.error(f"Error updating preset '{preset_identifier}': {response.error.message if response.error else 'Unknown error'}")
+            raise HTTPException(status_code=400, detail=response.error.message if response.error else f"Database error updating preset '{preset_identifier}'.")
+        if not response.data:
+            # This could mean the preset was not found, or RLS prevented the update.
+            # Check RLS: "Allow users to update their own presets" (auth.uid() = created_by)
+            raise HTTPException(status_code=404, detail=f"Preset '{preset_identifier}' not found or update failed (possibly RLS restriction).")
+        return CrawlPresetResponse(**response.data[0])
+    except HTTPException as e:
+        raise e # Re-raise HTTPException directly
+    except Exception as e:
+        logger.error(f"Unexpected error updating preset '{preset_identifier}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
+
 
 @router.delete("/{preset_identifier}", status_code=204)
-async def delete_crawl_preset(preset_identifier: Union[UUID, str] = Path(...)):
-    query_builder = supabase_client.table("crawl_presets").delete()
+async def delete_crawl_preset(
+    preset_identifier: Union[UUID, str] = Path(...),
+    supabase: Client = Depends(get_client)
+):
+    query = supabase.table("crawl_presets").delete()
     try:
         uuid_val = UUID(str(preset_identifier))
-        query_builder = query_builder.eq("preset_id", uuid_val)
+        query = query.eq("preset_id", uuid_val)
     except ValueError:
-        query_builder = query_builder.eq("preset_name", str(preset_identifier))
+        query = query.eq("preset_name", str(preset_identifier))
 
     # RLS policies should handle ownership checks.
-    response = await query_builder.execute()
+    try:
+        response = await query.execute()
 
-    if response.error:
-        logger.error(f"Error deleting preset '{preset_identifier}': {response.error}")
-        error_detail = f"Database error deleting preset '{preset_identifier}'."
-        if hasattr(response.error, 'message') and response.error.message: error_detail = str(response.error.message)
-        raise HTTPException(status_code=500, detail=error_detail)
+        if response.error:
+            logger.error(f"Error deleting preset '{preset_identifier}': {response.error.message if response.error else 'Unknown error'}")
+            raise HTTPException(status_code=500, detail=response.error.message if response.error else f"Database error deleting preset '{preset_identifier}'.")
 
-    # Supabase delete (with supabase-py v1+) might return empty data on success if returning='minimal' (default)
-    # or the deleted records if returning='representation'.
-    # For a 204, we typically don't care about the response body, only that there was no error.
-    # However, if no records were matched by the filter, it's effectively a 404.
-    # The mock client simulates returning data if a match was hypothetically found.
-    # A real client might behave differently based on `returning` option.
-    # For now, let's assume if data is empty and no error, it means no record matched the ID for deletion.
-    if not response.data and not response.error : # Check if data is empty AND no error
-         raise HTTPException(status_code=404, detail=f"Preset '{preset_identifier}' not found.")
+        # For delete, Supabase v2 .execute() returns a response model with data if rows were deleted.
+        # If data is empty and no error, it means no rows matched the filter.
+        if not response.data:
+            raise HTTPException(status_code=404, detail=f"Preset '{preset_identifier}' not found or RLS prevented deletion.")
 
-    return None # No content for 204 response
+        # If deletion was successful (response.data is not empty), return 204 No Content.
+        # FastAPI will handle the None response as 204 No Content.
+        return None
+    except HTTPException as e:
+        raise e # Re-raise HTTPException directly
+    except Exception as e:
+        logger.error(f"Unexpected error deleting preset '{preset_identifier}': {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"An unexpected error occurred: {str(e)}")
