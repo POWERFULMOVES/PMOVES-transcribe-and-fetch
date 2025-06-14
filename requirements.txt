@@ -29,7 +29,7 @@ frozenlist==1.5.0
 fsspec==2024.2.0
 gotrue==2.11.0
 groq==0.13.0
-h11==0.14.0
+h11==0.16.0
 h2==4.1.0
 hpack==4.0.0
 html5lib==1.1
@@ -59,7 +59,7 @@ openpyxl==3.1.5
 packaging==24.2
 pandas==2.2.3
 pdfkit==1.0.0
-pillow==10.2.0
+pillow==10.3.0
 postgrest==0.18.0
 propcache==0.2.0
 protobuf==5.29.0
@@ -98,7 +98,7 @@ tiktoken==0.8.0
 tinycss2==1.4.0
 tinyhtml5==2.0.0
 tokenizers==0.21.0
-torch==2.5.1
+torch==2.7.0
 torchaudio==2.5.1
 torchvision==0.20.1
 tqdm==4.67.1
