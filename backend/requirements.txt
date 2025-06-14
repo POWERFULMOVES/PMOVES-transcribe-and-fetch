@@ -493,7 +493,7 @@ regex==2024.11.6
     #   transformers
 reportlab==4.2.5
     # via pmoves-transcribe-and-fetch (pyproject.toml)
-requests==2.32.3
+requests==2.32.4
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   crawl4ai
@@ -593,7 +593,7 @@ tokenizers==0.21.0
     #   faster-whisper
     #   litellm
     #   transformers
-torch==2.7.0
+torch==2.7.1
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   torchaudio
