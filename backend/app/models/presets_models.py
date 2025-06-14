@@ -8,7 +8,7 @@ class CrawlPresetBase(BaseModel):
     description: Optional[str] = None
     version: int = 1
     crawl_tool: str = "crawl4ai"
-strategy_definition: Dict[str, Any] = Field(..., description="The core JSON structure defining the crawl strategy and its parameters.")
+    strategy_definition: Dict[str, Any] = Field(..., description="The core JSON structure defining the crawl strategy and its parameters.")
     target_capability: Optional[str] = None
     tags: Optional[List[str]] = None # Stored as JSONB array in DB, represented as List[str] here
     created_by: Optional[UUID] = Field(None, description="ID of the user creating the preset. To be set by the application based on authenticated user.")

@@ -1,12 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, Path
-from fastapi import APIRouter, Depends, HTTPException, Query, Body, Path
 from typing import List, Union
 from uuid import UUID
 import logging
 # from datetime import datetime, timezone # timezone might not be needed if DB handles timestamps
 
 # Import Supabase client and dependency function
-from supabase import Client  # Renamed from AsyncClient for supabase-py v2
+from supabase import AsyncClient
 from ..dependencies import get_client
 
 # Import Pydantic models
@@ -18,7 +17,7 @@ router = APIRouter(prefix="/api/presets", tags=["Crawl Presets"])
 @router.post("", response_model=CrawlPresetResponse, status_code=201)
 async def create_crawl_preset(
     preset_data: CrawlPresetCreate = Body(...),
-    supabase: Client = Depends(get_client) # Changed from supabase_client
+    supabase: AsyncClient = Depends(get_client)
 ):
     # The created_by field is now part of CrawlPresetCreate and validated by Pydantic.
     # RLS policies in Supabase will use auth.uid() against this provided created_by.
@@ -31,7 +30,7 @@ async def create_crawl_preset(
     try:
         response = await supabase.table("crawl_presets").insert(preset_dict).execute()
 
-        if response.error:
+        if hasattr(response, "error") and response.error:
             logger.error(f"Error creating preset: {response.error.message if response.error else 'Unknown error'}")
             raise HTTPException(status_code=400, detail=response.error.message if response.error else "Database error during preset creation.")
         if not response.data:
@@ -51,11 +50,11 @@ async def create_crawl_preset(
 async def list_crawl_presets(
     skip: int = Query(0, ge=0),
     limit: int = Query(100, ge=1, le=1000),
-    supabase: Client = Depends(get_client)
+    supabase: AsyncClient = Depends(get_client)
 ):
     try:
         response = await supabase.table("crawl_presets").select("*").offset(skip).limit(limit).execute()
-        if response.error:
+        if hasattr(response, "error") and response.error:
             logger.error(f"Error listing presets: {response.error.message if response.error else 'Unknown error'}")
             raise HTTPException(status_code=500, detail=response.error.message if response.error else "Database error listing presets.")
         return [CrawlPresetResponse(**item) for item in response.data]
@@ -66,7 +65,7 @@ async def list_crawl_presets(
 @router.get("/{preset_identifier}", response_model=CrawlPresetResponse)
 async def get_crawl_preset(
     preset_identifier: Union[UUID, str] = Path(...),
-    supabase: Client = Depends(get_client)
+    supabase: AsyncClient = Depends(get_client)
 ):
     query = supabase.table("crawl_presets").select("*")
     try:
@@ -78,7 +77,7 @@ async def get_crawl_preset(
     try:
         response = await query.limit(1).execute() # Ensure only one record is fetched
 
-        if response.error:
+        if hasattr(response, "error") and response.error:
             logger.error(f"Error getting preset '{preset_identifier}': {response.error.message if response.error else 'Unknown error'}")
             raise HTTPException(status_code=500, detail=response.error.message if response.error else f"Database error retrieving preset '{preset_identifier}'.")
         if not response.data:
@@ -95,7 +94,7 @@ async def get_crawl_preset(
 async def update_crawl_preset(
     preset_data: CrawlPresetUpdate = Body(...),
     preset_identifier: Union[UUID, str] = Path(...),
-    supabase: Client = Depends(get_client)
+    supabase: AsyncClient = Depends(get_client)
 ):
     update_dict = preset_data.model_dump(exclude_unset=True)
     if not update_dict:
@@ -116,7 +115,7 @@ async def update_crawl_preset(
         # Ensure returning the representation to get the updated data
         response = await query.execute() # For supabase-py v2, .execute() is fine, data is returned by default if matched
 
-        if response.error:
+        if hasattr(response, "error") and response.error:
             logger.error(f"Error updating preset '{preset_identifier}': {response.error.message if response.error else 'Unknown error'}")
             raise HTTPException(status_code=400, detail=response.error.message if response.error else f"Database error updating preset '{preset_identifier}'.")
         if not response.data:
@@ -134,7 +133,7 @@ async def update_crawl_preset(
 @router.delete("/{preset_identifier}", status_code=204)
 async def delete_crawl_preset(
     preset_identifier: Union[UUID, str] = Path(...),
-    supabase: Client = Depends(get_client)
+    supabase: AsyncClient = Depends(get_client)
 ):
     query = supabase.table("crawl_presets").delete()
     try:
@@ -147,7 +146,7 @@ async def delete_crawl_preset(
     try:
         response = await query.execute()
 
-        if response.error:
+        if hasattr(response, "error") and response.error:
             logger.error(f"Error deleting preset '{preset_identifier}': {response.error.message if response.error else 'Unknown error'}")
             raise HTTPException(status_code=500, detail=response.error.message if response.error else f"Database error deleting preset '{preset_identifier}'.")
 

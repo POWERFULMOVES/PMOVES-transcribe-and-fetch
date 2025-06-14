@@ -916,19 +916,26 @@ Summary of findings and recommendations"""
                     # Use asyncio.run to call the async function from this sync context
                     # This is generally not ideal for performance in an async app, but psearchworking is sync.
                     # If psearchworking becomes async, this can be awaited directly.
-                    output_text = asyncio.run(
-                        registry_service.get_chat_completion(  # Call correct method on instance
-                            model_id=chosen_model_id,
+                    response = asyncio.run(
+                        registry_service.chat_completion_advanced(  # Corrected method name
+                            model_alias=chosen_model_id, # Corrected parameter name
                             messages=messages,
-                            # Pass other kwargs if get_chat_completion supports them
                             temperature=0.3,
-                            max_tokens=2000,  # Example
+                            max_tokens=2000,
                         )
                     )
 
+                    # The response from chat_completion_advanced is a dictionary,
+                    # not just the text content. We need to extract the content.
+                    # Based on standard OpenAI response structure:
+                    if response and isinstance(response, dict) and response.get("choices"):
+                        output_text = response["choices"][0].get("message", {}).get("content")
+                    else:
+                        output_text = None
+
                     if output_text is None:
                         logger.error(
-                            f"Analysis with model {chosen_model_id} via registry returned None."
+                            f"Analysis with model {chosen_model_id} via registry returned no content."
                         )
                         return f"Error: Analysis generation failed with model {chosen_model_id} (returned None)."
 
