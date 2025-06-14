@@ -191,8 +191,8 @@ export default function VectorSearch() {
         setEndDate(null);
     };
  
-    // Base URL (use constant or env var)
-    const baseUrl = BACKEND_URL || process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    // Base URL
+    const baseUrl = BACKEND_URL;
 
     // Use the presets from constants
     const searchPresets = SEARCH_PRESETS;

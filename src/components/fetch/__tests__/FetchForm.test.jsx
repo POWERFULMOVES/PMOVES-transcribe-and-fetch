@@ -2,6 +2,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import FetchForm from '@/components/fetch/FetchForm';
+import { BACKEND_URL } from '@/lib/constants';
 
 // Mock useToast
 const mockToast = jest.fn();
@@ -22,7 +23,6 @@ const mockPresets = [
 ];
 
 global.fetch = jest.fn();
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
 // Default props for FetchForm
 const defaultProps = {

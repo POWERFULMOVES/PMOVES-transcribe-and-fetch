@@ -1,4 +1,4 @@
-const API_BASE_URL = 'http://localhost:8000';
+import { BACKEND_URL as API_BASE_URL } from '@/lib/constants';
 
 const apiClient = {
   async get(path, options = {}) {

@@ -634,6 +634,10 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
   const setCacheTtlHandler = useCallback((val) => setFormValue('cacheTtl', val), [setFormValue]);
   const setBrowserLocaleHandler = useCallback((val) => setFormValue('browserLocale', val), [setFormValue]);
   const setExtractMetadataHandler = useCallback((val) => setFormValue('extractMetadata', val), [setFormValue]);
+  // Handlers for LLM configuration fields
+  const setLlmProviderHandler = useCallback((val) => setFormValue('llmProvider', val), [setFormValue]);
+  const setLlmApiTokenHandler = useCallback((val) => setFormValue('llmApiToken', val), [setFormValue]);
+  const setLlmBaseUrlHandler = useCallback((val) => setFormValue('llmBaseUrl', val), [setFormValue]);
   const setCrawl4aiUserAgentHandler = useCallback((val) => setFormValue('crawl4aiUserAgent', val), [setFormValue]);
   const setCrawl4aiViewportWidthHandler = useCallback((val) => setFormValue('crawl4aiViewportWidth', val), [setFormValue]);
   const setCrawl4aiViewportHeightHandler = useCallback((val) => setFormValue('crawl4aiViewportHeight', val), [setFormValue]);
@@ -1273,146 +1277,146 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
               <AdvancedFetchOptions
                 fetchingEngine={fetchingEngine} // Pass isolated state
                 targetSelectorAdvanced={formState.jinaTargetSelectorAdvanced}
-                setTargetSelectorAdvanced={(value) => handleFormChange('jinaTargetSelectorAdvanced', value)}
+                setTargetSelectorAdvanced={setTargetSelectorAdvancedHandler}
                 excludedSelectors={formState.jinaExcludedSelectors}
-                setExcludedSelectors={(value) => handleFormChange('jinaExcludedSelectors', value)}
+                setExcludedSelectors={setExcludedSelectorsHandler}
                 browserEngine={formState.jinaBrowserEngine}
-                setBrowserEngine={(value) => handleFormChange('jinaBrowserEngine', value)}
+                setBrowserEngine={setBrowserEngineHandler}
                 tokenBudget={formState.jinaTokenBudget}
-                setTokenBudget={(value) => handleFormChange('jinaTokenBudget', value)}
+                setTokenBudget={setTokenBudgetHandler}
                 viewportWidth={formState.jinaViewportWidth}
-                setViewportWidth={(value) => handleFormChange('jinaViewportWidth', value)}
+                setViewportWidth={setViewportWidthHandler}
                 viewportHeight={formState.jinaViewportHeight}
-                setViewportHeight={(value) => handleFormChange('jinaViewportHeight', value)}
+                setViewportHeight={setViewportHeightHandler}
                 markdownFlavor={formState.jinaMarkdownFlavor}
-                setMarkdownFlavor={(value) => handleFormChange('jinaMarkdownFlavor', value)}
+                setMarkdownFlavor={setMarkdownFlavorHandler}
                 timeout={formState.jinaTimeout}
-                setTimeout={(value) => handleFormChange('jinaTimeout', value)}
+                setTimeout={setTimeoutHandler}
                 extractTextOnly={formState.jinaExtractTextOnly}
-                setExtractTextOnly={(value) => handleFormChange('jinaExtractTextOnly', value)}
+                setExtractTextOnly={setExtractTextOnlyHandler}
                 extractTables={formState.jinaExtractTables}
-                setExtractTables={(value) => handleFormChange('jinaExtractTables', value)}
+                setExtractTables={setExtractTablesHandler}
                 extractImages={formState.jinaExtractImages}
-                setExtractImages={(value) => handleFormChange('jinaExtractImages', value)}
+                setExtractImages={setExtractImagesHandler}
                 extractLinks={formState.jinaExtractLinks}
-                setExtractLinks={(value) => handleFormChange('jinaExtractLinks', value)}
+                setExtractLinks={setExtractLinksHandler}
                 jsonResponse={formState.jinaJsonResponse}
-                setJsonResponse={(value) => handleFormChange('jinaJsonResponse', value)}
+                setJsonResponse={setJsonResponseHandler}
                 cleanFormat={formState.jinaCleanFormat}
-                setCleanFormat={(value) => handleFormChange('jinaCleanFormat', value)}
+                setCleanFormat={setCleanFormatHandler}
                 imageCaptioning={formState.jinaImageCaptioning}
-                setImageCaptioning={(value) => handleFormChange('jinaImageCaptioning', value)}
+                setImageCaptioning={setImageCaptioningHandler}
                 cacheTtl={formState.jinaCacheTtl}
-                setCacheTtl={(value) => handleFormChange('jinaCacheTtl', value)}
+                setCacheTtl={setCacheTtlHandler}
                 browserLocale={formState.jinaBrowserLocale}
-                setBrowserLocale={(value) => handleFormChange('jinaBrowserLocale', value)}
+                setBrowserLocale={setBrowserLocaleHandler}
                 extractMetadata={formState.jinaExtractMetadata}
-                setExtractMetadata={(value) => handleFormChange('jinaExtractMetadata', value)}
+                setExtractMetadata={setExtractMetadataHandler}
                 
                 // Crawl4ai specific props
                 crawl4aiUserAgent={formState.crawl4aiUserAgent}
-                setCrawl4aiUserAgent={(value) => handleFormChange('crawl4aiUserAgent', value)}
+                setCrawl4aiUserAgent={setCrawl4aiUserAgentHandler}
                 crawl4aiViewportWidth={formState.crawl4aiViewportWidth}
-                setCrawl4aiViewportWidth={(value) => handleFormChange('crawl4aiViewportWidth', value)}
+                setCrawl4aiViewportWidth={setCrawl4aiViewportWidthHandler}
                 crawl4aiViewportHeight={formState.crawl4aiViewportHeight}
-                setCrawl4aiViewportHeight={(value) => handleFormChange('crawl4aiViewportHeight', value)}
+                setCrawl4aiViewportHeight={setCrawl4aiViewportHeightHandler}
                 crawl4aiProxyUrl={formState.crawl4aiProxyUrl}
-                setCrawl4aiProxyUrl={(value) => handleFormChange('crawl4aiProxyUrl', value)}
+                setCrawl4aiProxyUrl={setCrawl4aiProxyUrlHandler}
                 crawl4aiPageLoadWaitCondition={formState.crawl4aiPageLoadWaitCondition}
-                setCrawl4aiPageLoadWaitCondition={(value) => handleFormChange('crawl4aiPageLoadWaitCondition', value)}
+                setCrawl4aiPageLoadWaitCondition={setCrawl4aiPageLoadWaitConditionHandler}
                 crawl4aiPageTimeout={formState.crawl4aiPageTimeout}
-                setCrawl4aiPageTimeout={(value) => handleFormChange('crawl4aiPageTimeout', value)}
+                setCrawl4aiPageTimeout={setCrawl4aiPageTimeoutHandler}
                 crawl4aiWaitForCondition={formState.crawl4aiWaitForCondition}
-                setCrawl4aiWaitForCondition={(value) => handleFormChange('crawl4aiWaitForCondition', value)}
+                setCrawl4aiWaitForCondition={setCrawl4aiWaitForConditionHandler}
                 crawl4aiEnableJs={formState.crawl4aiEnableJs}
-                setCrawl4aiEnableJs={(value) => handleFormChange('crawl4aiEnableJs', value)}
+                setCrawl4aiEnableJs={setCrawl4aiEnableJsHandler}
                 crawl4aiIgnoreHttpsErrors={formState.crawl4aiIgnoreHttpsErrors}
-                setCrawl4aiIgnoreHttpsErrors={(value) => handleFormChange('crawl4aiIgnoreHttpsErrors', value)}
+                setCrawl4aiIgnoreHttpsErrors={setCrawl4aiIgnoreHttpsErrorsHandler}
                 crawl4aiLightMode={formState.crawl4aiLightMode}
-                setCrawl4aiLightMode={(value) => handleFormChange('crawl4aiLightMode', value)}
+                setCrawl4aiLightMode={setCrawl4aiLightModeHandler}
                 crawl4aiTextMode={formState.crawl4aiTextMode}
-                setCrawl4aiTextMode={(value) => handleFormChange('crawl4aiTextMode', value)}
+                setCrawl4aiTextMode={setCrawl4aiTextModeHandler}
                 crawl4aiTargetElements={formState.crawl4aiTargetElements}
-                setCrawl4aiTargetElements={(value) => handleFormChange('crawl4aiTargetElements', value)}
+                setCrawl4aiTargetElements={setCrawl4aiTargetElementsHandler}
                 crawl4aiExcludedElements={formState.crawl4aiExcludedElements}
-                setCrawl4aiExcludedElements={(value) => handleFormChange('crawl4aiExcludedElements', value)}
+                setCrawl4aiExcludedElements={setCrawl4aiExcludedElementsHandler}
                 crawl4aiExcludedTags={formState.crawl4aiExcludedTags}
-                setCrawl4aiExcludedTags={(value) => handleFormChange('crawl4aiExcludedTags', value)}
+                setCrawl4aiExcludedTags={setCrawl4aiExcludedTagsHandler}
                 crawl4aiExtractOnlyTextContent={formState.crawl4aiExtractOnlyTextContent}
-                setCrawl4aiExtractOnlyTextContent={(value) => handleFormChange('crawl4aiExtractOnlyTextContent', value)}
+                setCrawl4aiExtractOnlyTextContent={setCrawl4aiExtractOnlyTextContentHandler}
                 crawl4aiProcessIframes={formState.crawl4aiProcessIframes}
-                setCrawl4aiProcessIframes={(value) => handleFormChange('crawl4aiProcessIframes', value)}
+                setCrawl4aiProcessIframes={setCrawl4aiProcessIframesHandler}
                 crawl4aiWordCountThreshold={formState.crawl4aiWordCountThreshold}
-                setCrawl4aiWordCountThreshold={(value) => handleFormChange('crawl4aiWordCountThreshold', value)}
+                setCrawl4aiWordCountThreshold={setCrawl4aiWordCountThresholdHandler}
                 crawl4aiRemoveForms={formState.crawl4aiRemoveForms}
-                setCrawl4aiRemoveForms={(value) => handleFormChange('crawl4aiRemoveForms', value)}
+                setCrawl4aiRemoveForms={setCrawl4aiRemoveFormsHandler}
                 crawl4aiKeepDataAttributes={formState.crawl4aiKeepDataAttributes}
-                setCrawl4aiKeepDataAttributes={(value) => handleFormChange('crawl4aiKeepDataAttributes', value)}
+                setCrawl4aiKeepDataAttributes={setCrawl4aiKeepDataAttributesHandler}
                 crawl4aiExecuteJsOnLoad={formState.crawl4aiExecuteJsOnLoad}
-                setCrawl4aiExecuteJsOnLoad={(value) => handleFormChange('crawl4aiExecuteJsOnLoad', value)}
+                setCrawl4aiExecuteJsOnLoad={setCrawl4aiExecuteJsOnLoadHandler}
                 crawl4aiScanFullPage={formState.crawl4aiScanFullPage}
-                setCrawl4aiScanFullPage={(value) => handleFormChange('crawl4aiScanFullPage', value)}
+                setCrawl4aiScanFullPage={setCrawl4aiScanFullPageHandler}
                 crawl4aiScrollDelay={formState.crawl4aiScrollDelay}
-                setCrawl4aiScrollDelay={(value) => handleFormChange('crawl4aiScrollDelay', value)}
+                setCrawl4aiScrollDelay={setCrawl4aiScrollDelayHandler}
                 crawl4aiRemoveOverlayElements={formState.crawl4aiRemoveOverlayElements}
-                setCrawl4aiRemoveOverlayElements={(value) => handleFormChange('crawl4aiRemoveOverlayElements', value)}
+                setCrawl4aiRemoveOverlayElements={setCrawl4aiRemoveOverlayElementsHandler}
                 crawl4aiSimulateUserBehavior={formState.crawl4aiSimulateUserBehavior}
-                setCrawl4aiSimulateUserBehavior={(value) => handleFormChange('crawl4aiSimulateUserBehavior', value)}
+                setCrawl4aiSimulateUserBehavior={setCrawl4aiSimulateUserBehaviorHandler}
                 crawl4aiEnableMagic={formState.crawl4aiEnableMagic}
-                setCrawl4aiEnableMagic={(value) => handleFormChange('crawl4aiEnableMagic', value)}
+                setCrawl4aiEnableMagic={setCrawl4aiEnableMagicHandler}
                 crawl4aiOverrideNavigator={formState.crawl4aiOverrideNavigator}
-                setCrawl4aiOverrideNavigator={(value) => handleFormChange('crawl4aiOverrideNavigator', value)}
+                setCrawl4aiOverrideNavigator={setCrawl4aiOverrideNavigatorHandler}
                 crawl4aiCacheMode={formState.crawl4aiCacheMode}
-                setCrawl4aiCacheMode={(value) => handleFormChange('crawl4aiCacheMode', value)}
+                setCrawl4aiCacheMode={setCrawl4aiCacheModeHandler}
                 crawl4aiCaptureScreenshot={formState.crawl4aiCaptureScreenshot}
-                setCrawl4aiCaptureScreenshot={(value) => handleFormChange('crawl4aiCaptureScreenshot', value)}
+                setCrawl4aiCaptureScreenshot={setCrawl4aiCaptureScreenshotHandler}
                 crawl4aiGeneratePdf={formState.crawl4aiGeneratePdf}
-                setCrawl4aiGeneratePdf={(value) => handleFormChange('crawl4aiGeneratePdf', value)}
+                setCrawl4aiGeneratePdf={setCrawl4aiGeneratePdfHandler}
                 crawl4aiCaptureMhtml={formState.crawl4aiCaptureMhtml}
-                setCrawl4aiCaptureMhtml={(value) => handleFormChange('crawl4aiCaptureMhtml', value)}
+                setCrawl4aiCaptureMhtml={setCrawl4aiCaptureMhtmlHandler}
                 crawl4aiExcludeExternalImages={formState.crawl4aiExcludeExternalImages}
-                setCrawl4aiExcludeExternalImages={(value) => handleFormChange('crawl4aiExcludeExternalImages', value)}
+                setCrawl4aiExcludeExternalImages={setCrawl4aiExcludeExternalImagesHandler}
                 crawl4aiImageAltTextMinWordCount={formState.crawl4aiImageAltTextMinWordCount}
-                setCrawl4aiImageAltTextMinWordCount={(value) => handleFormChange('crawl4aiImageAltTextMinWordCount', value)}
+                setCrawl4aiImageAltTextMinWordCount={setCrawl4aiImageAltTextMinWordCountHandler}
                 crawl4aiImageRelevanceScoreThreshold={formState.crawl4aiImageRelevanceScoreThreshold}
-                setCrawl4aiImageRelevanceScoreThreshold={(value) => handleFormChange('crawl4aiImageRelevanceScoreThreshold', value)}
+                setCrawl4aiImageRelevanceScoreThreshold={setCrawl4aiImageRelevanceScoreThresholdHandler}
                 crawl4aiExcludeExternalLinks={formState.crawl4aiExcludeExternalLinks}
-                setCrawl4aiExcludeExternalLinks={(value) => handleFormChange('crawl4aiExcludeExternalLinks', value)}
+                setCrawl4aiExcludeExternalLinks={setCrawl4aiExcludeExternalLinksHandler}
                 crawl4aiExcludeSocialMediaLinks={formState.crawl4aiExcludeSocialMediaLinks}
-                setCrawl4aiExcludeSocialMediaLinks={(value) => handleFormChange('crawl4aiExcludeSocialMediaLinks', value)}
+                setCrawl4aiExcludeSocialMediaLinks={setCrawl4aiExcludeSocialMediaLinksHandler}
                 crawl4aiCustomExcludedDomains={formState.crawl4aiCustomExcludedDomains}
-                setCrawl4aiCustomExcludedDomains={(value) => handleFormChange('crawl4aiCustomExcludedDomains', value)}
+                setCrawl4aiCustomExcludedDomains={setCrawl4aiCustomExcludedDomainsHandler}
                 crawl4aiRespectRobotsTxt={formState.crawl4aiRespectRobotsTxt}
-                setCrawl4aiRespectRobotsTxt={(value) => handleFormChange('crawl4aiRespectRobotsTxt', value)}
+                setCrawl4aiRespectRobotsTxt={setCrawl4aiRespectRobotsTxtHandler}
                 crawl4aiVerboseLogging={formState.crawl4aiVerboseLogging}
-                setCrawl4aiVerboseLogging={(value) => handleFormChange('crawl4aiVerboseLogging', value)}
+                setCrawl4aiVerboseLogging={setCrawl4aiVerboseLoggingHandler}
                 crawl4aiLogPageConsoleOutput={formState.crawl4aiLogPageConsoleOutput}
-                setCrawl4aiLogPageConsoleOutput={(value) => handleFormChange('crawl4aiLogPageConsoleOutput', value)}
+                setCrawl4aiLogPageConsoleOutput={setCrawl4aiLogPageConsoleOutputHandler}
                 
                 // Pass LLM configuration from formState
                 llmProvider={formState.llmProvider}
-                setLlmProvider={(value) => handleFormChange('llmProvider', value)}
+                setLlmProvider={setLlmProviderHandler}
                 llmApiToken={formState.llmApiToken}
-                setLlmApiToken={(value) => handleFormChange('llmApiToken', value)}
+                setLlmApiToken={setLlmApiTokenHandler}
                 llmBaseUrl={formState.llmBaseUrl}
-                setLlmBaseUrl={(value) => handleFormChange('llmBaseUrl', value)}
+                setLlmBaseUrl={setLlmBaseUrlHandler}
                 availableLlmModels={availableLlmModels} // This comes from state, not formState
                 isLoadingLlmModels={isLoadingLlmModels} // This comes from state, not formState
                 
                 crawl4aiMarkdownGenerator={formState.crawl4aiMarkdownGenerator}
-                setCrawl4aiMarkdownGenerator={(value) => handleFormChange('crawl4aiMarkdownGenerator', value)}
+                setCrawl4aiMarkdownGenerator={setCrawl4aiMarkdownGeneratorHandler}
 
                 // Expert Options
                 crawl4aiBrowserCookies={formState.crawl4aiBrowserCookies}
-                setCrawl4aiBrowserCookies={(value) => handleFormChange('crawl4aiBrowserCookies', value)}
+                setCrawl4aiBrowserCookies={setCrawl4aiBrowserCookiesHandler}
                 crawl4aiBrowserHeaders={formState.crawl4aiBrowserHeaders}
-                setCrawl4aiBrowserHeaders={(value) => handleFormChange('crawl4aiBrowserHeaders', value)}
+                setCrawl4aiBrowserHeaders={setCrawl4aiBrowserHeadersHandler}
                 crawl4aiBrowserUsePersistentContext={formState.crawl4aiBrowserUsePersistentContext}
-                setCrawl4aiBrowserUsePersistentContext={(value) => handleFormChange('crawl4aiBrowserUsePersistentContext', value)}
+                setCrawl4aiBrowserUsePersistentContext={setCrawl4aiBrowserUsePersistentContextHandler}
                 crawl4aiCrawlSessionId={formState.crawl4aiCrawlSessionId}
-                setCrawl4aiCrawlSessionId={(value) => handleFormChange('crawl4aiCrawlSessionId', value)}
+                setCrawl4aiCrawlSessionId={setCrawl4aiCrawlSessionIdHandler}
                 crawl4aiCrawlCssSelector={formState.crawl4aiCrawlCssSelector}
-                setCrawl4aiCrawlCssSelector={(value) => handleFormChange('crawl4aiCrawlCssSelector', value)}
+                setCrawl4aiCrawlCssSelector={setCrawl4aiCrawlCssSelectorHandler}
 
                 // Strategy Configs passed directly
                 crawl4aiExtractionConfig={formState.crawl4aiExtractionConfig}
@@ -1422,7 +1426,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
 
                 // Common options
                 uploadToSupabase={formState.uploadToSupabase}
-                setUploadToSupabase={(value) => handleFormChange('uploadToSupabase', value)}
+                setUploadToSupabase={setUploadToSupabaseHandler}
               />
             )}
 

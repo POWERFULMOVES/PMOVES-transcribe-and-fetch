@@ -18,7 +18,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 import { Loader2 } from 'lucide-react'; // For loading indicator
 
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+import { BACKEND_URL } from '@/lib/constants';
 
 const FetchForm = ({
   url,

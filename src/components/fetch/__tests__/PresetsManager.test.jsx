@@ -2,6 +2,7 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import { PresetsManager } from '@/components/fetch/PresetsManager'; // Assuming PresetsManager is default export
+import { BACKEND_URL } from '@/lib/constants';
 
 // Mock useToast
 const mockToast = jest.fn();
@@ -26,8 +27,6 @@ global.fetch = jest.fn();
 
 // Mock window.confirm for delete operations
 global.confirm = jest.fn();
-
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
 
 describe('PresetsManager', () => {
   beforeEach(() => {
