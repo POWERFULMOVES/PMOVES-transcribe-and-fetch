@@ -11,8 +11,7 @@ import { useToast } from "@/components/ui/use-toast"; // For Shadcn toast
 // If sonner is used for toast (based on sonner.jsx):
 // import { toast } from "sonner";
 import { PlusCircle, Edit, Trash2, Loader2 } from 'lucide-react';
-
-const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8000";
+import { BACKEND_URL } from '@/lib/constants';
 
 const initialFormState = {
   preset_name: "",

@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useToast } from "@/hooks/use-toast";
+import { BACKEND_URL } from '@/lib/constants';
 // Removed createClient as we are now using the API endpoint
 // import { createClient } from '@/lib/client';
 
@@ -18,7 +19,7 @@ export function useFetchPresets() {
     setError(null);
     try {
       // Fetch from the backend API endpoint instead of directly from Supabase
-      const response = await fetch('/api/presets');
+      const response = await fetch(`${BACKEND_URL}/api/presets`);
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({})); // Try to parse error, fallback to empty object
