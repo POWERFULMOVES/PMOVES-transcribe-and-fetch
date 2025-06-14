@@ -337,62 +337,81 @@ To ensure the reliability, performance, and maintainability of the PMOVES Agent 
 
 ## Current Implementation Status: Significantly Delayed & Partially Blocked
 
-The project has encountered several critical blockers, primarily related to historical documentation access and interpretation. While individual agent development and some core infrastructure work have progressed, the inability to reliably access and utilize up-to-date documentation for key dependencies in past development cycles has impacted progress on integration tasks, security hardening, and advanced feature implementation.
+The project's current state significantly lags behind the optimistic claims previously in this document. As detailed in `PROJECT_REVIEW_AND_STATUS.md` and confirmed by codebase inspection, the platform is not complete or production-ready.
 
-**Key Accomplishments to Date (Summary - for full details, see PROJECT_REVIEW_AND_STATUS.md):**
-- Core Agent Infrastructure (Conceptual & Basic Implementation)
-- Specialized Agent Development (Initial Versions of Multimodal, Supabase, Research, CodeExecution Agents, Pipecat Core Service with foundational tool-calling)
-- Security Foundations (Partially Implemented `SecurityMiddleware`, `RestrictedPython`)
-- Basic Tooling & Utilities (`FileHandler`, `AsyncWebBrowser`)
-- Configuration Management (Pydantic models, .env usage)
-- Foundational work on Pipecat Core Service (`pmoves-pipecat`) including LiteLLM integration and basic tool-calling.
+**Key Accomplishments to Date (Derived from `PROJECT_REVIEW_AND_STATUS.md` and code review):**
 
-**Current Blockers & Challenges (Summary - for full details, see PROJECT_REVIEW_AND_STATUS.md):**
-1.  **Documentation Access & Interpretation:** While access is resolved in the current environment, historical issues have caused delays and highlight the need for robust access strategies.
-2.  **Agent Orchestration & Communication:** Lack of robust inter-agent communication, task delegation, or workflow management.
-3.  **Security Hardening:** `CodeExecutionAgent` sandboxing, API security, and input validation require significant enhancement.
+*   **Agent Registry (`pmoves-agent-registry`):**
+    *   A standalone FastAPI service for agent registration and heartbeat is implemented and uses Supabase for persistence with a schema generally matching `PLAN.md`.
+    *   API endpoints for register, heartbeat, list/get, and delete are present.
+    *   *Correction:* Database calls in this service are synchronous, not asynchronous as claimed in `PLAN.md`'s "Implementation Notes" for the registry.
+    *   *Note:* A separate set of agent registry routes (`backend/app/routes/agent_registry_routes.py`) also exists within the main backend, interacting with a different Supabase table ("agent_registry") and using a different schema. The purpose and relationship between these two registries are unclear.
+*   **Core Agent Infrastructure (Conceptual & Basic Backend):**
+    *   `AgentFramework` class (`backend/app/utils/agent_framework.py`) provides helpers for agents to register with an HTTP-based registry (like `pmoves-agent-registry`) and send heartbeats. This framework itself does not implement Pipecat-based communication.
+    *   Initial Supabase integration for some agent data persistence.
+    *   Basic FastAPI setup for some agent communication endpoints.
+*   **Specialized Agent Development (Initial Versions & Concepts):**
+    *   `MultimodalAgent`, `SupabaseAgent`, `ResearchAgent`, `CodeExecutionAgent`: Initial versions exist with some foundational capabilities.
+    *   `psearchworking.py`: A comprehensive CLI tool for Supabase search (vector, keyword, hybrid) and LLM-based analysis exists. This *could* serve as the backend for `SupabaseAgent` search features, but its direct, active integration as a callable service within a running agent is not confirmed by code review of `psearchworking.py` alone.
+    *   Pipecat Core Service (`pmoves-pipecat`): Foundational work including LiteLLM integration and basic tool-calling in `LiteLLMPipecatService` is noted in `STATUS.md`.
+*   **Security Foundations (Partially Implemented & Inactive):**
+    *   `SecurityMiddleware` (`backend/app/middleware/security_middleware.py`): Code for API key authentication exists but is **explicitly disabled in development mode**. Claims of comprehensive, active security are false. Rate limiting is not implemented in this middleware.
+    *   `RestrictedPython` is used for basic code execution sandboxing.
+*   **Tooling & Utilities:**
+    *   Basic `FileHandler`, `AsyncWebBrowser`.
+    *   `VectorDB` integration is conceptual/placeholder.
+*   **Configuration Management:**
+    *   Pydantic models for some configurations.
+    *   `.env` file usage for sensitive settings.
+
+**Current Blockers & Challenges (Primarily from `PROJECT_REVIEW_AND_STATUS.md`, supported by code review):**
+
+1.  **Documentation Access & Interpretation:** Historical issues have caused delays.
+2.  **Agent Orchestration & Communication:**
+    *   Lack of robust inter-agent communication, task delegation, or workflow management.
+    *   The `AgentCommand` protocol defined in `AGENT_COMMAND_PROTOCOL.md` for Pipecat communication is not implemented in `agent_framework.py` and its widespread use in helper agents is unconfirmed and unlikely given the overall status.
+3.  **Security Hardening:**
+    *   The main API key security middleware is currently disabled.
+    *   `CodeExecutionAgent` sandboxing needs significant enhancement.
+    *   Comprehensive API authentication/authorization and input validation are not fully implemented or active.
 4.  **Task Management & Queuing:** Absence of a centralized task queue.
 5.  **Testing & Validation:** Automated testing is largely absent.
-6.  **VectorDB/Knowledge Base Integration:** `VectorDB` component is a placeholder.
-7.  **Outdated Planning Documents:** This document and `ARCHITECTURE.md` require ongoing updates to reflect true status.
+6.  **VectorDB/Knowledge Base Integration:** `VectorDB` component remains a placeholder.
+7.  **Outdated Planning Documents:** This document (`PMOVES_AGENT_PLATFORM_PLAN.md`) and `ARCHITECTURE.md` require significant updates to reflect the project's true status.
+8.  **Agent Registry Ambiguity:** The existence of two separate agent registry implementations needs clarification.
 
 ---
 
 ## Next Steps & Priorities (Revised)
 
-This section aligns with the findings from the `PROJECT_REVIEW_AND_STATUS.md`.
+*   **IMMEDIATE & CRITICAL (Unblocking Task):**
+    *   **Priority 1: Resolve Documentation Access.** This is paramount. If `view_text_website` remains unreliable for core library documentation, an alternative strategy *must* be found. This could involve:
+        *   Requesting pre-fetched, plain-text versions of key documentation pages to be loaded into the project.
+        *   If the issue is with specific sites, try to find alternative documentation sources (e.g., simplified guides, cheat sheets if full docs are too complex for the tool).
+        *   **Without this, the project cannot meaningfully proceed on many fronts.**
 
-*   **IMMEDIATE & CRITICAL (Focus Areas):**
-    *   **Maintain Robust Documentation Access:** Ensure strategies are in place to prevent future documentation access issues, leveraging available tools effectively.
-    *   **Solidify Core Tooling & Services:**
-        *   Continue solidifying tool execution logic within `LiteLLMPipecatService`.
-    *   **Update Planning Documents:** Regularly update this document and `ARCHITECTURE.md` to reflect the project's true status and a detailed, revised roadmap.
-
-*   **Core Infrastructure & Refinement (Once immediate items are well underway):**
-    *   **Priority 1: Full `SecurityMiddleware` Implementation & Integration:**
+*   **Once Documentation is Accessible (Core Infrastructure & Refinement):**
+    *   **Priority 2: Full SecurityMiddleware Implementation & Integration:**
         *   Implement and test robust API key and/or JWT authentication for all agent endpoints.
         *   Ensure comprehensive input validation using Pydantic for all API request models.
         *   Integrate FastAPI's security utilities correctly.
         *   Review and apply necessary security headers.
-    *   **Priority 2: Enhance `CodeExecutionAgent` Security & Functionality:**
-        *   Investigate and implement stricter sandboxing mechanisms.
+    *   **Priority 3: Enhance CodeExecutionAgent Security & Functionality:**
+        *   Investigate and implement stricter sandboxing mechanisms (e.g., Docker containers, WebAssembly runtimes, or more advanced `RestrictedPython` configurations if feasible).
         *   Develop clear input/output mechanisms for file handling within the sandboxed environment.
         *   Implement resource limits (CPU, memory, time).
-    *   **Priority 3: Refine Individual Agent Capabilities & Error Handling:**
+    *   **Priority 4: Refine Individual Agent Capabilities & Error Handling:**
         *   **MultimodalAgent:** Solidify error handling for API calls, improve configuration validation.
-        *   **SupabaseAgent:** Ensure DDL operations are truly safe. Improve error parsing from Supabase. Complete integration with `psearchworking.py`.
-        *   **ResearchAgent:** Implement a basic task queue for managing search/fetch tasks and their results.
-        *   **All Agents:** Review and improve error handling, logging, and status reporting.
-    *   **Priority 4: Develop Robust Inter-Agent Communication & Orchestration:**
-        *   Design and implement a mechanism for inter-agent communication, task delegation, and workflow management.
-    *   **Priority 5: Implement Task Management & Queuing:**
-        *   Establish a centralized or distributed task queue.
+        *   **SupabaseAgent:** Ensure DDL operations are truly safe (e.g., by requiring specific confirmations or using a more robust RPC mechanism than a generic "execute_sql_unsafe"). Improve error parsing from Supabase.
+        *   **ResearchAgent:** Implement a basic task queue (e.g., using Redis or a Supabase table) for managing search/fetch tasks and their results.
+        *   **All Agents (including Pipecat services):** Continue to review and improve error handling, logging, and status reporting based on proper documentation. Solidify tool execution logic within `LiteLLMPipecatService` beyond placeholders.
 
 *   **Future Goals (Post-Blocker Resolution & Core Refinement):**
+    *   Develop a robust inter-agent communication protocol (e.g., message bus like Redis pub/sub, or a dedicated orchestration service).
     *   Implement comprehensive automated testing.
     *   Integrate `VectorDB` properly for RAG capabilities and shared knowledge.
     *   Develop a user interface or CLI for managing agents and tasks.
-    *   Address advanced multimodal features, enterprise features, and platform expansion as originally envisioned, once the core is stable and secure.
+    *   Priority 5: Update `PMOVES_AGENT_PLATFORM_PLAN.md`: Once documentation is unblocked, accurately reflect the project's true status and a detailed, revised roadmap.
 
 ---
 
@@ -404,39 +423,37 @@ This section tracks the step-by-step implementation of the Supabase Agent and re
 
 - [x] **Catalog existing agent patterns and document adaptation strategy**
 - [x] **Update master plan with agent catalog and integration plan**
-- [x] **Scaffold minimal Pipecat agent:**
-    - [x] Connect to Supabase Realtime chat channel
-    - [x] Process incoming messages through a text-only Pipecat pipeline
-    - [x] Send responses to chat with assigned avatar
-    - [x] Register agent with orchestrator/registry
-- [x] **Enhanced Core Service Implementation:**
-    - [x] Full multimodal pipeline creation (TTS, STT, WebRTC, image processing)
-    - [x] Supabase Realtime integration with message routing
-    - [x] Enhanced agent registry with capability detection
-    - [x] A2A protocol support for agent-to-agent communication
-    - [x] Dynamic agent spawning and orchestration
-    - [x] WebSocket and WebRTC transport support
-- [x] **Complete Agent Implementations:**
-    - [x] SupabaseAgent with search/upsert integration
-    - [x] TranscribeAgent with multimodal processing
-    - [x] MultimodalAgent with vision and generation
-- [x] **Production Features:**
-    - [x] Authentication and authorization
-    - [x] Rate limiting and validation
-    - [x] Comprehensive monitoring and logging
-    - [ ] Performance optimization
+- [ ] **Scaffold minimal Pipecat agent:**
+    - [ ] Connect to Supabase Realtime chat channel
+    - [ ] Process incoming messages through a text-only Pipecat pipeline
+    - [ ] Send responses to chat with assigned avatar
+    - [ ] Register agent with orchestrator/registry
+- [ ] **Enhanced Core Service Implementation:**
+    - [ ] Full multimodal pipeline creation (TTS, STT, WebRTC, image processing)
+    - [ ] Supabase Realtime integration with message routing
+    - [ ] Enhanced agent registry with capability detection
+    - [ ] A2A protocol support for agent-to-agent communication
+    - [ ] Dynamic agent spawning and orchestration
+    - [ ] WebSocket and WebRTC transport support
+- [ ] **Complete Agent Implementations:**
+    - [ ] SupabaseAgent with search/upsert integration
+    - [ ] TranscribeAgent with multimodal processing
+    - [ ] MultimodalAgent with vision and generation
+- [ ] **Production Features:**
+    - [ ] Authentication and authorization
+    *   [ ] Rate limiting and validation
+    *   [ ] Comprehensive monitoring and logging
+    *   [ ] Performance optimization
 - [ ] **Advanced Features:**
-    - [ ] Agent marketplace and plugin system
-    - [ ] Multi-tenant support
-    - [ ] Enterprise integrations
-    - [ ] Mobile app support
+    *   [ ] Agent marketplace and plugin system
+    *   [ ] Multi-tenant support
+    *   [ ] Enterprise integrations
+    *   [ ] Mobile app support
 
-**Current Status: FULL PLATFORM COMPLETE ✅**
-- The complete PMOVES platform is production-ready with full multimodal capabilities
-- All core services, agents, and backend infrastructure are implemented and documented
-- Comprehensive security, authentication, and rate limiting implemented
-- Advanced search, content management, and multimodal processing capabilities
-- Ready for production deployment and scaling
-- Next focus: Production deployment, monitoring, and performance optimization
+**Current Status: Core Components Partially Implemented, Significant Blockers Remain**
+- Foundational work on some core services (like `pmoves-agent-registry`, `psearchworking.py` CLI, parts of `pmoves-pipecat`) and initial versions of specialized agents exist.
+- Key platform features such as robust agent orchestration, inter-agent communication (via the defined `AgentCommand` protocol), comprehensive security (API auth is currently disabled), task management, and automated testing are largely incomplete or not yet implemented.
+- Critical blockers, including those related to documentation access (historically) and finalising core infrastructure, need to be addressed.
+- The platform is not production-ready. Development should focus on addressing blockers and implementing core features and security measures as outlined in the 'Next Steps & Priorities' section.
 
 *This doc will be updated as the project progresses. See individual task breakdowns for detailed status and references.* 

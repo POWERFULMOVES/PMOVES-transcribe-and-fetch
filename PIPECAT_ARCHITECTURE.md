@@ -29,18 +29,18 @@ The PMOVES Pipecat system follows a **core service + agent instances** architect
     (Note: While LiteLLM provides a callback system, e.g., `CustomLogger`, it is primarily for observability and does not currently offer a direct hook for intercepting and executing tool calls mid-turn, necessitating the described multi-step process.)
 
 ### 2. Agent Instances (`pmoves-pipecat-agent`)
-**Purpose**: Lightweight agent clients with multimodal capabilities
+**Purpose**: Specialized task execution clients that connect to the Core Pipecat Service. They are not direct Pipecat pipeline participants but rather execute business logic based on commands received.
 - **Port**: 8000 (configurable)
 - **Container**: `pmoves-pipecat-agent` (example: Supabase agent)
 - **Responsibilities**:
-  - Connect to core pipecat service via WebSocket or WebRTC
-  - Handle specific agent types (Supabase, Transcribe, etc.)
-  - Chat integration via Supabase Realtime
-  - Agent-specific command processing
-  - Multimodal frame processing (text, audio, video, images)
-  - **Image Processing**: Image frame support in pipelines
+  - Connect to the Core Pipecat Service (`pmoves-pipecat`) via WebSocket (as implemented in `pmoves-pipecat-agent/agent.py`). WebRTC connection from agent instance to core is not evident in `agent.py`.
+  - House specialized logic for different agent types (e.g., `SupabaseAgent`, `TranscribeAgent`, `MultimodalAgent` in `pmoves-pipecat-agent/agents/`). These specialized classes are not Pipecat `FrameProcessor`s themselves but contain the business logic.
+  - Integrate with Supabase Realtime for chat command input and text responses (managed by `PipecatAgentClient` in `agent.py`).
+  - Process text-based commands received from the Core Pipecat Service or Supabase Realtime, delegating to the specialized agent logic.
+  - **Clarification on Frame Handling:** Multimodal Pipecat frame processing (e.g., `AudioFrame`, `ImageFrame`) and the handling of tool-related Pipecat frames (`LLMToolCallFrame`, `FunctionCallResultFrame`, etc.) primarily occur within the Core Pipecat Service (`pmoves-pipecat`), specifically in services like `LiteLLMPipecatService`. The `pmoves-pipecat-agent` instances receive tasks (often derived from these processed frames by the core service) and execute them, returning results typically as text or structured data.
   - **Frame Types**: TextFrame, AudioFrame, VideoFrame, ImageFrame, LLMMessagesFrame
   - **Tool-Related Frames**: Utilizes `LLMToolCallFrame` (LLM requests a tool), `FunctionCallInProgressFrame` (tool execution started), and `FunctionCallResultFrame` (result of tool execution) to manage the tool-calling lifecycle within pipelines.
+  - These frames are primarily processed and managed within the Core Pipecat Service (`pmoves-pipecat`). Agent Instances (`pmoves-pipecat-agent`) interact with the outcomes of these processes rather than directly handling these Pipecat frames in their own pipelines.
   - `LLMMessagesFrame`: Carries the history of messages for the LLM.
   - `LLMToolCallFrame`: Indicates the LLM's intent to call a specific tool, including its name and (streamed) arguments.
   - `FunctionCallInProgressFrame`: Signals that a requested tool call is actively being processed.
@@ -68,7 +68,8 @@ flowchart TD
     Agent --> |A2A Protocol| OtherAgent[Other Agent Instances]
     Core --> |Orchestrates| OtherAgent
     
-    Core --> |Multimodal Frames| Agent
+    Core -- Tasks/Data (WebSocket) --> Agent
+    Agent -- Results (WebSocket) --> Core
     Agent --> |Chat Response| Supabase
 ```
 
@@ -78,7 +79,7 @@ flowchart TD
 - **Text Processing**: LLM integration via LiteLLM proxy
 - **Audio Processing**: TTS (ElevenLabs) and STT (Deepgram) services
 - **Video Processing**: WebRTC streams via Daily.co
-- **Image Processing**: Image frame support in pipelines
+- **Image Processing**: Image frame support in Core Service pipelines
 - **Frame Types**: TextFrame, AudioFrame, VideoFrame, ImageFrame, LLMMessagesFrame
 
 ### WebRTC Integration
@@ -179,6 +180,7 @@ PIPECAT_WS_URL=ws://pipecat:8081
 ## WebSocket Frame Protocol
 
 ### Supported Frame Types (Expanded)
+The following Pipecat frames are primarily handled and generated within the Core Pipecat Service (`pmoves-pipecat`), particularly by services like `LiteLLMPipecatService`. Agent Instances (`pmoves-pipecat-agent`) typically receive tasks derived from these processed frames via WebSocket.
 Pipecat uses a variety of frame types to manage data flow. In addition to basic types like `TextFrame`, `AudioFrame`, `ImageFrame`, and `VideoFrame`, the system heavily relies on specialized frames for LLM interaction and tool-calling:
 - `LLMMessagesFrame`: Carries the history of messages for the LLM.
 - `LLMToolCallFrame`: Indicates the LLM's intent to call a specific tool, including its name and (streamed) arguments.
