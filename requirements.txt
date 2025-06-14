@@ -59,7 +59,7 @@ openpyxl==3.1.5
 packaging==24.2
 pandas==2.2.3
 pdfkit==1.0.0
-pillow==10.3.0
+pillow==10.4.0
 postgrest==0.18.0
 propcache==0.2.0
 protobuf==5.29.0
