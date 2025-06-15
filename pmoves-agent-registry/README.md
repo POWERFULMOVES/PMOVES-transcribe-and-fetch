@@ -8,10 +8,12 @@ A minimal, extensible FastAPI-based service for dynamic agent registration, disc
 - Pydantic schema validation
 - Docker-ready
 - Designed for orchestrator, UI, and agent integration
+- Capability discovery across all agents
 
 ## API Endpoints
 - `GET /agents` — List all registered agents
 - `GET /agents/{agent_id}` — Get details for a specific agent
+- `GET /capabilities` — List unique capabilities across all agents
 - `POST /agents/register` — Register or update an agent
 - `POST /agents/heartbeat` — Agent health check-in
 - `DELETE /agents/{agent_id}` — Deregister an agent

@@ -71,6 +71,14 @@ class TestAgentRegistryIntegration(unittest.TestCase):
         self.assertEqual(response_json[0], self.base_agent_dict_json_compatible)
         mock_agent_store.list.assert_called_once()
 
+    def test_list_capabilities(self, mock_agent_store: MagicMock):
+        mock_agent_store.list_capabilities.return_value = ["text", "tts"]
+
+        response = self.client.get("/capabilities")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), ["text", "tts"])
+        mock_agent_store.list_capabilities.assert_called_once()
+
     # Test GET /agents/{agent_id}
     def test_get_agent_by_id_success(self, mock_agent_store: MagicMock):
         mock_agent_store.get.return_value = self.mock_agent_metadata_object

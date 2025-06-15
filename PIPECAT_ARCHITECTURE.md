@@ -18,7 +18,9 @@ The PMOVES Pipecat system follows a **core service + agent instances** architect
   - WebSocket communication hub
   - **WebRTC support** via Daily.co integration
   - **Multimodal pipelines** (text, audio, video, images)
+  - Example stub in `pmoves-pipecat-agent/multimodal_pipeline.py`
   - **Supabase Realtime integration** for chat
+  - **Message routing** via a simple router in `minimal_agent.py`
   - **TTS/STT services** (ElevenLabs, Deepgram)
   - **Advanced Tool-Calling**: The custom `LiteLLMPipecatService` enables robust tool-calling. It leverages LiteLLM's native support for OpenAI-compatible tool calling by passing tool schemas (managed by `ToolSchemaManager`) directly to the LLM via the `tools` parameter in `acompletion` calls. The execution flow is as follows:
     1. The LLM indicates its intent to use a tool in its response.
@@ -37,6 +39,7 @@ The PMOVES Pipecat system follows a **core service + agent instances** architect
   - House specialized logic for different agent types (e.g., `SupabaseAgent`, `TranscribeAgent`, `MultimodalAgent` in `pmoves-pipecat-agent/agents/`). These specialized classes are not Pipecat `FrameProcessor`s themselves but contain the business logic.
   - Integrate with Supabase Realtime for chat command input and text responses (managed by `PipecatAgentClient` in `agent.py`).
   - Process text-based commands received from the Core Pipecat Service or Supabase Realtime, delegating to the specialized agent logic.
+  - Optional OpenTelemetry tracing using `PipelineTask` (see `ENABLE_TRACING`).
   - **Clarification on Frame Handling:** Multimodal Pipecat frame processing (e.g., `AudioFrame`, `ImageFrame`) and the handling of tool-related Pipecat frames (`LLMToolCallFrame`, `FunctionCallResultFrame`, etc.) primarily occur within the Core Pipecat Service (`pmoves-pipecat`), specifically in services like `LiteLLMPipecatService`. The `pmoves-pipecat-agent` instances receive tasks (often derived from these processed frames by the core service) and execute them, returning results typically as text or structured data.
   - **Frame Types**: TextFrame, AudioFrame, VideoFrame, ImageFrame, LLMMessagesFrame
   - **Tool-Related Frames**: Utilizes `LLMToolCallFrame` (LLM requests a tool), `FunctionCallInProgressFrame` (tool execution started), and `FunctionCallResultFrame` (result of tool execution) to manage the tool-calling lifecycle within pipelines.
@@ -97,6 +100,8 @@ flowchart TD
 
 ### Enhanced Agent Registry Integration
 - **Capability Detection**: Dynamic capability detection based on available services
+- **Capability Endpoint**: `GET /capabilities` lists capabilities across all agents
+- **Provider Capability Query**: `/provider_capabilities` uses LiteLLM to list supported parameters
 - **Multimodal Metadata**: Transport types, supported modalities
 - **Real-time Status**: Live agent status and health monitoring
 - **A2A Protocol**: Agent discovery and inter-agent messaging

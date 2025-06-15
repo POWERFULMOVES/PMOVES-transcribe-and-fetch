@@ -6,9 +6,13 @@ from realtime import AsyncRealtimeClient
 
 from pipecat.pipeline.pipeline import Pipeline
 from pipecat.pipeline.runner import PipelineRunner
+from pipecat.pipeline.task import PipelineParams, PipelineTask
 from pipecat.frames.frames import TextFrame, LLMMessagesFrame
 from pipecat.processors.frame_processor import FrameDirection, FrameProcessor
 from pipecat.services.openai.llm import OpenAILLMService
+
+from .message_router import MessageRouter
+from datetime import datetime
 
 
 class OutputCollector(FrameProcessor):
@@ -38,6 +42,9 @@ class MinimalPipecatAgent:
             "avatar_url": os.getenv("AVATAR_URL", ""),
             "registry_url": os.getenv("AGENT_REGISTRY_URL", "http://localhost:8000"),
             "openai_key": os.getenv("OPENAI_API_KEY", ""),
+            "heartbeat_interval": int(os.getenv("HEARTBEAT_INTERVAL", "30")),
+            "enable_tracing": os.getenv("ENABLE_TRACING", "false").lower() == "true",
+            "conversation_id": os.getenv("CONVERSATION_ID", ""),
         }
         self.agent_id = str(uuid.uuid4())
         self.realtime = None
@@ -45,14 +52,23 @@ class MinimalPipecatAgent:
         self.pipeline = None
         self.runner = None
         self.collector = None
+        self.router = MessageRouter(self.config["call_word"])
 
     async def register_agent(self):
         """Register agent with the orchestrator/registry."""
+        caps = ["text"]
+        if os.getenv("ELEVENLABS_API_KEY") or os.getenv("CARTESIA_API_KEY"):
+            caps.append("tts")
+        if os.getenv("DEEPGRAM_API_KEY") or os.getenv("ASSEMBLYAI_API_KEY"):
+            caps.append("stt")
+        if os.getenv("DAILY_API_KEY"):
+            caps.append("webrtc")
+
         data = {
             "agent_id": self.agent_id,
             "name": self.config["agent_name"],
             "description": "Minimal Pipecat text agent",
-            "capabilities": ["text"],
+            "capabilities": caps,
             "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}},
             "output_schema": {"type": "object", "properties": {"text": {"type": "string"}}},
             "status": "active",
@@ -78,8 +94,7 @@ class MinimalPipecatAgent:
         llm = OpenAILLMService(api_key=self.config["openai_key"])
         self.collector = OutputCollector()
         self.pipeline = Pipeline([llm, self.collector])
-        self.runner = PipelineRunner(self.pipeline)
-        await self.runner.start()
+        self.runner = PipelineRunner(handle_sigint=False)
 
     async def connect_realtime(self):
         """Connect to Supabase Realtime and subscribe to chat channel."""
@@ -99,9 +114,7 @@ class MinimalPipecatAgent:
         msg = payload.get("new", {})
         text = msg.get("text", "")
         user = msg.get("user", "user")
-        if self.config["call_word"] not in text:
-            return
-        prompt = text.split(self.config["call_word"], 1)[-1].strip()
+        prompt = self.router.extract_prompt(text)
         if not prompt:
             return
         response = await self.process_text(prompt)
@@ -109,7 +122,15 @@ class MinimalPipecatAgent:
 
     async def process_text(self, prompt: str) -> str:
         messages = [{"role": "user", "content": prompt}]
-        await self.pipeline.process_frame(LLMMessagesFrame(messages), FrameDirection.DOWNSTREAM)
+        task = PipelineTask(
+            self.pipeline,
+            params=PipelineParams(),
+            enable_tracing=self.config["enable_tracing"],
+            conversation_id=self.config["conversation_id"] or self.agent_id,
+            additional_span_attributes={"agent_id": self.agent_id},
+        )
+        await task.queue_frame(LLMMessagesFrame(messages))
+        await self.runner.run(task)
         frame = await self.collector.queue.get()
         return frame.text
 
@@ -126,18 +147,36 @@ class MinimalPipecatAgent:
         await self.channel.send("broadcast", {"type": "message", "payload": payload})
         print(f"[RESPONSE to {user}] {response}")
 
+    async def send_heartbeat(self):
+        """Send heartbeat to the agent registry."""
+        url = self.config["registry_url"].rstrip("/") + "/agents/heartbeat"
+        payload = {"agent_id": self.agent_id, "timestamp": datetime.utcnow().isoformat()}
+        try:
+            async with httpx.AsyncClient() as client:
+                res = await client.post(url, json=payload)
+                if res.status_code != 200:
+                    print(f"[WARN] Heartbeat failed {res.status_code}: {res.text}")
+        except Exception as exc:
+            print(f"[ERROR] Heartbeat error: {exc}")
+
+    async def heartbeat_loop(self):
+        interval = self.config.get("heartbeat_interval", 30)
+        while True:
+            await self.send_heartbeat()
+            await asyncio.sleep(interval)
+
     async def run(self):
         await self.register_agent()
         await self.build_pipeline()
         await self.connect_realtime()
+        heartbeat = asyncio.create_task(self.heartbeat_loop())
         try:
             while True:
                 await asyncio.sleep(1)
         finally:
+            heartbeat.cancel()
             if self.realtime:
                 await self.realtime.disconnect()
-            if self.runner:
-                await self.runner.stop()
 
 
 if __name__ == "__main__":

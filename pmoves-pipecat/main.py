@@ -64,6 +64,7 @@ except ImportError as e:
 # LiteLLM integration
 try:
     import litellm
+    from litellm import get_supported_openai_params
     # from litellm import completion # completion is not directly used, Router is.
     if not hasattr(litellm, 'Router'):
         print("[WARNING] litellm.Router not available, LiteLLM integration might be limited.")
@@ -605,6 +606,16 @@ class PipecatOrchestrator:
 
             del self.agents[agent_id]
 
+    async def provider_capabilities(self, model: str, provider: str | None = None) -> List[str]:
+        """Return supported OpenAI-style params for a model/provider via LiteLLM."""
+        if not litellm:
+            return []
+        try:
+            return get_supported_openai_params(model=model, custom_llm_provider=provider)
+        except Exception as e:
+            print(f"[ERROR] Failed to fetch provider capabilities: {e}")
+            return []
+
     async def _register_agent(self, agent: AgentInstance):
         """Register agent with the registry"""
         try:
@@ -814,6 +825,12 @@ async def list_models():
         raise HTTPException(status_code=e.response.status_code, detail=f"Error from LiteLLM proxy: {e.response.text}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch models: {str(e)}")
+
+
+@app.get("/provider_capabilities")
+async def provider_capabilities(model: str, provider: str | None = None):
+    caps = await orchestrator.provider_capabilities(model=model, provider=provider)
+    return {"model": model, "provider": provider, "capabilities": caps}
 
 
 # WebSocket endpoint for agent communication
