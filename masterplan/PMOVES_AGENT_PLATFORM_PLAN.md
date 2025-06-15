@@ -428,12 +428,13 @@ This section tracks the step-by-step implementation of the Supabase Agent and re
     - [x] Process incoming messages through a text-only Pipecat pipeline
     - [x] Send responses to chat with assigned avatar
     - [x] Register agent with orchestrator/registry
+    - [x] Send periodic heartbeat to registry
 - [ ] **Enhanced Core Service Implementation:**
-    - [ ] Full multimodal pipeline creation (TTS, STT, WebRTC, image processing)
-    - [ ] Supabase Realtime integration with message routing
-    - [ ] Enhanced agent registry with capability detection
+    - [x] Full multimodal pipeline creation (TTS, STT, WebRTC, image processing)
+    - [x] Supabase Realtime integration with message routing
+    - [x] Enhanced agent registry with capability detection
     - [x] A2A protocol support for agent-to-agent communication
-    - [ ] Dynamic agent spawning and orchestration
+    - [x] Dynamic agent spawning and orchestration
     - [ ] WebSocket and WebRTC transport support
 - [ ] **Complete Agent Implementations:**
     - [ ] SupabaseAgent with search/upsert integration

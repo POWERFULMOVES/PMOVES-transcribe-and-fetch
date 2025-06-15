@@ -158,6 +158,24 @@ class AgentStore:
             logger.error("Unexpected error while listing agents with filters: %s", e, exc_info=True) # Modified
             return []
 
+    def list_capabilities(self) -> List[str]:
+        """Return all unique agent capabilities."""
+        try:
+            response = self.db.table("agents").select("capabilities").execute()
+            caps: set[str] = set()
+            if response.data:
+                for row in response.data:
+                    data = self._deserialize_agent_data(row)
+                    if isinstance(data.get("capabilities"), list):
+                        caps.update(data["capabilities"])
+            return sorted(caps)
+        except PostgrestAPIError as e:
+            logger.error("Error fetching capabilities: %s", getattr(e, 'message', str(e)), exc_info=True)
+            return []
+        except Exception as e:
+            logger.error("Unexpected error fetching capabilities: %s", e, exc_info=True)
+            return []
+
     def heartbeat(self, agent_id: str, timestamp: datetime) -> Optional[AgentMetadata]:
         update_data = {
             "last_heartbeat": timestamp.isoformat(),
@@ -203,3 +221,4 @@ class AgentStore:
         except Exception as e:
             logger.error("Unexpected error during deregistration of agent %s: %s", agent_id, e, exc_info=True) # Modified
             return False
+

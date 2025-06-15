@@ -86,6 +86,12 @@ AGENT_TYPE=transcribe python agent.py
 
 # Multimodal Agent
 AGENT_TYPE=multimodal python agent.py
+
+# Query provider capabilities
+curl "http://pipecat:8080/provider_capabilities?model=gpt-3.5-turbo&provider=openai"
+
+# Example Multimodal Pipeline
+# (see `multimodal_pipeline.py` for a runnable stub)
 ```
 
 ## ⚙️ Configuration
@@ -106,6 +112,10 @@ PIPECAT_WS_URL=ws://pipecat:8081
 # Chat Configuration
 CHAT_CHANNEL=main-room
 CALL_WORD=@MyAgent
+HEARTBEAT_INTERVAL=30
+ENABLE_TRACING=false
+# Optional conversation identifier for tracing
+CONVERSATION_ID=
 ```
 
 #### Security Configuration

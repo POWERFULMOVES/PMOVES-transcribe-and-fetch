@@ -20,6 +20,12 @@ def list_agents(
         tag=tag
     )
 
+
+@app.get("/capabilities", response_model=List[str])
+def list_capabilities():
+    """Return all unique capabilities of registered agents."""
+    return agent_store.list_capabilities()
+
 @app.get("/agents/{agent_id}", response_model=AgentMetadata)
 def get_agent(agent_id: str):
     agent = agent_store.get(agent_id)
