@@ -2,7 +2,7 @@ import os
 import logging
 from typing import Optional
 
-from supabase import create_client, AsyncClient
+from supabase import AsyncClient
 from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
@@ -26,7 +26,7 @@ async def get_client() -> AsyncClient:
                     "Supabase URL or Key is not set in environment variables."
                 )
             logger.info("Initializing Supabase AsyncClient singleton from dependencies...")
-            _supabase_client = create_client(url, key, is_async=True)
+            _supabase_client = await AsyncClient.create(url, key)
             logger.info(
                 "Supabase AsyncClient singleton initialized successfully from dependencies."
             )

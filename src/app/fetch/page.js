@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input"; // Added
 import { Label } from "@/components/ui/label"; // Added
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"; // Added
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -43,7 +43,6 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
   // const [hasMoreHistory, setHasMoreHistory] = useState(true);
   // const [totalHistoryItems, setTotalHistoryItems] = useState(0);
   const [activeMainTab, setActiveMainTab] = useState(initialActiveMainTab); // For top-level tabs (Fetch/History)
-  const { toast } = useToast();
   const [isSavedToHistory, setIsSavedToHistory] = useState(false);
   const [isSavingToHistory, setIsSavingToHistory] = useState(false);
   const [fetchingEngine, setFetchingEngine] = useState("jina"); // Isolate fetchingEngine state
@@ -255,14 +254,10 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
           // Assuming models is an array of StandardizedLLM objects
           // We might want to filter or transform them if needed, e.g., filter by capability for crawl4ai
           setAvailableLlmModels(models || []);
-          toast({ title: "LLM Models Loaded", description: `Found ${models.length} models.` });
+          toast.success(`LLM Models Loaded: Found ${models.length} models.`);
         } catch (error) {
           console.error("Failed to fetch LLM models:", error);
-          toast({
-            title: "Error Loading LLM Models",
-            description: error.message || "Could not fetch LLM model list from backend.",
-            variant: "destructive",
-          });
+          toast.error(error.message || "Could not fetch LLM model list from backend.");
           setAvailableLlmModels([]); // Ensure it's an empty array on error
         } finally {
           setIsLoadingLlmModels(false);
@@ -279,7 +274,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
         // For now, let's assume initial load is sufficient unless specific re-fetch logic is required.
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps 
-  }, [fetchingEngine, showAdvanced, toast]); // BACKEND_URL is constant, availableLlmModels.length in condition
+  }, [fetchingEngine, showAdvanced]); // BACKEND_URL is constant, availableLlmModels.length in condition
 
 
   const estimateProgress = (status) => {
@@ -634,6 +629,10 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
   const setCacheTtlHandler = useCallback((val) => setFormValue('cacheTtl', val), [setFormValue]);
   const setBrowserLocaleHandler = useCallback((val) => setFormValue('browserLocale', val), [setFormValue]);
   const setExtractMetadataHandler = useCallback((val) => setFormValue('extractMetadata', val), [setFormValue]);
+  // Handlers for LLM configuration fields
+  const setLlmProviderHandler = useCallback((val) => setFormValue('llmProvider', val), [setFormValue]);
+  const setLlmApiTokenHandler = useCallback((val) => setFormValue('llmApiToken', val), [setFormValue]);
+  const setLlmBaseUrlHandler = useCallback((val) => setFormValue('llmBaseUrl', val), [setFormValue]);
   const setCrawl4aiUserAgentHandler = useCallback((val) => setFormValue('crawl4aiUserAgent', val), [setFormValue]);
   const setCrawl4aiViewportWidthHandler = useCallback((val) => setFormValue('crawl4aiViewportWidth', val), [setFormValue]);
   const setCrawl4aiViewportHeightHandler = useCallback((val) => setFormValue('crawl4aiViewportHeight', val), [setFormValue]);
@@ -737,19 +736,11 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
 
   const handleSaveToHistory = async () => {
     if (!formState.result) {
-      toast({
-        title: "Error",
-        description: "No content to save.",
-        variant: "destructive",
-      });
+      toast.error("No content to save.");
       return;
     }
     if (isSavedToHistory) {
-       toast({
-        title: "Already Saved",
-        description: "This content has already been saved to history.",
-        variant: "default",
-      });
+       toast("This content has already been saved to history.");
       return;
     }
 
@@ -884,11 +875,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
         throw new Error(errorData.detail || errorData.message || `HTTP error! status: ${response.status}`);
       }
 
-      toast({
-        title: "Success!",
-        description: "Content saved to history.",
-        variant: "default",
-      });
+      toast.success("Content saved to history.");
       setIsSavedToHistory(true);
       // TODO: Implement refresh logic for useInfiniteQuery if needed.
       // This is out of scope for the current task.
@@ -899,11 +886,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
 
     } catch (error) {
       console.error("Error saving to history:", error);
-      toast({
-        title: "Error Saving to History",
-        description: error.message || "Could not save content to history. Please try again.",
-        variant: "destructive",
-      });
+      toast.error(error.message || "Could not save content to history. Please try again.");
     } finally {
       setIsSavingToHistory(false);
     }
@@ -912,11 +895,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
   // Placeholder handlers for FetchHistoryTable actions
   const handleViewHistoryItem = async (item) => {
     if (!item || !item.id) {
-      toast({
-        title: "Error",
-        description: "History item ID is missing. Cannot fetch content.",
-        variant: "destructive",
-      });
+      toast.error("History item ID is missing. Cannot fetch content.");
       return;
     }
 
@@ -925,10 +904,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
     // Clear previous result and specific error for this section
     setFormState(prev => ({ ...prev, result: null }));
     setMainFetchError(null);
-    toast({
-      title: "Loading Content...",
-      description: `Fetching content for ${item.title || item.url || item.id}.`,
-    });
+    toast(`Fetching content for ${item.title || item.url || item.id}...`);
     window.scrollTo(0, 0); // Scroll to top
 
     try {
@@ -1016,10 +992,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
 
 
       setFormState(prev => ({ ...prev, result: viewerData }));
-      toast({
-        title: "Content Loaded",
-        description: `Displaying content for ${item.title || item.url}.`,
-      });
+      toast.success(`Displaying content for ${item.title || item.url}.`);
 
     } catch (error) {
       console.error("Error fetching history item content:", error);
@@ -1028,21 +1001,13 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
       setMainFetchError(`Could not load content for "${item.title || item.url || item.id}". Error: ${errorMessage}`);
       // Update formState to reflect the error in the content area if desired, or rely on mainFetchError
       setFormState(prev => ({ ...prev, result: { markdownContent: `## Error Loading Content\n\n${errorMessage}` } }));
-      toast({
-        title: "Error Loading Content",
-        description: errorMessage,
-        variant: "destructive",
-      });
+      toast.error(errorMessage);
     }
   };
 
   const handleDeleteHistoryItem = async (itemId) => {
     if (!itemId) {
-      toast({
-        title: "Error",
-        description: "History item ID is missing.",
-        variant: "destructive",
-      });
+      toast.error("History item ID is missing.");
       return;
     }
 
@@ -1062,11 +1027,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
         throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
       }
 
-      toast({
-        title: "Success!",
-        description: "History item deleted successfully.",
-        variant: "default",
-      });
+      toast.success("History item deleted successfully.");
 
       // Refresh the history list using the initialize function from useInfiniteQuery
       if (typeof initializeHistory === 'function') {
@@ -1078,21 +1039,13 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
 
     } catch (error) {
       console.error("Error deleting history item:", error);
-      toast({
-        title: "Error Deleting Item",
-        description: error.message || "Could not delete history item. Please try again.",
-        variant: "destructive",
-      });
+      toast.error(error.message || "Could not delete history item. Please try again.");
     }
   };
 
   const handleRefetchHistoryItem = (item) => {
     if (!item) {
-      toast({
-        title: "Error",
-        description: "History item data is missing.",
-        variant: "destructive",
-      });
+      toast.error("History item data is missing.");
       return;
     }
 
@@ -1183,11 +1136,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
     setActiveMainTab("fetchContent");
     setShowAdvanced(true); // Assume re-fetch might use advanced options
     window.scrollTo(0, 0); // Scroll to top to see the populated form
-    toast({
-      title: "Form Populated",
-      description: "Form populated with settings from selected history item.",
-      variant: "default",
-    });
+    toast.success("Form populated with settings from selected history item.");
   };
   
   // Callback to refresh the history list
@@ -1197,27 +1146,16 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
       try {
         // OLD: await historyQuery.initialize();
         await initializeHistory(); // Call the destructured function
-        toast({
-          title: "History Refreshed",
-          description: "The fetch history has been reloaded from the server.",
-        });
+        toast.success("The fetch history has been reloaded from the server.");
       } catch (error) {
         console.error("Error refreshing history:", error);
-        toast({
-          title: "Refresh Failed",
-          description: `Could not refresh history: ${error.message}`,
-          variant: "destructive",
-        });
+        toast.error(`Could not refresh history: ${error.message}`);
       }
     } else {
       console.warn("Attempted to refresh history, but initializeHistory function is not available.");
-      toast({
-        title: "Refresh Unavailable",
-        description: "The history refresh function is not ready.",
-        variant: "destructive",
-      });
+      toast.error("The history refresh function is not ready.");
     }
-  }, [initializeHistory, toast]); // Update dependency array to initializeHistory
+  }, [initializeHistory]); // Update dependency array to initializeHistory
 
   // Effect to load initial history data only once on mount
   useEffect(() => {
@@ -1273,146 +1211,146 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
               <AdvancedFetchOptions
                 fetchingEngine={fetchingEngine} // Pass isolated state
                 targetSelectorAdvanced={formState.jinaTargetSelectorAdvanced}
-                setTargetSelectorAdvanced={(value) => handleFormChange('jinaTargetSelectorAdvanced', value)}
+                setTargetSelectorAdvanced={setTargetSelectorAdvancedHandler}
                 excludedSelectors={formState.jinaExcludedSelectors}
-                setExcludedSelectors={(value) => handleFormChange('jinaExcludedSelectors', value)}
+                setExcludedSelectors={setExcludedSelectorsHandler}
                 browserEngine={formState.jinaBrowserEngine}
-                setBrowserEngine={(value) => handleFormChange('jinaBrowserEngine', value)}
+                setBrowserEngine={setBrowserEngineHandler}
                 tokenBudget={formState.jinaTokenBudget}
-                setTokenBudget={(value) => handleFormChange('jinaTokenBudget', value)}
+                setTokenBudget={setTokenBudgetHandler}
                 viewportWidth={formState.jinaViewportWidth}
-                setViewportWidth={(value) => handleFormChange('jinaViewportWidth', value)}
+                setViewportWidth={setViewportWidthHandler}
                 viewportHeight={formState.jinaViewportHeight}
-                setViewportHeight={(value) => handleFormChange('jinaViewportHeight', value)}
+                setViewportHeight={setViewportHeightHandler}
                 markdownFlavor={formState.jinaMarkdownFlavor}
-                setMarkdownFlavor={(value) => handleFormChange('jinaMarkdownFlavor', value)}
+                setMarkdownFlavor={setMarkdownFlavorHandler}
                 timeout={formState.jinaTimeout}
-                setTimeout={(value) => handleFormChange('jinaTimeout', value)}
+                setTimeout={setTimeoutHandler}
                 extractTextOnly={formState.jinaExtractTextOnly}
-                setExtractTextOnly={(value) => handleFormChange('jinaExtractTextOnly', value)}
+                setExtractTextOnly={setExtractTextOnlyHandler}
                 extractTables={formState.jinaExtractTables}
-                setExtractTables={(value) => handleFormChange('jinaExtractTables', value)}
+                setExtractTables={setExtractTablesHandler}
                 extractImages={formState.jinaExtractImages}
-                setExtractImages={(value) => handleFormChange('jinaExtractImages', value)}
+                setExtractImages={setExtractImagesHandler}
                 extractLinks={formState.jinaExtractLinks}
-                setExtractLinks={(value) => handleFormChange('jinaExtractLinks', value)}
+                setExtractLinks={setExtractLinksHandler}
                 jsonResponse={formState.jinaJsonResponse}
-                setJsonResponse={(value) => handleFormChange('jinaJsonResponse', value)}
+                setJsonResponse={setJsonResponseHandler}
                 cleanFormat={formState.jinaCleanFormat}
-                setCleanFormat={(value) => handleFormChange('jinaCleanFormat', value)}
+                setCleanFormat={setCleanFormatHandler}
                 imageCaptioning={formState.jinaImageCaptioning}
-                setImageCaptioning={(value) => handleFormChange('jinaImageCaptioning', value)}
+                setImageCaptioning={setImageCaptioningHandler}
                 cacheTtl={formState.jinaCacheTtl}
-                setCacheTtl={(value) => handleFormChange('jinaCacheTtl', value)}
+                setCacheTtl={setCacheTtlHandler}
                 browserLocale={formState.jinaBrowserLocale}
-                setBrowserLocale={(value) => handleFormChange('jinaBrowserLocale', value)}
+                setBrowserLocale={setBrowserLocaleHandler}
                 extractMetadata={formState.jinaExtractMetadata}
-                setExtractMetadata={(value) => handleFormChange('jinaExtractMetadata', value)}
+                setExtractMetadata={setExtractMetadataHandler}
                 
                 // Crawl4ai specific props
                 crawl4aiUserAgent={formState.crawl4aiUserAgent}
-                setCrawl4aiUserAgent={(value) => handleFormChange('crawl4aiUserAgent', value)}
+                setCrawl4aiUserAgent={setCrawl4aiUserAgentHandler}
                 crawl4aiViewportWidth={formState.crawl4aiViewportWidth}
-                setCrawl4aiViewportWidth={(value) => handleFormChange('crawl4aiViewportWidth', value)}
+                setCrawl4aiViewportWidth={setCrawl4aiViewportWidthHandler}
                 crawl4aiViewportHeight={formState.crawl4aiViewportHeight}
-                setCrawl4aiViewportHeight={(value) => handleFormChange('crawl4aiViewportHeight', value)}
+                setCrawl4aiViewportHeight={setCrawl4aiViewportHeightHandler}
                 crawl4aiProxyUrl={formState.crawl4aiProxyUrl}
-                setCrawl4aiProxyUrl={(value) => handleFormChange('crawl4aiProxyUrl', value)}
+                setCrawl4aiProxyUrl={setCrawl4aiProxyUrlHandler}
                 crawl4aiPageLoadWaitCondition={formState.crawl4aiPageLoadWaitCondition}
-                setCrawl4aiPageLoadWaitCondition={(value) => handleFormChange('crawl4aiPageLoadWaitCondition', value)}
+                setCrawl4aiPageLoadWaitCondition={setCrawl4aiPageLoadWaitConditionHandler}
                 crawl4aiPageTimeout={formState.crawl4aiPageTimeout}
-                setCrawl4aiPageTimeout={(value) => handleFormChange('crawl4aiPageTimeout', value)}
+                setCrawl4aiPageTimeout={setCrawl4aiPageTimeoutHandler}
                 crawl4aiWaitForCondition={formState.crawl4aiWaitForCondition}
-                setCrawl4aiWaitForCondition={(value) => handleFormChange('crawl4aiWaitForCondition', value)}
+                setCrawl4aiWaitForCondition={setCrawl4aiWaitForConditionHandler}
                 crawl4aiEnableJs={formState.crawl4aiEnableJs}
-                setCrawl4aiEnableJs={(value) => handleFormChange('crawl4aiEnableJs', value)}
+                setCrawl4aiEnableJs={setCrawl4aiEnableJsHandler}
                 crawl4aiIgnoreHttpsErrors={formState.crawl4aiIgnoreHttpsErrors}
-                setCrawl4aiIgnoreHttpsErrors={(value) => handleFormChange('crawl4aiIgnoreHttpsErrors', value)}
+                setCrawl4aiIgnoreHttpsErrors={setCrawl4aiIgnoreHttpsErrorsHandler}
                 crawl4aiLightMode={formState.crawl4aiLightMode}
-                setCrawl4aiLightMode={(value) => handleFormChange('crawl4aiLightMode', value)}
+                setCrawl4aiLightMode={setCrawl4aiLightModeHandler}
                 crawl4aiTextMode={formState.crawl4aiTextMode}
-                setCrawl4aiTextMode={(value) => handleFormChange('crawl4aiTextMode', value)}
+                setCrawl4aiTextMode={setCrawl4aiTextModeHandler}
                 crawl4aiTargetElements={formState.crawl4aiTargetElements}
-                setCrawl4aiTargetElements={(value) => handleFormChange('crawl4aiTargetElements', value)}
+                setCrawl4aiTargetElements={setCrawl4aiTargetElementsHandler}
                 crawl4aiExcludedElements={formState.crawl4aiExcludedElements}
-                setCrawl4aiExcludedElements={(value) => handleFormChange('crawl4aiExcludedElements', value)}
+                setCrawl4aiExcludedElements={setCrawl4aiExcludedElementsHandler}
                 crawl4aiExcludedTags={formState.crawl4aiExcludedTags}
-                setCrawl4aiExcludedTags={(value) => handleFormChange('crawl4aiExcludedTags', value)}
+                setCrawl4aiExcludedTags={setCrawl4aiExcludedTagsHandler}
                 crawl4aiExtractOnlyTextContent={formState.crawl4aiExtractOnlyTextContent}
-                setCrawl4aiExtractOnlyTextContent={(value) => handleFormChange('crawl4aiExtractOnlyTextContent', value)}
+                setCrawl4aiExtractOnlyTextContent={setCrawl4aiExtractOnlyTextContentHandler}
                 crawl4aiProcessIframes={formState.crawl4aiProcessIframes}
-                setCrawl4aiProcessIframes={(value) => handleFormChange('crawl4aiProcessIframes', value)}
+                setCrawl4aiProcessIframes={setCrawl4aiProcessIframesHandler}
                 crawl4aiWordCountThreshold={formState.crawl4aiWordCountThreshold}
-                setCrawl4aiWordCountThreshold={(value) => handleFormChange('crawl4aiWordCountThreshold', value)}
+                setCrawl4aiWordCountThreshold={setCrawl4aiWordCountThresholdHandler}
                 crawl4aiRemoveForms={formState.crawl4aiRemoveForms}
-                setCrawl4aiRemoveForms={(value) => handleFormChange('crawl4aiRemoveForms', value)}
+                setCrawl4aiRemoveForms={setCrawl4aiRemoveFormsHandler}
                 crawl4aiKeepDataAttributes={formState.crawl4aiKeepDataAttributes}
-                setCrawl4aiKeepDataAttributes={(value) => handleFormChange('crawl4aiKeepDataAttributes', value)}
+                setCrawl4aiKeepDataAttributes={setCrawl4aiKeepDataAttributesHandler}
                 crawl4aiExecuteJsOnLoad={formState.crawl4aiExecuteJsOnLoad}
-                setCrawl4aiExecuteJsOnLoad={(value) => handleFormChange('crawl4aiExecuteJsOnLoad', value)}
+                setCrawl4aiExecuteJsOnLoad={setCrawl4aiExecuteJsOnLoadHandler}
                 crawl4aiScanFullPage={formState.crawl4aiScanFullPage}
-                setCrawl4aiScanFullPage={(value) => handleFormChange('crawl4aiScanFullPage', value)}
+                setCrawl4aiScanFullPage={setCrawl4aiScanFullPageHandler}
                 crawl4aiScrollDelay={formState.crawl4aiScrollDelay}
-                setCrawl4aiScrollDelay={(value) => handleFormChange('crawl4aiScrollDelay', value)}
+                setCrawl4aiScrollDelay={setCrawl4aiScrollDelayHandler}
                 crawl4aiRemoveOverlayElements={formState.crawl4aiRemoveOverlayElements}
-                setCrawl4aiRemoveOverlayElements={(value) => handleFormChange('crawl4aiRemoveOverlayElements', value)}
+                setCrawl4aiRemoveOverlayElements={setCrawl4aiRemoveOverlayElementsHandler}
                 crawl4aiSimulateUserBehavior={formState.crawl4aiSimulateUserBehavior}
-                setCrawl4aiSimulateUserBehavior={(value) => handleFormChange('crawl4aiSimulateUserBehavior', value)}
+                setCrawl4aiSimulateUserBehavior={setCrawl4aiSimulateUserBehaviorHandler}
                 crawl4aiEnableMagic={formState.crawl4aiEnableMagic}
-                setCrawl4aiEnableMagic={(value) => handleFormChange('crawl4aiEnableMagic', value)}
+                setCrawl4aiEnableMagic={setCrawl4aiEnableMagicHandler}
                 crawl4aiOverrideNavigator={formState.crawl4aiOverrideNavigator}
-                setCrawl4aiOverrideNavigator={(value) => handleFormChange('crawl4aiOverrideNavigator', value)}
+                setCrawl4aiOverrideNavigator={setCrawl4aiOverrideNavigatorHandler}
                 crawl4aiCacheMode={formState.crawl4aiCacheMode}
-                setCrawl4aiCacheMode={(value) => handleFormChange('crawl4aiCacheMode', value)}
+                setCrawl4aiCacheMode={setCrawl4aiCacheModeHandler}
                 crawl4aiCaptureScreenshot={formState.crawl4aiCaptureScreenshot}
-                setCrawl4aiCaptureScreenshot={(value) => handleFormChange('crawl4aiCaptureScreenshot', value)}
+                setCrawl4aiCaptureScreenshot={setCrawl4aiCaptureScreenshotHandler}
                 crawl4aiGeneratePdf={formState.crawl4aiGeneratePdf}
-                setCrawl4aiGeneratePdf={(value) => handleFormChange('crawl4aiGeneratePdf', value)}
+                setCrawl4aiGeneratePdf={setCrawl4aiGeneratePdfHandler}
                 crawl4aiCaptureMhtml={formState.crawl4aiCaptureMhtml}
-                setCrawl4aiCaptureMhtml={(value) => handleFormChange('crawl4aiCaptureMhtml', value)}
+                setCrawl4aiCaptureMhtml={setCrawl4aiCaptureMhtmlHandler}
                 crawl4aiExcludeExternalImages={formState.crawl4aiExcludeExternalImages}
-                setCrawl4aiExcludeExternalImages={(value) => handleFormChange('crawl4aiExcludeExternalImages', value)}
+                setCrawl4aiExcludeExternalImages={setCrawl4aiExcludeExternalImagesHandler}
                 crawl4aiImageAltTextMinWordCount={formState.crawl4aiImageAltTextMinWordCount}
-                setCrawl4aiImageAltTextMinWordCount={(value) => handleFormChange('crawl4aiImageAltTextMinWordCount', value)}
+                setCrawl4aiImageAltTextMinWordCount={setCrawl4aiImageAltTextMinWordCountHandler}
                 crawl4aiImageRelevanceScoreThreshold={formState.crawl4aiImageRelevanceScoreThreshold}
-                setCrawl4aiImageRelevanceScoreThreshold={(value) => handleFormChange('crawl4aiImageRelevanceScoreThreshold', value)}
+                setCrawl4aiImageRelevanceScoreThreshold={setCrawl4aiImageRelevanceScoreThresholdHandler}
                 crawl4aiExcludeExternalLinks={formState.crawl4aiExcludeExternalLinks}
-                setCrawl4aiExcludeExternalLinks={(value) => handleFormChange('crawl4aiExcludeExternalLinks', value)}
+                setCrawl4aiExcludeExternalLinks={setCrawl4aiExcludeExternalLinksHandler}
                 crawl4aiExcludeSocialMediaLinks={formState.crawl4aiExcludeSocialMediaLinks}
-                setCrawl4aiExcludeSocialMediaLinks={(value) => handleFormChange('crawl4aiExcludeSocialMediaLinks', value)}
+                setCrawl4aiExcludeSocialMediaLinks={setCrawl4aiExcludeSocialMediaLinksHandler}
                 crawl4aiCustomExcludedDomains={formState.crawl4aiCustomExcludedDomains}
-                setCrawl4aiCustomExcludedDomains={(value) => handleFormChange('crawl4aiCustomExcludedDomains', value)}
+                setCrawl4aiCustomExcludedDomains={setCrawl4aiCustomExcludedDomainsHandler}
                 crawl4aiRespectRobotsTxt={formState.crawl4aiRespectRobotsTxt}
-                setCrawl4aiRespectRobotsTxt={(value) => handleFormChange('crawl4aiRespectRobotsTxt', value)}
+                setCrawl4aiRespectRobotsTxt={setCrawl4aiRespectRobotsTxtHandler}
                 crawl4aiVerboseLogging={formState.crawl4aiVerboseLogging}
-                setCrawl4aiVerboseLogging={(value) => handleFormChange('crawl4aiVerboseLogging', value)}
+                setCrawl4aiVerboseLogging={setCrawl4aiVerboseLoggingHandler}
                 crawl4aiLogPageConsoleOutput={formState.crawl4aiLogPageConsoleOutput}
-                setCrawl4aiLogPageConsoleOutput={(value) => handleFormChange('crawl4aiLogPageConsoleOutput', value)}
+                setCrawl4aiLogPageConsoleOutput={setCrawl4aiLogPageConsoleOutputHandler}
                 
                 // Pass LLM configuration from formState
                 llmProvider={formState.llmProvider}
-                setLlmProvider={(value) => handleFormChange('llmProvider', value)}
+                setLlmProvider={setLlmProviderHandler}
                 llmApiToken={formState.llmApiToken}
-                setLlmApiToken={(value) => handleFormChange('llmApiToken', value)}
+                setLlmApiToken={setLlmApiTokenHandler}
                 llmBaseUrl={formState.llmBaseUrl}
-                setLlmBaseUrl={(value) => handleFormChange('llmBaseUrl', value)}
+                setLlmBaseUrl={setLlmBaseUrlHandler}
                 availableLlmModels={availableLlmModels} // This comes from state, not formState
                 isLoadingLlmModels={isLoadingLlmModels} // This comes from state, not formState
                 
                 crawl4aiMarkdownGenerator={formState.crawl4aiMarkdownGenerator}
-                setCrawl4aiMarkdownGenerator={(value) => handleFormChange('crawl4aiMarkdownGenerator', value)}
+                setCrawl4aiMarkdownGenerator={setCrawl4aiMarkdownGeneratorHandler}
 
                 // Expert Options
                 crawl4aiBrowserCookies={formState.crawl4aiBrowserCookies}
-                setCrawl4aiBrowserCookies={(value) => handleFormChange('crawl4aiBrowserCookies', value)}
+                setCrawl4aiBrowserCookies={setCrawl4aiBrowserCookiesHandler}
                 crawl4aiBrowserHeaders={formState.crawl4aiBrowserHeaders}
-                setCrawl4aiBrowserHeaders={(value) => handleFormChange('crawl4aiBrowserHeaders', value)}
+                setCrawl4aiBrowserHeaders={setCrawl4aiBrowserHeadersHandler}
                 crawl4aiBrowserUsePersistentContext={formState.crawl4aiBrowserUsePersistentContext}
-                setCrawl4aiBrowserUsePersistentContext={(value) => handleFormChange('crawl4aiBrowserUsePersistentContext', value)}
+                setCrawl4aiBrowserUsePersistentContext={setCrawl4aiBrowserUsePersistentContextHandler}
                 crawl4aiCrawlSessionId={formState.crawl4aiCrawlSessionId}
-                setCrawl4aiCrawlSessionId={(value) => handleFormChange('crawl4aiCrawlSessionId', value)}
+                setCrawl4aiCrawlSessionId={setCrawl4aiCrawlSessionIdHandler}
                 crawl4aiCrawlCssSelector={formState.crawl4aiCrawlCssSelector}
-                setCrawl4aiCrawlCssSelector={(value) => handleFormChange('crawl4aiCrawlCssSelector', value)}
+                setCrawl4aiCrawlCssSelector={setCrawl4aiCrawlCssSelectorHandler}
 
                 // Strategy Configs passed directly
                 crawl4aiExtractionConfig={formState.crawl4aiExtractionConfig}
@@ -1422,7 +1360,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
 
                 // Common options
                 uploadToSupabase={formState.uploadToSupabase}
-                setUploadToSupabase={(value) => handleFormChange('uploadToSupabase', value)}
+                setUploadToSupabase={setUploadToSupabaseHandler}
               />
             )}
 

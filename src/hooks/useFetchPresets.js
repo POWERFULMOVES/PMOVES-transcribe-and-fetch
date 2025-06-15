@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, useEffect, useCallback } from 'react';
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
+import { BACKEND_URL } from '@/lib/constants';
 // Removed createClient as we are now using the API endpoint
 // import { createClient } from '@/lib/client';
 
@@ -9,7 +10,6 @@ export function useFetchPresets() {
   const [presets, setPresets] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState(null);
-  const { toast } = useToast();
   // Supabase client is no longer needed here
   // const supabase = createClient();
 
@@ -18,7 +18,7 @@ export function useFetchPresets() {
     setError(null);
     try {
       // Fetch from the backend API endpoint instead of directly from Supabase
-      const response = await fetch('/api/presets');
+      const response = await fetch(`${BACKEND_URL}/api/presets`);
 
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({})); // Try to parse error, fallback to empty object
@@ -30,15 +30,11 @@ export function useFetchPresets() {
     } catch (e) {
       const errorMessage = e instanceof Error ? e.message : "An unknown error occurred while fetching presets.";
       setError(errorMessage);
-      toast({
-        title: "Error Fetching Presets",
-        description: errorMessage,
-        variant: "destructive",
-      });
+      toast.error(`Error fetching presets: ${errorMessage}`);
     } finally {
       setIsLoading(false);
     }
-  }, [toast]); // Removed supabase from dependency array
+  }, []); // Removed supabase from dependency array
 
   useEffect(() => {
     fetchPresets();

@@ -3,7 +3,11 @@
  */
 
 // Backend API URL - defaults to localhost:8000 if not set in environment
-export const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// Prefer NEXT_PUBLIC_BACKEND_URL but fall back to the older NEXT_PUBLIC_API_URL
+export const BACKEND_URL =
+  process.env.NEXT_PUBLIC_BACKEND_URL ||
+  process.env.NEXT_PUBLIC_API_URL ||
+  'http://localhost:8000';
 
 // SSE connection settings
 export const SSE_CONFIG = {

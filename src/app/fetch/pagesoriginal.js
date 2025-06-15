@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input"; // Added
 import { Label } from "@/components/ui/label"; // Added
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"; // Added
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -42,7 +42,6 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
   // const [hasMoreHistory, setHasMoreHistory] = useState(true);
   // const [totalHistoryItems, setTotalHistoryItems] = useState(0);
   const [activeMainTab, setActiveMainTab] = useState(initialActiveMainTab); // For top-level tabs (Fetch/History)
-  const { toast } = useToast();
   const [isSavedToHistory, setIsSavedToHistory] = useState(false);
   const [isSavingToHistory, setIsSavingToHistory] = useState(false);
   const [fetchingEngine, setFetchingEngine] = useState("jina"); // Isolate fetchingEngine state
