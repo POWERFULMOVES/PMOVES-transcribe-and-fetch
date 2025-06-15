@@ -81,14 +81,27 @@ try:
 except ImportError:
     print("[WARNING] Supabase integration not available")
 
-# A2A protocol (conditional import)
+# A2A protocol models (lightweight fallback)
 try:
-    import agent2agent_protocol as a2a
-
-    print("[INFO] A2A protocol available")
-except ImportError:
-    a2a = None
-    print("[INFO] A2A protocol not available, will use fallback")
+    from .a2a_models import (
+        JSONRPCRequest,
+        JSONRPCResponse,
+        TaskSendRequest,
+        TaskGetRequest,
+        Task,
+        TaskStatus,
+        TaskState,
+        Message,
+        TextPart,
+        AgentCard,
+        AgentCapabilities,
+        AgentSkill,
+    )
+    a2a_available = True
+    print("[INFO] Local A2A models available")
+except Exception as e:
+    a2a_available = False
+    print(f"[WARNING] A2A models not available: {e}")
 
 
 # Configuration
@@ -607,7 +620,7 @@ class PipecatOrchestrator:
                         **agent.config,
                         "multimodal": "webrtc" in agent.capabilities,
                         "realtime_chat": True,
-                        "a2a_enabled": a2a is not None,
+                        "a2a_enabled": a2a_available,
                     },
                     "metadata": {
                         "transport_types": ["websocket", "webrtc"]
@@ -649,6 +662,9 @@ class PipecatOrchestrator:
 
 # Global orchestrator instance
 orchestrator = PipecatOrchestrator()
+
+# Simple in-memory task store for A2A RPC
+tasks_store: Dict[str, Task] = {}
 
 # FastAPI app
 app = FastAPI(title="PMOVES Core Pipecat Service", version="1.0.0")
@@ -694,7 +710,7 @@ async def health():
         "llm_registry_service_available": orchestrator.llm_registry_service is not None,
         "supabase_available": orchestrator.supabase_client is not None,
         "realtime_available": orchestrator.realtime_client is not None,
-        "a2a_available": a2a is not None,
+        "a2a_available": a2a_available,
         "webrtc_available": bool(config.daily_api_key),
         "multimodal_capabilities": {
             "tts": bool(config.elevenlabs_api_key),
@@ -894,44 +910,64 @@ async def websocket_endpoint(websocket: WebSocket, agent_id: str):
 
 
 # A2A Protocol endpoints (if available)
-if a2a:
+if a2a_available:
 
-    @app.get("/a2a/discover")
-    async def a2a_discover():
-        """A2A agent discovery endpoint"""
-        return {
-            "agents": [
-                {
-                    "id": agent.agent_id,
-                    "type": agent.agent_type,
-                    "capabilities": agent.capabilities,
-                    "endpoint": f"ws://pipecat:{config.websocket_port}/ws/{agent.agent_id}",
-                    "multimodal": "webrtc" in agent.capabilities,
-                    "realtime_chat": True,
-                }
-                for agent in orchestrator.agents.values()
-            ]
-        }
+    @app.get("/.well-known/agent.json")
+    async def well_known_agent() -> Dict[str, Any]:
+        """Serve a minimal AgentCard for discovery."""
+        card = AgentCard(
+            name="PMOVES Pipecat",
+            description="Pipecat core service",
+            url=f"http://pipecat:{config.service_port}/a2a/rpc",
+            version="0.1",
+            capabilities=AgentCapabilities(),
+            skills=[AgentSkill(id="chat", name="Text chat")],
+        )
+        return card.model_dump(exclude_none=True)
 
-    @app.post("/a2a/message/{agent_id}")
-    async def a2a_message(agent_id: str, message: Dict[str, Any]):
-        """A2A message endpoint"""
-        if agent_id not in orchestrator.agents:
-            raise HTTPException(status_code=404, detail="Agent not found")
+    @app.post("/a2a/rpc")
+    async def a2a_rpc(request: Dict[str, Any]):
+        """Handle basic A2A JSON-RPC requests."""
+        try:
+            rpc = JSONRPCRequest.model_validate(request)
+        except Exception as exc:
+            return JSONRPCResponse(id=None, error={"code": -32600, "message": str(exc)}).model_dump()
 
-        agent = orchestrator.agents[agent_id]
+        if rpc.method == "tasks/send":
+            send_req = TaskSendRequest.model_validate(request)
+            msg: Message = send_req.params.message
+            if not msg.parts or msg.parts[0].type != "text":
+                return JSONRPCResponse(id=rpc.id, error={"code": -32602, "message": "Only text supported"}).model_dump()
 
-        # Create frame from A2A message
-        frame = TextFrame(text=message.get("content", ""))
-        response_frame = await agent.process_frame(frame)
+            agent_id = send_req.params.metadata.get("agent_id") if send_req.params.metadata else None
+            if not agent_id or agent_id not in orchestrator.agents:
+                return JSONRPCResponse(id=rpc.id, error={"code": -32602, "message": "Invalid agent_id"}).model_dump()
 
-        return {
-            "status": "message_processed",
-            "agent_id": agent_id,
-            "response": response_frame.text
-            if response_frame and hasattr(response_frame, "text")
-            else None,
-        }
+            agent = orchestrator.agents[agent_id]
+            frame = TextFrame(text=msg.parts[0].text)
+            response_frame = await agent.process_frame(frame)
+            resp_text = response_frame.text if isinstance(response_frame, TextFrame) else ""
+
+            task = Task(
+                id=send_req.params.id,
+                status=TaskStatus(
+                    state=TaskState.COMPLETED,
+                    message=Message(role="agent", parts=[TextPart(text=resp_text)]),
+                ),
+                metadata=send_req.params.metadata,
+            )
+            tasks_store[task.id] = task
+            return JSONRPCResponse(id=rpc.id, result=task.model_dump()).model_dump()
+
+        elif rpc.method == "tasks/get":
+            get_req = TaskGetRequest.model_validate(request)
+            task = tasks_store.get(get_req.params.id)
+            if not task:
+                return JSONRPCResponse(id=rpc.id, error={"code": -32001, "message": "Task not found"}).model_dump()
+            return JSONRPCResponse(id=rpc.id, result=task.model_dump()).model_dump()
+
+        else:
+            return JSONRPCResponse(id=rpc.id, error={"code": -32601, "message": "Method not found"}).model_dump()
 
 
 @app.on_event("startup")
