@@ -75,16 +75,19 @@ if not ALLOWED_API_KEYS:
     )
 
 
+DISABLE_API_KEY_MIDDLEWARE = os.getenv("DISABLE_API_KEY_MIDDLEWARE", "false").lower() == "true"
+
+
 class APIKeySecurityMiddleware(BaseHTTPMiddleware):
     async def dispatch(
         self, request: Request, call_next: RequestResponseEndpoint
     ) -> Response:
-        logger.warning(
-            "DEVELOPMENT MODE: APIKeySecurityMiddleware is currently DISABLED. All requests are being allowed without API key authentication."
-        )
-        # Bypass all security checks
-        response = await call_next(request)
-        return response
+        if DISABLE_API_KEY_MIDDLEWARE:
+            logger.warning(
+                "DEVELOPMENT MODE: APIKeySecurityMiddleware is currently DISABLED. All requests are being allowed without API key authentication."
+            )
+            response = await call_next(request)
+            return response
 
         # Check if the current request path is in EXEMPT_PATHS or starts with an EXEMPT_PREFIX
         if request.url.path in EXEMPT_PATHS or any(
