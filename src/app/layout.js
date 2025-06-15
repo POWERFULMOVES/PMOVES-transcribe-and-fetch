@@ -6,8 +6,7 @@ import { NavHeader } from "@/components/nav-header"
 import { permanentMarker, fZeroFont } from './fonts'
 import { metadata } from './metadata' // Keep metadata import for potential use elsewhere, though not directly used in client component layout
 import { Inter } from 'next/font/google'
-import { ToastProvider } from '@/components/hooks/use-toast'
-import { Toaster } from '@/components/ui/toaster'
+import { Toaster } from '@/components/ui/sonner'
 import { FileUpIcon } from '@/components/icons'
 import { usePathname } from 'next/navigation';
 import { createClient } from '@/lib/supabase'
@@ -29,13 +28,11 @@ export default function RootLayout({ children }) {
       <body className={`${fZeroFont.variable} min-h-screen ${inter.className}`}>
         <SessionContextProvider supabaseClient={supabase}>
           <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
-            <ToastProvider>
-              <NavHeader />
-              <main className={`container py-6 ${themeClass}`}>
-                {children}
-              </main>
-              <Toaster />
-            </ToastProvider>
+            <NavHeader />
+            <main className={`container py-6 ${themeClass}`}>
+              {children}
+            </main>
+            <Toaster />
           </ThemeProvider>
         </SessionContextProvider>
       </body>

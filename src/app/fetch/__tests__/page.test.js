@@ -2,15 +2,13 @@ import React from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import '@testing-library/jest-dom';
 import FetchContentPage from '../page'; // Adjust path as necessary
-import { useToast } from '@/hooks/use-toast';
+import { toast } from 'sonner';
 import { useInfiniteQuery } from '@/hooks/use-infinite-query';
 import { createClient } from '@/lib/client';
 
 // Mock dependencies
-jest.mock('@/hooks/use-toast', () => ({
-  useToast: jest.fn(() => ({
-    toast: jest.fn(),
-  })),
+jest.mock('sonner', () => ({
+  toast: jest.fn(),
 }));
 
 jest.mock('@/hooks/use-infinite-query');

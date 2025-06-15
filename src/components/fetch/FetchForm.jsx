@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { useToast } from "@/components/ui/use-toast"; // Or from "@/hooks/use-toast"
+import { toast } from "sonner";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Label } from "@/components/ui/label";
 // Duplicate Label import removed
@@ -41,7 +41,7 @@ const FetchForm = ({
   const [availablePresets, setAvailablePresets] = useState([]);
   const [isLoadingPresets, setIsLoadingPresets] = useState(false);
   const [errorPresets, setErrorPresets] = useState(null);
-  const { toast } = useToast();
+
 
   const fetchAvailablePresets = useCallback(async () => {
     if (fetchingEngine !== 'crawl4ai') {
@@ -61,16 +61,12 @@ const FetchForm = ({
     } catch (error) {
       console.error("Error fetching presets:", error);
       setErrorPresets(error.message);
-      toast({
-        title: "Error loading presets",
-        description: error.message,
-        variant: "destructive",
-      });
+      toast.error(`Error loading presets: ${error.message}`);
       setAvailablePresets([]);
     } finally {
       setIsLoadingPresets(false);
     }
-  }, [fetchingEngine, toast]);
+  }, [fetchingEngine]);
 
   useEffect(() => {
     fetchAvailablePresets();

@@ -7,9 +7,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogTrigger, DialogClose } from "@/components/ui/dialog"; // Assuming Dialog exists
-import { useToast } from "@/components/ui/use-toast"; // For Shadcn toast
-// If sonner is used for toast (based on sonner.jsx):
-// import { toast } from "sonner";
+import { toast } from "sonner";
 import { PlusCircle, Edit, Trash2, Loader2 } from 'lucide-react';
 import { BACKEND_URL } from '@/lib/constants';
 
@@ -42,13 +40,7 @@ export default function PresetsManager() {
   const [presetFormState, setPresetFormState] = useState(initialFormState);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const { toast: shadcnToast } = useToast(); // For Shadcn toast
-  // If using sonner:
-  // const toast = (message, type = 'default') => {
-  //   if (type === 'success') window.toast.success(message);
-  //   else if (type === 'error') window.toast.error(message);
-  //   else window.toast(message);
-  // };
+  // toast from sonner will be used for notifications
 
 
   const fetchPresets = useCallback(async () => {
@@ -65,12 +57,11 @@ export default function PresetsManager() {
     } catch (error) {
       console.error("Error fetching presets:", error);
       setErrorPresets(error.message);
-      shadcnToast({ title: "Error", description: `Failed to fetch presets: ${error.message}`, variant: "destructive" });
-      // sonner: toast(`Failed to fetch presets: ${error.message}`, 'error');
+      toast.error(`Failed to fetch presets: ${error.message}`);
     } finally {
       setIsLoadingPresets(false);
     }
-  }, [shadcnToast]);
+  }, [toast]);
 
   useEffect(() => {
     fetchPresets();
@@ -112,8 +103,7 @@ export default function PresetsManager() {
       strategyDefinitionParsed = JSON.parse(presetFormState.strategy_definition);
     } catch (jsonError) {
       setErrorPresets("Strategy Definition is not valid JSON.");
-      shadcnToast({ title: "Validation Error", description: "Strategy Definition must be valid JSON.", variant: "destructive" });
-      // sonner: toast("Strategy Definition must be valid JSON.", 'error');
+      toast.error("Strategy Definition must be valid JSON.");
       setIsSubmitting(false);
       return;
     }
@@ -154,15 +144,13 @@ export default function PresetsManager() {
         throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
       }
       // const savedPreset = await response.json(); // Optional: use savedPreset data
-      shadcnToast({ title: "Success", description: `Preset ${currentEditingPreset ? 'updated' : 'created'} successfully.` });
-      // sonner: toast(`Preset ${currentEditingPreset ? 'updated' : 'created'} successfully.`, 'success');
+      toast.success(`Preset ${currentEditingPreset ? 'updated' : 'created'} successfully.`);
       setShowPresetForm(false);
       fetchPresets(); // Refresh list
     } catch (error) {
       console.error("Error saving preset:", error);
       setErrorPresets(error.message);
-      shadcnToast({ title: "Error", description: `Failed to save preset: ${error.message}`, variant: "destructive" });
-      // sonner: toast(`Failed to save preset: ${error.message}`, 'error');
+      toast.error(`Failed to save preset: ${error.message}`);
     } finally {
       setIsSubmitting(false);
     }
@@ -186,14 +174,12 @@ export default function PresetsManager() {
         } catch (e) { /* ignore parsing error if no body */ }
         throw new Error(errorDetail);
       }
-      shadcnToast({ title: "Success", description: "Preset deleted successfully." });
-      // sonner: toast("Preset deleted successfully.", 'success');
+      toast.success("Preset deleted successfully.");
       fetchPresets(); // Refresh list
     } catch (error) {
       console.error("Error deleting preset:", error);
       setErrorPresets(error.message);
-      shadcnToast({ title: "Error", description: `Failed to delete preset: ${error.message}`, variant: "destructive" });
-      // sonner: toast(`Failed to delete preset: ${error.message}`, 'error');
+      toast.error(`Failed to delete preset: ${error.message}`);
     } finally {
       setIsSubmitting(false);
     }

@@ -4,10 +4,10 @@ import '@testing-library/jest-dom';
 import { PresetsManager } from '@/components/fetch/PresetsManager'; // Assuming PresetsManager is default export
 import { BACKEND_URL } from '@/lib/constants';
 
-// Mock useToast
+// Mock sonner toast
 const mockToast = jest.fn();
-jest.mock('@/components/ui/use-toast', () => ({
-  useToast: () => ({ toast: mockToast }),
+jest.mock('sonner', () => ({
+  toast: mockToast,
 }));
 
 // Mock lucide-react icons

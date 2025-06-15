@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input"; // Added
 import { Label } from "@/components/ui/label"; // Added
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"; // Added
-import { useToast } from "@/hooks/use-toast";
+import { toast } from "sonner";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
@@ -43,7 +43,6 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
   // const [hasMoreHistory, setHasMoreHistory] = useState(true);
   // const [totalHistoryItems, setTotalHistoryItems] = useState(0);
   const [activeMainTab, setActiveMainTab] = useState(initialActiveMainTab); // For top-level tabs (Fetch/History)
-  const { toast } = useToast();
   const [isSavedToHistory, setIsSavedToHistory] = useState(false);
   const [isSavingToHistory, setIsSavingToHistory] = useState(false);
   const [fetchingEngine, setFetchingEngine] = useState("jina"); // Isolate fetchingEngine state
@@ -255,14 +254,10 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
           // Assuming models is an array of StandardizedLLM objects
           // We might want to filter or transform them if needed, e.g., filter by capability for crawl4ai
           setAvailableLlmModels(models || []);
-          toast({ title: "LLM Models Loaded", description: `Found ${models.length} models.` });
+          toast.success(`LLM Models Loaded: Found ${models.length} models.`);
         } catch (error) {
           console.error("Failed to fetch LLM models:", error);
-          toast({
-            title: "Error Loading LLM Models",
-            description: error.message || "Could not fetch LLM model list from backend.",
-            variant: "destructive",
-          });
+          toast.error(error.message || "Could not fetch LLM model list from backend.");
           setAvailableLlmModels([]); // Ensure it's an empty array on error
         } finally {
           setIsLoadingLlmModels(false);
@@ -279,7 +274,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
         // For now, let's assume initial load is sufficient unless specific re-fetch logic is required.
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps 
-  }, [fetchingEngine, showAdvanced, toast]); // BACKEND_URL is constant, availableLlmModels.length in condition
+  }, [fetchingEngine, showAdvanced]); // BACKEND_URL is constant, availableLlmModels.length in condition
 
 
   const estimateProgress = (status) => {
@@ -741,19 +736,11 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
 
   const handleSaveToHistory = async () => {
     if (!formState.result) {
-      toast({
-        title: "Error",
-        description: "No content to save.",
-        variant: "destructive",
-      });
+      toast.error("No content to save.");
       return;
     }
     if (isSavedToHistory) {
-       toast({
-        title: "Already Saved",
-        description: "This content has already been saved to history.",
-        variant: "default",
-      });
+       toast("This content has already been saved to history.");
       return;
     }
 
@@ -888,11 +875,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
         throw new Error(errorData.detail || errorData.message || `HTTP error! status: ${response.status}`);
       }
 
-      toast({
-        title: "Success!",
-        description: "Content saved to history.",
-        variant: "default",
-      });
+      toast.success("Content saved to history.");
       setIsSavedToHistory(true);
       // TODO: Implement refresh logic for useInfiniteQuery if needed.
       // This is out of scope for the current task.
@@ -903,11 +886,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
 
     } catch (error) {
       console.error("Error saving to history:", error);
-      toast({
-        title: "Error Saving to History",
-        description: error.message || "Could not save content to history. Please try again.",
-        variant: "destructive",
-      });
+      toast.error(error.message || "Could not save content to history. Please try again.");
     } finally {
       setIsSavingToHistory(false);
     }
@@ -916,11 +895,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
   // Placeholder handlers for FetchHistoryTable actions
   const handleViewHistoryItem = async (item) => {
     if (!item || !item.id) {
-      toast({
-        title: "Error",
-        description: "History item ID is missing. Cannot fetch content.",
-        variant: "destructive",
-      });
+      toast.error("History item ID is missing. Cannot fetch content.");
       return;
     }
 
@@ -929,10 +904,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
     // Clear previous result and specific error for this section
     setFormState(prev => ({ ...prev, result: null }));
     setMainFetchError(null);
-    toast({
-      title: "Loading Content...",
-      description: `Fetching content for ${item.title || item.url || item.id}.`,
-    });
+    toast(`Fetching content for ${item.title || item.url || item.id}...`);
     window.scrollTo(0, 0); // Scroll to top
 
     try {
@@ -1020,10 +992,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
 
 
       setFormState(prev => ({ ...prev, result: viewerData }));
-      toast({
-        title: "Content Loaded",
-        description: `Displaying content for ${item.title || item.url}.`,
-      });
+      toast.success(`Displaying content for ${item.title || item.url}.`);
 
     } catch (error) {
       console.error("Error fetching history item content:", error);
@@ -1032,21 +1001,13 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
       setMainFetchError(`Could not load content for "${item.title || item.url || item.id}". Error: ${errorMessage}`);
       // Update formState to reflect the error in the content area if desired, or rely on mainFetchError
       setFormState(prev => ({ ...prev, result: { markdownContent: `## Error Loading Content\n\n${errorMessage}` } }));
-      toast({
-        title: "Error Loading Content",
-        description: errorMessage,
-        variant: "destructive",
-      });
+      toast.error(errorMessage);
     }
   };
 
   const handleDeleteHistoryItem = async (itemId) => {
     if (!itemId) {
-      toast({
-        title: "Error",
-        description: "History item ID is missing.",
-        variant: "destructive",
-      });
+      toast.error("History item ID is missing.");
       return;
     }
 
@@ -1066,11 +1027,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
         throw new Error(errorData.detail || `HTTP error! status: ${response.status}`);
       }
 
-      toast({
-        title: "Success!",
-        description: "History item deleted successfully.",
-        variant: "default",
-      });
+      toast.success("History item deleted successfully.");
 
       // Refresh the history list using the initialize function from useInfiniteQuery
       if (typeof initializeHistory === 'function') {
@@ -1082,21 +1039,13 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
 
     } catch (error) {
       console.error("Error deleting history item:", error);
-      toast({
-        title: "Error Deleting Item",
-        description: error.message || "Could not delete history item. Please try again.",
-        variant: "destructive",
-      });
+      toast.error(error.message || "Could not delete history item. Please try again.");
     }
   };
 
   const handleRefetchHistoryItem = (item) => {
     if (!item) {
-      toast({
-        title: "Error",
-        description: "History item data is missing.",
-        variant: "destructive",
-      });
+      toast.error("History item data is missing.");
       return;
     }
 
@@ -1187,11 +1136,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
     setActiveMainTab("fetchContent");
     setShowAdvanced(true); // Assume re-fetch might use advanced options
     window.scrollTo(0, 0); // Scroll to top to see the populated form
-    toast({
-      title: "Form Populated",
-      description: "Form populated with settings from selected history item.",
-      variant: "default",
-    });
+    toast.success("Form populated with settings from selected history item.");
   };
   
   // Callback to refresh the history list
@@ -1201,27 +1146,16 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
       try {
         // OLD: await historyQuery.initialize();
         await initializeHistory(); // Call the destructured function
-        toast({
-          title: "History Refreshed",
-          description: "The fetch history has been reloaded from the server.",
-        });
+        toast.success("The fetch history has been reloaded from the server.");
       } catch (error) {
         console.error("Error refreshing history:", error);
-        toast({
-          title: "Refresh Failed",
-          description: `Could not refresh history: ${error.message}`,
-          variant: "destructive",
-        });
+        toast.error(`Could not refresh history: ${error.message}`);
       }
     } else {
       console.warn("Attempted to refresh history, but initializeHistory function is not available.");
-      toast({
-        title: "Refresh Unavailable",
-        description: "The history refresh function is not ready.",
-        variant: "destructive",
-      });
+      toast.error("The history refresh function is not ready.");
     }
-  }, [initializeHistory, toast]); // Update dependency array to initializeHistory
+  }, [initializeHistory]); // Update dependency array to initializeHistory
 
   // Effect to load initial history data only once on mount
   useEffect(() => {
