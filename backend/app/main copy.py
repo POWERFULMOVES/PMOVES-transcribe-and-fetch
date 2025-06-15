@@ -313,7 +313,6 @@ try:
     from .ollama_initializer import (
         ensure_ollama_model_loaded,
     )
-    from .middleware.security_middleware import APIKeySecurityMiddleware
 
     PROJECT_MODULES_LOADED = True
 except ImportError as e:
@@ -829,8 +828,6 @@ app.add_middleware(
 )
 
 # --- Add Custom Middlewares ---
-app.add_middleware(APIKeySecurityMiddleware)
-logger.info("APIKeySecurityMiddleware enabled.")
 
 if (
     PROJECT_MODULES_LOADED
