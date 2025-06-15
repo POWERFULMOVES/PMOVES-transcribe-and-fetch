@@ -423,16 +423,16 @@ This section tracks the step-by-step implementation of the Supabase Agent and re
 
 - [x] **Catalog existing agent patterns and document adaptation strategy**
 - [x] **Update master plan with agent catalog and integration plan**
-- [ ] **Scaffold minimal Pipecat agent:**
-    - [ ] Connect to Supabase Realtime chat channel
-    - [ ] Process incoming messages through a text-only Pipecat pipeline
-    - [ ] Send responses to chat with assigned avatar
-    - [ ] Register agent with orchestrator/registry
+- [x] **Scaffold minimal Pipecat agent:**
+    - [x] Connect to Supabase Realtime chat channel
+    - [x] Process incoming messages through a text-only Pipecat pipeline
+    - [x] Send responses to chat with assigned avatar
+    - [x] Register agent with orchestrator/registry
 - [ ] **Enhanced Core Service Implementation:**
     - [ ] Full multimodal pipeline creation (TTS, STT, WebRTC, image processing)
     - [ ] Supabase Realtime integration with message routing
     - [ ] Enhanced agent registry with capability detection
-    - [ ] A2A protocol support for agent-to-agent communication
+    - [x] A2A protocol support for agent-to-agent communication
     - [ ] Dynamic agent spawning and orchestration
     - [ ] WebSocket and WebRTC transport support
 - [ ] **Complete Agent Implementations:**
