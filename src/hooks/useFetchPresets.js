@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { toast } from "sonner";
+import { useToast } from "@/hooks/use-toast";
 import { BACKEND_URL } from '@/lib/constants';
 // Removed createClient as we are now using the API endpoint
 // import { createClient } from '@/lib/client';
