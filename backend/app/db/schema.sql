@@ -156,4 +156,19 @@ BEGIN
     LIMIT 
         match_count;
 END;
-$$; 
+$$;
+
+-- Example SQL for crawl_presets table
+CREATE TABLE crawl_presets (
+    preset_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    preset_name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    version INTEGER DEFAULT 1,
+    crawl_tool TEXT DEFAULT 'crawl4ai',
+    strategy_definition JSONB NOT NULL,
+    target_capability TEXT,
+    tags JSONB,
+    created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL, -- Example, adjust if user table is different
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
