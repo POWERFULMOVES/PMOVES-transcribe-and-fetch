@@ -8,18 +8,49 @@ const createJestConfig = nextJest({
 // Add any custom config to be passed to Jest
 const customJestConfig = {
   setupFilesAfterEnv: ['<rootDir>/jest.setup.js'],
+  // Only look for tests in the src directory
+  roots: ['<rootDir>/src'],
+  // Alternatively, use testMatch to specify test file patterns within src
+  // testMatch: ['<rootDir>/src/**/__tests__/**/*.{js,jsx,ts,tsx}', '<rootDir>/src/**/*.{spec,test}.{js,jsx,ts,tsx}'],
   moduleNameMapper: {
     // Ensure correct paths and remove duplicates
     '^@/components/(.*)$': '<rootDir>/src/components/$1',
     '^@/app/(.*)$': '<rootDir>/src/app/$1',
     '^@/hooks/(.*)$': '<rootDir>/src/hooks/$1',
     '^@/lib/(.*)$': '<rootDir>/src/lib/$1',
-    '^@/utils/(.*)$': '<rootDir>/src/utils/$1', // Added mapping for utils potentially needed by components
+    '^@/utils/(.*)$': '<rootDir>/src/utils/$1',
     // Mock problematic ESM modules
     '^react-markdown$': '<rootDir>/__mocks__/react-markdown.js',
     // Add other mappings if necessary
   },
   testEnvironment: 'jest-environment-jsdom',
+  // Ignore docs and other non-src directories for module resolution and test discovery
+  modulePathIgnorePatterns: [
+    '<rootDir>/docs/',
+    '<rootDir>/pipecatdocs/',
+    '<rootDir>/backend/',
+    '<rootDir>/pmoves-agent-registry/',
+    '<rootDir>/pmoves-pipecat/',
+    '<rootDir>/pmoves-pipecat-agent/',
+    '<rootDir>/supabase-agent/',
+    '<rootDir>/monitoring/',
+    '<rootDir>/deployment/',
+    '<rootDir>/litellm_proxy_config/',
+    '<rootDir>/migrations/'
+  ],
+  watchPathIgnorePatterns: [
+    '<rootDir>/docs/',
+    '<rootDir>/pipecatdocs/',
+    '<rootDir>/backend/',
+    '<rootDir>/pmoves-agent-registry/',
+    '<rootDir>/pmoves-pipecat/',
+    '<rootDir>/pmoves-pipecat-agent/',
+    '<rootDir>/supabase-agent/',
+    '<rootDir>/monitoring/',
+    '<rootDir>/deployment/',
+    '<rootDir>/litellm_proxy_config/',
+    '<rootDir>/migrations/'
+  ],
   // More comprehensive transformIgnorePatterns for ESM modules
   transformIgnorePatterns: [
     // Transform all ESM packages that might be used

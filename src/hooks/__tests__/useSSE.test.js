@@ -1,45 +1,5 @@
-import { renderHook, act } from '@testing-library/react-hooks';
+import { renderHook, act } from '@testing-library/react'; // Updated import
 import useSSE from '../useSSE';
-
-// Mock EventSource
-class MockEventSource {
-  constructor(url, options) {
-    this.url = url;
-    this.options = options;
-    this.readyState = 0; // CONNECTING
-    this.onopen = null;
-    this.onmessage = null;
-    this.onerror = null;
-    
-    // Simulate connection
-    setTimeout(() => {
-      this.readyState = 1; // OPEN
-      if (this.onopen) this.onopen({ type: 'open', target: this });
-    }, 10);
-  }
-  
-  // Simulate receiving a message
-  simulateMessage(data) {
-    if (this.onmessage) {
-      this.onmessage({ data });
-    }
-  }
-  
-  // Simulate an error
-  simulateError(error) {
-    if (this.onerror) {
-      this.onerror(error);
-    }
-  }
-  
-  // Close the connection
-  close() {
-    this.readyState = 2; // CLOSED
-  }
-}
-
-// Mock the global EventSource
-global.EventSource = MockEventSource;
 
 // Mock the BACKEND_URL
 jest.mock('@/lib/constants', () => ({

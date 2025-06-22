@@ -5,9 +5,8 @@ import FetchForm from '@/components/fetch/FetchForm';
 import { BACKEND_URL } from '@/lib/constants';
 
 // Mock sonner toast
-const mockToast = jest.fn();
 jest.mock('sonner', () => ({
-  toast: mockToast,
+  toast: jest.fn(),
 }));
 
 // Mock lucide-react icons used in FetchForm or its children if any (e.g. Loader2 for preset loading)

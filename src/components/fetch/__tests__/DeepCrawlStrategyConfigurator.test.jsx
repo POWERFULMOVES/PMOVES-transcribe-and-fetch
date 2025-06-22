@@ -4,7 +4,7 @@ import React from 'react';
 import { render, screen, waitFor, within } from '@testing-library/react'; // Added waitFor and within
 import userEvent from '@testing-library/user-event'; // Added userEvent
 import DeepCrawlStrategyConfigurator from '../DeepCrawlStrategyConfigurator';
-import { TooltipProvider } from 'components/ui/tooltip'; // Assuming jsconfig.json resolves this
+import { TooltipProvider } from '@/components/ui/tooltip'; // Corrected import path
 
 // Helper function for rendering with TooltipProvider
 const renderWithProvider = (ui, options) => {

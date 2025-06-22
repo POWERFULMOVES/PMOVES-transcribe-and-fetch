@@ -131,10 +131,10 @@ describe('FetchedContentViewer', () => {
       metadata: {},
     };
     render(<FetchedContentViewer fetchedData={props} />);
-    // The link text might use the title if pdf_file_path isn't used for the name part
-    const pdfLink = screen.getByRole('link', { name: /View PDF: Direct PDF Test/i });
+    // The component uses the basename of pdf_file_path for the link text if pdf_file_path is present
+    const pdfLink = screen.getByRole('link', { name: /View PDF: path.pdf/i });
     expect(pdfLink).toBeInTheDocument();
-    expect(pdfLink).toHaveAttribute('href', directPdfUrl);
+    expect(pdfLink).toHaveAttribute('href', directPdfUrl); // href should still come from pdfUrl
     expect(pdfLink).toHaveAttribute('target', '_blank');
   });
 

@@ -3,7 +3,7 @@ import { render, screen, fireEvent } from '@testing-library/react';
 import AdvancedFetchOptions from '../../AdvancedFetchOptions';
 
 // Mock the child ExtractionStrategyConfigurator component
-jest.mock('../../ExtractionStrategyConfigurator', () => {
+jest.mock('../ExtractionStrategyConfigurator', () => {
   // eslint-disable-next-line react/display-name
   return () => <div data-testid="mocked-extraction-strategy-configurator">Mocked Extraction Strategy Configurator</div>;
 });
