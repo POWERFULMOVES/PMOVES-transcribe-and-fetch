@@ -5,9 +5,8 @@ import { PresetsManager } from '@/components/fetch/PresetsManager'; // Assuming 
 import { BACKEND_URL } from '@/lib/constants';
 
 // Mock sonner toast
-const mockToast = jest.fn();
 jest.mock('sonner', () => ({
-  toast: mockToast,
+  toast: jest.fn(),
 }));
 
 // Mock lucide-react icons

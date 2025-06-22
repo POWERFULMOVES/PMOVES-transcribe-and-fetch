@@ -2,7 +2,7 @@ import React from 'react';
 import { render, screen, rerender, within } from '@testing-library/react'; // Added 'within'
 import userEvent from '@testing-library/user-event';
 import ExtractionStrategyConfigurator from '../ExtractionStrategyConfigurator';
-import { TooltipProvider } from 'components/ui/tooltip'; // Assuming jsconfig.json resolves this from src/
+import { TooltipProvider } from '@/components/ui/tooltip'; // Corrected import path
 
 // We don't need to import Label, Select etc. here if they are correctly encapsulated
 // within ExtractionStrategyConfigurator and it renders the necessary ARIA roles and text.
