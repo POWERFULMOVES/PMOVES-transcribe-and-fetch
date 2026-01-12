@@ -80,6 +80,10 @@ services:
         aliases:
           - backend
           - transcribe-backend
+      # Backend needs access to app tier for litellm-proxy and crawl4ai
+      transcribe_app:
+        aliases:
+          - backend
 
   frontend:
     <<: *tier-api

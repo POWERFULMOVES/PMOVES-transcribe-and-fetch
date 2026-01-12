@@ -892,13 +892,11 @@ app = FastAPI(
 )
 
 # --- Configure CORS ---
-allowed_origins = [
-    "http://localhost",
-    "http://localhost:3000",
-    "http://localhost:448",
-    "http://127.0.0.1:3000",
-    "http://127.0.0.1:448",
-]
+# Read from environment variable with sensible localhost defaults
+allowed_origins = os.getenv(
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost,http://localhost:3000,http://localhost:448,http://127.0.0.1:3000,http://127.0.0.1:448"
+).split(",")
 print("!!! DEBUG: CORS ORIGINS LOADED:", allowed_origins)
 logger.info(f"Configuring CORS for origins: {allowed_origins}")
 
