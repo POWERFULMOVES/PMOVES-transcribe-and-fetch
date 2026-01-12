@@ -185,7 +185,8 @@ dependencies = [
     "pytest-cov",
     "hypothesis",
     "pytest-mock",
-    "pytest-xdist"
+    "pytest-xdist",
+    "pyjwt>=2.10.1",
 ]
 
 [project.optional-dependencies]

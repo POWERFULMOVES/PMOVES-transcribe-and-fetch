@@ -19,13 +19,13 @@ const extractionStrategies = [
   { value: "llm", label: "LLMExtractionStrategy" },
   { value: "json_css", label: "JsonCssExtractionStrategy" },
   { value: "cosine", label: "CosineStrategy" },
+  { value: "table", label: "Table Extraction (LLM-based)" }, // Added Table Extraction
 ];
 
 const ExtractionStrategyConfigurator = ({ onConfigChange, initialConfig = { strategy: 'none', params: {} } }) => {
   // Component is now fully controlled by initialConfig prop.
   // No internal useState for selectedStrategy or strategyParams.
   // useEffect hooks for synchronization are removed.
-  console.log('[ExtractionStrategyConfigurator] Rendering. Config from props:', JSON.stringify(initialConfig));
 
   const currentStrategy = initialConfig.strategy || 'none';
   const currentParams = initialConfig.params || {};
@@ -34,7 +34,6 @@ const ExtractionStrategyConfigurator = ({ onConfigChange, initialConfig = { stra
     // When strategy changes, call onConfigChange with the new strategy
     // and reset params to an empty object, as per previous logic.
     if (onConfigChange) {
-      console.log(`[ExtractionStrategyConfigurator] Strategy changed to: ${newStrategyValue}. Calling onConfigChange.`);
       onConfigChange({ strategy: newStrategyValue, params: {} });
     }
   };
@@ -47,7 +46,6 @@ const ExtractionStrategyConfigurator = ({ onConfigChange, initialConfig = { stra
         ...currentParams,
         [paramName]: value,
       };
-      console.log(`[ExtractionStrategyConfigurator] Param '${paramName}' changed to '${value}'. Calling onConfigChange with strategy: ${currentStrategy}, params: ${JSON.stringify(updatedParams)}`);
       onConfigChange({
         strategy: currentStrategy,
         params: updatedParams,
@@ -168,6 +166,30 @@ const ExtractionStrategyConfigurator = ({ onConfigChange, initialConfig = { stra
                 placeholder="Enter custom LLM endpoint URL (optional)"
                 value={currentParams.llm_base_url || ""}
                 onChange={(e) => handleParamChange("llm_base_url", e.target.value)}
+              />
+            </div>
+          </div>
+        );
+      case "table":
+        return (
+          <div className="space-y-4">
+            <div>
+              <Label htmlFor="table-filter">
+                Filter Description (Optional)
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <InfoCircledIcon className="inline-block ml-1 h-4 w-4 text-muted-foreground" />
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{"Description to help identify which tables to extract (e.g., 'financial data', 'pricing table'). If empty, tries to extract all tables."}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </Label>
+              <Input
+                id="table-filter"
+                placeholder="e.g., quarterly results, pricing plan"
+                value={currentParams.filter || ""}
+                onChange={(e) => handleParamChange("filter", e.target.value)}
               />
             </div>
           </div>

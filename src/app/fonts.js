@@ -1,41 +1,13 @@
-import localFont from 'next/font/local'
+import { Outfit, JetBrains_Mono } from 'next/font/google'
 
-import { Permanent_Marker } from 'next/font/google'
-
-
-
-// Keep the Google font as fallback
-
-export const permanentMarker = Permanent_Marker({
-
-  weight: '400',
-
+export const outfit = Outfit({
   subsets: ['latin'],
-
+  variable: '--font-outfit',
   display: 'swap',
-
 })
 
-
-
-// Add F-Zero SNES font
-
-export const fZeroFont = localFont({
-
-  src: [
-
-    {
-
-      path: '../../public/fonts/F-ZeroSNES.otf',
-
-      weight: '400',
-
-      style: 'normal',
-
-    }
-
-  ],
-
-  variable: '--font-fzero'
-
-}) 
+export const jetbrainsMono = JetBrains_Mono({
+  subsets: ['latin'],
+  variable: '--font-jetbrains',
+  display: 'swap',
+})
