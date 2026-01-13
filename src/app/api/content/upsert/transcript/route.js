@@ -28,8 +28,9 @@ export async function POST(request) {
     backendFormData.append('file', file);
 
     // Forward the file to the backend
+    const backendUrl = process.env.INTERNAL_BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
     const response = await fetch(
-      `${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/api/content/upsert/transcript?force_overwrite=${force_overwrite}`, 
+      `${backendUrl}/api/content/upsert/transcript?force_overwrite=${force_overwrite}`, 
       {
         method: 'POST',
         body: backendFormData,

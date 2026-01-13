@@ -15,7 +15,8 @@ export async function POST(request) {
     console.log(`Forwarding fetch request to backend for URL: ${url}`);
     
     // Forward request to backend
-    const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000'}/api/content/upsert/fetch`, {
+    const backendUrl = process.env.INTERNAL_BACKEND_URL || process.env.NEXT_PUBLIC_BACKEND_URL || 'http://localhost:8000';
+    const response = await fetch(`${backendUrl}/api/content/upsert/fetch`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',

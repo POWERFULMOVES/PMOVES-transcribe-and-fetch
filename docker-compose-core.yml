@@ -2,16 +2,28 @@ version: '3.8'
 
 services:
   litellm-proxy:
-    # Replace with your LiteLLM service definition
     image: litellm/proxy:latest
+    container_name: pmoves-litellm-proxy
     ports:
       - "4000:4000"
     volumes:
-      # Mount your LiteLLM proxy config
-      - ./litellm_proxy_config/config.yaml:/app/config.yaml
-      # Mount your LiteLLM environment file for API keys
-      - ./.env.litellm:/app/.env
+      - ./litellm_proxy_config/config.yaml:/app/config.yaml:ro
+      - ./.env.litellm:/app/.env:ro
     restart: unless-stopped
+    # Security hardening
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=100M,mode=1777
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4000/health"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
     networks:
       - pmoves-network
 
@@ -19,52 +31,69 @@ services:
     build:
       context: ./deployment/crawl4ai
       dockerfile: Dockerfile.custom
+    container_name: pmoves-crawl4ai
     ports:
       - "11235:11235"
     volumes:
-      # Mount config.yml from your project's config directory
-      # Update the path below to match your project structure
-      - ./deployment/crawl4ai/config.yml:/app/config.yml
+      - ./deployment/crawl4ai/config.yml:/app/config.yml:ro
       - crawl4ai_hf_cache:/home/appuser/.cache/huggingface
       - crawl4ai_internal_cache:/home/appuser/.crawl4ai
-      # The .llm.env volume mount is generally not needed if routing via LiteLLM
-      # - ./deployment/crawl4ai/.llm.env:/app/.llm.env
-      # Optional: Mount a volume for crawl4ai cache if you want persistence
-      # - crawl4ai_cache:/home/appuser/.crawl4ai/cache
-    shm_size: '1g' # Recommended for Playwright
+    shm_size: '1g'
     restart: unless-stopped
+    # Security hardening
+    user: "1000:1000"
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_ADMIN  # Required for Playwright/Chrome sandbox
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:unconfined  # Required for Chrome
+    tmpfs:
+      - /tmp:size=500M,mode=1777
+      - /home/appuser/.local:size=100M,mode=0755
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:11235/health"]
       interval: 30s
       timeout: 10s
-      start_period: 5s
+      start_period: 30s
       retries: 3
     networks:
       - pmoves-network
 
   pipecat:
-    # Replace with your Pipecat service definition
     build:
       context: ./pmoves-pipecat
       dockerfile: Dockerfile
-    # Define ports, volumes, environment variables as needed
-    # ports:
-    #   - "your_pipecat_port:your_pipecat_port"
-    # volumes:
-    #   - ./your_pipecat_config:/app/config
+    container_name: pmoves-pipecat
     environment:
       - LITELLM_PROXY_URL=http://litellm-proxy:4000
-      # Add other necessary Pipecat env vars here
     restart: unless-stopped
     depends_on:
-      - litellm-proxy
-      - crawl4ai
-    # Add healthcheck if needed
+      litellm-proxy:
+        condition: service_healthy
+      crawl4ai:
+        condition: service_healthy
+    # Security hardening
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=200M,mode=1777
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8080/health', timeout=5)"]
+      interval: 30s
+      timeout: 10s
+      start_period: 20s
+      retries: 3
     networks:
       - pmoves-network
 
   supabase-agent:
-    # Fixed build context to point to the correct supabase-agent directory
     build:
       context: ./supabase-agent
       dockerfile: Dockerfile
@@ -74,35 +103,41 @@ services:
     env_file:
       - ./supabase-agent/.env
     environment:
-      # Container-specific overrides
       - AGENT_ENDPOINT_URL=http://supabase-agent:8002
       - LITELLM_PROXY_URL=http://litellm-proxy:4000
       - AGENT_REGISTRY_URL=http://backend:8000/agents
     volumes:
-      # Optional: Mount for development
-      - ./supabase-agent/app:/app/app
+      - ./supabase-agent/app:/app/app:ro
     restart: unless-stopped
+    # Security hardening
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=200M,mode=1777
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 10s
+      start_period: 15s
     depends_on:
-      - litellm-proxy
-      - crawl4ai
-      - pipecat
-    # Add Supabase dependency here if running Supabase as a service
-    # - supabase
+      litellm-proxy:
+        condition: service_healthy
+      crawl4ai:
+        condition: service_healthy
+      pipecat:
+        condition: service_healthy
     networks:
       - pmoves-network
 
-# Optional: Define named volumes
-# volumes:
-#   crawl4ai_cache:
 volumes:
   crawl4ai_hf_cache: {}
   crawl4ai_internal_cache: {}
+
 networks:
   pmoves-network:
     driver: bridge

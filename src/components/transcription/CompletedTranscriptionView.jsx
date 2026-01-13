@@ -9,7 +9,7 @@ const CompletedTranscriptionView = ({ transcriptionData, model }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTab, setActiveTab] = useState("segmented");
 
-  const segments = transcriptionData?.segments || [];
+  const segments = useMemo(() => transcriptionData?.segments || [], [transcriptionData]);
   const fullText = transcriptionData?.fullText || "";
 
   const filteredSegments = useMemo(() => {

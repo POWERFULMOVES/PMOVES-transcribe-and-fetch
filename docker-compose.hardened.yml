@@ -1,0 +1,134 @@
+version: '3.8'
+
+# =============================================================================
+# PMOVES-transcribe-and-fetch Security Hardening Overlay
+# =============================================================================
+# This overlay adds security controls following PMOVES.AI-Edition-Hardened patterns.
+#
+# Usage:
+#   docker compose -f docker-compose.yml -f docker-compose.hardened.yml up -d
+#
+# Security controls applied:
+#   - Non-root user (65532:65532)
+#   - Read-only root filesystem
+#   - All capabilities dropped
+#   - No privilege escalation
+#   - tmpfs for transient writes
+#   - Docker secrets for credentials
+# =============================================================================
+
+services:
+  # =========================================================================
+  # API Tier Hardening
+  # =========================================================================
+  backend:
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=500M,mode=1777
+      - /home/nonroot/.cache:size=200M,uid=65532,gid=65532
+    secrets:
+      - supabase_service_key
+      - supabase_jwt_secret
+    environment:
+      - SUPABASE_SERVICE_KEY_FILE=/run/secrets/supabase_service_key
+      - SUPABASE_JWT_SECRET_FILE=/run/secrets/supabase_jwt_secret
+
+  frontend:
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=500M,mode=1777
+      - /home/nonroot/.cache:size=200M,uid=65532,gid=65532
+
+  # =========================================================================
+  # LLM Tier Hardening
+  # =========================================================================
+  litellm-proxy:
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=100M,mode=1777
+    secrets:
+      - openai_api_key
+      - anthropic_api_key
+    environment:
+      - OPENAI_API_KEY_FILE=/run/secrets/openai_api_key
+      - ANTHROPIC_API_KEY_FILE=/run/secrets/anthropic_api_key
+
+  # =========================================================================
+  # Worker Tier Hardening
+  # =========================================================================
+  crawl4ai:
+    user: "1000:1000"
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - SYS_ADMIN  # Required for Playwright/Chrome sandbox
+    security_opt:
+      - no-new-privileges:true
+      - seccomp:unconfined  # Required for Chrome
+    tmpfs:
+      - /tmp:size=500M,mode=1777
+      - /home/appuser/.local:size=100M,mode=0755
+
+  # =========================================================================
+  # Media Tier Hardening (GPU services)
+  # =========================================================================
+  pipecat:
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=2G,mode=1777
+      - /home/nonroot/.cache/huggingface:size=10G,uid=65532,gid=65532
+    shm_size: '4g'
+    environment:
+      - HF_HOME=/home/nonroot/.cache/huggingface
+      - TORCH_HOME=/home/nonroot/.cache/torch
+
+  # =========================================================================
+  # Agent Tier Hardening
+  # =========================================================================
+  supabase-agent:
+    user: "65532:65532"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    tmpfs:
+      - /tmp:size=200M,mode=1777
+    secrets:
+      - supabase_service_key
+    environment:
+      - SUPABASE_SERVICE_KEY_FILE=/run/secrets/supabase_service_key
+
+# =============================================================================
+# Docker Secrets
+# =============================================================================
+secrets:
+  supabase_service_key:
+    file: ./secrets/supabase_service_key
+  supabase_jwt_secret:
+    file: ./secrets/supabase_jwt_secret
+  openai_api_key:
+    file: ./secrets/openai_api_key
+  anthropic_api_key:
+    file: ./secrets/anthropic_api_key

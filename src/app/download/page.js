@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useReducer, useState } from 'react';
+import { useEffect, useRef, useReducer, useState, useCallback } from 'react';
 import axios from 'axios';
 import Image from 'next/image';
 import useSSE from '@/hooks/useSSE';
@@ -75,12 +75,14 @@ export default function Download() {
   const { config: appConfig, loading: configLoading, error: configError } = useAppConfig();
 
   // Set initial downloadFolder from config if not set by user
+  const initializedConfigRef = useRef(false);
   useEffect(() => {
-    if (!configLoading && appConfig) {
-      if (!downloadFolder && appConfig.DEFAULT_DOWNLOADS_DIR) {
+    if (!configLoading && appConfig && !initializedConfigRef.current) {
+      if (appConfig.DEFAULT_DOWNLOADS_DIR) {
         setDownloadFolder(appConfig.DEFAULT_DOWNLOADS_DIR);
         setOptions(prev => ({ ...prev, download_dir: appConfig.DEFAULT_DOWNLOADS_DIR }));
       }
+      initializedConfigRef.current = true;
     }
   }, [configLoading, appConfig]);
 
@@ -89,7 +91,7 @@ export default function Download() {
   };
 
   // Fetch video info to display thumbnail and title
-  const fetchVideoInfo = async () => {
+  const fetchVideoInfo = useCallback(async () => {
     if (!url.trim()) return;
     
     try {
@@ -102,7 +104,7 @@ export default function Download() {
       dispatch({ type: ACTIONS.SET_ERROR, payload: error.response?.data?.detail || 'Failed to fetch video info' });
       dispatch({ type: ACTIONS.SET_LOADING, payload: false });
     }
-  };
+  }, [url]);
 
   // Debounce URL input for video info fetch
   useEffect(() => {
@@ -113,7 +115,7 @@ export default function Download() {
     }, 800);
     
     return () => clearTimeout(delayDebounce);
-  }, [url]);
+  }, [url, fetchVideoInfo]);
 
   // Add useEffect for auto-scrolling status area
   useEffect(() => {
@@ -353,16 +355,16 @@ export default function Download() {
         return () => clearTimeout(timer);
       }
     }
-  }, [state.statusUpdates]);
+  }, [state.statusUpdates, loadDownloadedFiles]);
 
   // Use another useEffect to initialize the file list on component mount
   useEffect(() => {
     // Load downloaded files when component mounts
     loadDownloadedFiles();
-  }, []);
+  }, [loadDownloadedFiles]);
   
   // Function to load downloaded files
-  const loadDownloadedFiles = async () => {
+  const loadDownloadedFiles = useCallback(async () => {
     setFileLoading(true);
     try {
       const response = await axios.get(`${BACKEND_URL}/api/list-downloads`, {
@@ -386,7 +388,7 @@ export default function Download() {
     } finally {
       setFileLoading(false);
     }
-  };
+  }, [options.download_dir, toast]);
   
   // Function to download a file
   const downloadFile = (filename) => {

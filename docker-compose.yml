@@ -1,203 +1,253 @@
 version: '3.8'
 
-services:
-  # LiteLLM Proxy Service
-  litellm-proxy:
-    image: ghcr.io/berriai/litellm:main-latest # Use the official LiteLLM image from GitHub Container Registry
-    container_name: litellm-proxy
-    ports:
-      - "4000:4000" # Map the proxy port
-    volumes:
-      - ./litellm_proxy_config/config.yaml:/app/config.yaml # Mount the config file
-    env_file:
-      - ./backend/app/.env # Load environment variables (including API keys)
-    environment:
-      # Ensure the master key is passed securely if needed for proxy features
-      # LITELLM_MASTER_KEY: ${LITELLM_MASTER_KEY} # Example if you add this to your .env
-      # Set the config path explicitly
-      CONFIG_PATH: /app/config.yaml
-    networks:
-      - pmoves-network
+# =============================================================================
+# PMOVES-transcribe-and-fetch Docker Compose
+# =============================================================================
+# Network Tiers:
+#   - transcribe_api (172.31.1.0/24): API services (backend, frontend)
+#   - transcribe_app (172.31.2.0/24): Application workers (crawl4ai, pipecat)
+#   - pmoves_bus (external): Parent NATS bus (when docked)
+#   - pmoves_data (external): Parent data tier (when docked)
+#
+# Profiles:
+#   - (default): backend, frontend
+#   - llm: litellm-proxy
+#   - crawl: crawl4ai
+#   - voice: pipecat
+#   - agents: supabase-agent
+#
+# Usage:
+#   Standalone: docker compose up -d
+#   With LLM:   docker compose --profile llm up -d
+#   Full stack: docker compose --profile llm --profile crawl --profile voice --profile agents up -d
+#   Docked:     DOCKED_MODE=true docker compose up -d
+# =============================================================================
 
-  # Backend Application Service
+# --- Tier Environment Anchors ---
+x-env-tier-api: &tier-api
+  env_file:
+    - env.shared
+    - env.tier-api
+
+x-env-tier-worker: &tier-worker
+  env_file:
+    - env.shared
+    - env.tier-worker
+
+x-env-tier-llm: &tier-llm
+  env_file:
+    - env.shared
+    - env.tier-llm
+
+x-env-tier-media: &tier-media
+  env_file:
+    - env.shared
+    - env.tier-media
+
+# --- Common Healthcheck ---
+x-healthcheck-default: &healthcheck-default
+  interval: ${HEALTHCHECK_INTERVAL:-30s}
+  timeout: ${HEALTHCHECK_TIMEOUT:-10s}
+  retries: ${HEALTHCHECK_RETRIES:-3}
+  start_period: ${HEALTHCHECK_START_PERIOD:-30s}
+
+services:
+  # =========================================================================
+  # API Tier Services
+  # =========================================================================
   backend:
-    build: ./backend # Build from the Dockerfile in the backend directory
-    container_name: pmoves-backend
+    <<: *tier-api
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: pmoves-transcribe-backend
+    restart: unless-stopped
     ports:
-      - "8000:8000" # Map the backend application port
-    env_file:
-      - ./backend/app/.env # Load environment variables
+      - "${TRANSCRIBE_BACKEND_HOST_PORT:-8000}:${TRANSCRIBE_BACKEND_INTERNAL_PORT:-8000}"
+    environment:
+      - DOCKED_MODE=${DOCKED_MODE:-false}
+      - DB_BACKEND=${DB_BACKEND:-sqlite}
+      - SUPABASE_DUAL_WRITE=${SUPABASE_DUAL_WRITE:-false}
+      - AGENT_ZERO_MCP_ENABLED=${AGENT_ZERO_MCP_ENABLED:-false}
+      - CORS_ALLOWED_ORIGINS=${CORS_ALLOWED_ORIGINS:-http://localhost:448,http://127.0.0.1:448}
+      - LITELLM_PROXY_URL=${LITELLM_PROXY_URL:-http://litellm-proxy:4000}
+      - CRAWL4AI_SERVICE_URL=${CRAWL4AI_SERVICE_URL:-http://crawl4ai:11235}
+    healthcheck:
+      <<: *healthcheck-default
+      test: ["CMD", "curl", "-f", "http://localhost:${TRANSCRIBE_BACKEND_INTERNAL_PORT:-8000}/healthz"]
+    networks:
+      transcribe_api:
+        aliases:
+          - backend
+          - transcribe-backend
+      # Backend needs access to app tier for litellm-proxy and crawl4ai
+      transcribe_app:
+        aliases:
+          - backend
+
+  frontend:
+    <<: *tier-api
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pmoves-transcribe-frontend
+    restart: unless-stopped
+    ports:
+      - "${TRANSCRIBE_FRONTEND_HOST_PORT:-448}:${TRANSCRIBE_FRONTEND_INTERNAL_PORT:-448}"
+    environment:
+      - NEXT_PUBLIC_API_BASE=http://localhost:${TRANSCRIBE_BACKEND_HOST_PORT:-8000}
+      - INTERNAL_BACKEND_URL=http://backend:${TRANSCRIBE_BACKEND_INTERNAL_PORT:-8000}
+    healthcheck:
+      <<: *healthcheck-default
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:${TRANSCRIBE_FRONTEND_INTERNAL_PORT:-448}/"]
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      transcribe_api:
+        aliases:
+          - frontend
+          - transcribe-frontend
+
+  # =========================================================================
+  # LLM Tier Services (Profile: llm)
+  # =========================================================================
+  litellm-proxy:
+    <<: *tier-llm
+    image: litellm/proxy:latest
+    container_name: pmoves-transcribe-litellm
+    profiles: ["llm"]
+    restart: unless-stopped
+    ports:
+      - "${TRANSCRIBE_LITELLM_HOST_PORT:-4000}:${TRANSCRIBE_LITELLM_INTERNAL_PORT:-4000}"
     volumes:
-      - ./backend/app:/usr/src/app # Mount the backend application code (for development)
+      - ./litellm_proxy_config/config.yaml:/app/config.yaml:ro
+    healthcheck:
+      <<: *healthcheck-default
+      test: ["CMD", "curl", "-f", "http://localhost:${TRANSCRIBE_LITELLM_INTERNAL_PORT:-4000}/health"]
+    networks:
+      transcribe_app:
+        aliases:
+          - litellm-proxy
+
+  # =========================================================================
+  # Worker Tier Services (Profile: crawl)
+  # =========================================================================
+  crawl4ai:
+    <<: *tier-worker
+    build:
+      context: ./deployment/crawl4ai
+      dockerfile: Dockerfile.custom
+    container_name: pmoves-transcribe-crawl4ai
+    profiles: ["crawl"]
+    restart: unless-stopped
+    ports:
+      - "${TRANSCRIBE_CRAWL4AI_HOST_PORT:-11235}:${TRANSCRIBE_CRAWL4AI_INTERNAL_PORT:-11235}"
+    volumes:
+      - ./deployment/crawl4ai/config.yml:/app/config.yml:ro
+      - crawl4ai_hf_cache:/home/appuser/.cache/huggingface
+      - crawl4ai_internal_cache:/home/appuser/.crawl4ai
+    shm_size: '1g'
+    healthcheck:
+      <<: *healthcheck-default
+      test: ["CMD", "curl", "-f", "http://localhost:${TRANSCRIBE_CRAWL4AI_INTERNAL_PORT:-11235}/health"]
+    networks:
+      transcribe_app:
+        aliases:
+          - crawl4ai
+
+  # =========================================================================
+  # Media Tier Services (Profile: voice)
+  # =========================================================================
+  pipecat:
+    <<: *tier-media
+    build:
+      context: ./pmoves-pipecat
+      dockerfile: Dockerfile
+    container_name: pmoves-transcribe-pipecat
+    profiles: ["voice"]
+    restart: unless-stopped
+    ports:
+      - "${TRANSCRIBE_PIPECAT_HOST_PORT:-8080}:${TRANSCRIBE_PIPECAT_INTERNAL_PORT:-8080}"
+    environment:
+      - LITELLM_PROXY_URL=http://litellm-proxy:${TRANSCRIBE_LITELLM_INTERNAL_PORT:-4000}
+    healthcheck:
+      <<: *healthcheck-default
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:${TRANSCRIBE_PIPECAT_INTERNAL_PORT:-8080}/health', timeout=5)"]
     depends_on:
       litellm-proxy:
-        condition: service_started # Ensure LiteLLM proxy is started before starting backend
-      minio:
-        condition: service_started # Backend depends on MinIO
+        condition: service_healthy
       crawl4ai:
         condition: service_healthy
     networks:
-      - pmoves-network
-    # Command to run the FastAPI application
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000
+      transcribe_app:
+        aliases:
+          - pipecat
 
-  # MinIO Service (S3 Compatible Storage)
-  minio:
-    image: minio/minio:latest
-    container_name: pmoves-minio
-    ports:
-      - "9000:9000" # MinIO API port
-      - "9001:9001" # MinIO Console port
-    env_file:
-      - ./backend/app/.env # Load environment variables including MinIO credentials
-    environment:
-      MINIO_ROOT_USER: ${MINIO_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
-      MINIO_BROWSER: "on" # Enable the MinIO browser UI
-    volumes:
-      - minio_data:/data # Persistent data volume
-    command: server /data --console-address ":9001"
-    networks:
-      - pmoves-network
-
-  # Crawl4AI Service
-  crawl4ai:
-    image: unclecode/crawl4ai:latest # Use pre-built image from Docker Hub
-    container_name: pmoves-crawl4ai
-    ports:
-      - "11235:11235" # FastAPI service port
-    volumes:
-      - ./deployment/crawl4ai/config.yml:/app/config.yml # Mount config.yml
-      # The .llm.env volume mount is generally not needed if routing via LiteLLM
-      # - ./deployment/crawl4ai/.llm.env:/app/.llm.env
-      # Optional: Mount a volume for crawl4ai cache if you want persistence
-      # - crawl4ai_cache:/home/appuser/.crawl4ai/cache
-    shm_size: '1g' # Recommended for Playwright
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:11235/health"]
-      interval: 30s
-      timeout: 10s
-      start_period: 5s
-      retries: 3
-    networks:
-      - pmoves-network
-    depends_on:
-      - litellm-proxy # Crawl4AI depends on LiteLLM
-
-  # Pipecat Core Service (Communication Layer & Orchestrator)
-  pipecat:
-    build:
-      context: ./pmoves-pipecat # Build from the Dockerfile in the pmoves-pipecat directory
-    container_name: pmoves-pipecat
-    ports:
-      - "8080:8080" # Core service API port
-      - "8081:8081" # WebSocket port for agent communication
-    env_file:
-      - ./backend/app/.env # Load environment variables
-    environment:
-      # Core service configuration
-      - PIPECAT_SERVICE_PORT=8080
-      - PIPECAT_WEBSOCKET_PORT=8081
-      - LITELLM_PROXY_URL=http://litellm-proxy:4000
-      - AGENT_REGISTRY_URL=http://backend:8000/agents
-      - MAX_AGENTS=10
-      # Multimodal capabilities (add these to your .env file)
-      - DAILY_API_KEY=${DAILY_API_KEY:-}
-      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
-      - DEEPGRAM_API_KEY=${DEEPGRAM_API_KEY:-}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      # Supabase integration
-      - SUPABASE_URL=${SUPABASE_URL:-}
-      - SUPABASE_KEY=${SUPABASE_KEY:-}
-    networks:
-      - pmoves-network
-    restart: unless-stopped
-    depends_on:
-      litellm-proxy:
-        condition: service_started # Pipecat depends on LiteLLM
-      backend:
-        condition: service_started # For agent registry
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-
-  # Pipecat Agent Service (Supabase Agent Instance)
-  pipecat-agent:
-    build:
-      context: ./pmoves-pipecat-agent # Build from the Dockerfile in the pmoves-pipecat-agent directory
-    container_name: pmoves-pipecat-agent
-    env_file:
-      - ./backend/app/.env # Load environment variables from backend
-    environment:
-      # Agent-specific configuration
-      - AGENT_TYPE=supabase
-      - AGENT_NAME=SupabaseAgent
-      - CALL_WORD=@SupabaseAgent
-      - CHAT_CHANNEL=main-room
-      - AVATAR_URL=https://example.com/supabase-agent-avatar.png
-      - PIPECAT_SERVICE_URL=http://pipecat:8080
-      - PIPECAT_WS_URL=ws://pipecat:8081
-      - PORT=8000
-    ports:
-      - "8001:8000" # Map the agent port
-    networks:
-      - pmoves-network
-    restart: unless-stopped
-    depends_on:
-      pipecat:
-        condition: service_started # Agent depends on core pipecat service
-      backend:
-        condition: service_started # For environment variables
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
-
-  # Supabase Agent Service (Database Management Agent)
+  # =========================================================================
+  # Agent Tier Services (Profile: agents)
+  # =========================================================================
   supabase-agent:
+    <<: *tier-worker
     build:
-      context: ./supabase-agent # Build from the Dockerfile in the supabase-agent directory
-    container_name: pmoves-supabase-agent
-    ports:
-      - "8002:8002" # FastAPI service port
-    env_file:
-      - ./backend/app/.env # Use the same environment file as other services
-    environment:
-      # Container-specific overrides
-      - AGENT_ENDPOINT_URL=http://supabase-agent:8002
-      - LITELLM_PROXY_URL=http://litellm-proxy:4000
-      - AGENT_REGISTRY_URL=http://backend:8000/agents
-      # Supabase specific settings
-      - AGENT_PORT=8002
-    volumes:
-      # Optional: Mount for development
-      - ./supabase-agent/app:/app/app
-    networks:
-      - pmoves-network
+      context: ./supabase-agent
+      dockerfile: Dockerfile
+    container_name: pmoves-transcribe-supabase-agent
+    profiles: ["agents"]
     restart: unless-stopped
+    ports:
+      - "${TRANSCRIBE_SUPABASE_AGENT_HOST_PORT:-8002}:${TRANSCRIBE_SUPABASE_AGENT_INTERNAL_PORT:-8002}"
+    environment:
+      - AGENT_ENDPOINT_URL=http://supabase-agent:${TRANSCRIBE_SUPABASE_AGENT_INTERNAL_PORT:-8002}
+      - LITELLM_PROXY_URL=http://litellm-proxy:${TRANSCRIBE_LITELLM_INTERNAL_PORT:-4000}
+      - AGENT_REGISTRY_URL=http://backend:${TRANSCRIBE_BACKEND_INTERNAL_PORT:-8000}/agents
+    volumes:
+      - ./supabase-agent/app:/app/app:ro
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
+      <<: *healthcheck-default
+      test: ["CMD", "curl", "-f", "http://localhost:${TRANSCRIBE_SUPABASE_AGENT_INTERNAL_PORT:-8002}/health"]
     depends_on:
       litellm-proxy:
-        condition: service_started # Ensure LiteLLM proxy is started
-      backend:
-        condition: service_started # For agent registration
-      # Add other dependencies as needed
+        condition: service_healthy
+      crawl4ai:
+        condition: service_healthy
+      pipecat:
+        condition: service_healthy
+    networks:
+      transcribe_app:
+        aliases:
+          - supabase-agent
 
+# =============================================================================
+# Volumes
+# =============================================================================
 volumes:
-  supabase_db_data:
-  minio_data:
+  crawl4ai_hf_cache: {}
+  crawl4ai_internal_cache: {}
 
+# =============================================================================
+# Networks
+# =============================================================================
 networks:
-  pmoves-network:
+  # Internal API tier network
+  transcribe_api:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.1.0/24
+
+  # Internal application tier network
+  transcribe_app:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.31.2.0/24
+
+  # External networks for docked mode (connect to parent PMOVES.AI)
+  # These are only used when DOCKED_MODE=true
+  # pmoves_bus:
+  #   external: true
+  #   name: pmoves_bus
+  # pmoves_data:
+  #   external: true
+  #   name: pmoves_data
