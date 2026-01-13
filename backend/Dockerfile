@@ -1,4 +1,4 @@
-# Backend Dockerfile - Hardened
+# Backend Dockerfile - Hardened with GPU Support
 FROM python:3.12-slim AS builder
 
 WORKDIR /app
@@ -22,9 +22,10 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install curl for healthcheck
+# Install runtime dependencies: curl (healthcheck), ffmpeg (yt-dlp video processing)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
