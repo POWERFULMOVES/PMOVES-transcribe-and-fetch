@@ -559,7 +559,7 @@ async def transcribe_audio(audio_path: str, status_queue: asyncio.Queue, transcr
     Sends real-time updates via asyncio Queues.
     """
     logger.info(f"Preparing for local transcription task: {audio_path}")
-    console.print(f"🎙️ Starting transcription for: [cyan]{os.path.basename(audio_path)}[/cyan]")
+    console.print(f"[MIC] Starting transcription for: [cyan]{os.path.basename(audio_path)}[/cyan]")
     results: Optional[List[Dict]] = None
     full_text: Optional[str] = None
     language_info: Optional[Dict] = None
@@ -631,7 +631,7 @@ async def transcribe_audio(audio_path: str, status_queue: asyncio.Queue, transcr
         status_msg_final = {"type": "status", "content": f"Transcription complete. Segments: {len(results)}. Language: {language_info.get('language', 'N/A')}."}
         await status_queue.put(json.dumps(status_msg_final))
         logger.info(f"QUEUE PUT (Status): Transcription Completed")
-        console.print(f"[bold green]✅ Transcription complete for {os.path.basename(audio_path)}.[/bold green]")
+        console.print(f"[bold green][OK] Transcription complete for {os.path.basename(audio_path)}.[/bold green]")
 
         return results, full_text # Return results and assembled text
 
@@ -925,7 +925,7 @@ async def process_video(
     process_start_time = time.time()
     logger.info(f"--- Starting Video Processing ---")
     logger.info(f"Received request for URL: {youtube_video_url}")
-    console.print(f"\n🚀 [bold blue]Starting processing for:[/bold blue] {youtube_video_url}")
+    console.print(f"\n[bold blue]>>> Starting processing for:[/bold blue] {youtube_video_url}")
 
     # Use defaults if not provided
     # Obtain the LLM registry service instance
@@ -971,7 +971,7 @@ async def process_video(
             metadata_msg = {"type": "video_metadata", "content": metadata_content}
             await status_queue.put(json.dumps(metadata_msg))
             logger.info(f"QUEUE PUT (Metadata): '{video_title}'")
-            console.print(f"🎬 Video Info: [green]'{video_title}'[/green] (ID: {video_id})")
+            console.print(f"[VIDEO] Video Info: [green]'{video_title}'[/green] (ID: {video_id})")
 
             # Set base filename using extracted info and engine type
             model_prefix = "groq" if use_groq else "local"
@@ -1015,7 +1015,7 @@ async def process_video(
         # --- 3. Download Audio ---
         await status_queue.put(json.dumps({"type": "status", "content": "Starting audio download..."}))
         logger.info("Step 3: Downloading audio...")
-        console.print(f"⬇️ Downloading audio...")
+        console.print(f"[DOWN] Downloading audio...")
         # Use m4a as preferred format, let yt-dlp determine final extension in template
         # Place downloaded audio in the 'audio' subdirectory
 
@@ -1160,7 +1160,7 @@ async def process_video(
         # --- 5. Save Results ---
         await status_queue.put(json.dumps({"type": "status", "content": "Saving transcription files..."}))
         logger.info("Step 5: Saving transcription results...")
-        console.print(f"💾 Saving transcription files...")
+        console.print(f"[SAVE] Saving transcription files...")
         files_saved = {} # Dictionary to store paths of successfully saved files
 
         try:

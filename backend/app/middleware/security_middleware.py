@@ -35,6 +35,7 @@ EXEMPT_PATHS = [
     "/docs",
     "/openapi.json",
     "/health",
+    "/healthz",
     "/metrics",
     "/monitoring/status",
     "/combined-updates",
@@ -46,6 +47,7 @@ EXEMPT_PATHS = [
     "/",
     "/fetch-content",
     "/fetch",
+    "/process-video/",
 ]
 
 # Define path prefixes that should be exempt
