@@ -4,7 +4,6 @@ import './globals.css'
 import { outfit, jetbrainsMono } from './fonts'
 import { Toaster } from '@/components/ui/sonner'
 import { ThemeProvider } from 'next-themes'
-import { FileUpIcon } from '@/components/icons' // Keep if used
 import { usePathname } from 'next/navigation';
 import { Sidebar } from '@/components/layout/Sidebar';
 import { Header } from '@/components/layout/Header';
@@ -32,7 +31,7 @@ export default function RootLayout({ children }) {
                   </main>
               </div>
           </div>
-          <Toaster />
+          <Toaster position="top-right" richColors closeButton />
         </ThemeProvider>
       </body>
     </html>
