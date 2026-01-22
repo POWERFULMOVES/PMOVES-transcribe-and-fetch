@@ -6,10 +6,19 @@ __pycache__/
 .uv/
 .swc/
 
-# Environment files
+# Environment files (secrets - NEVER commit)
 .env
 .env.local
 .env.*.local
+.env.generated
+
+# Tier environment files with secrets (use .example templates)
+# Note: env.shared and env.tier-* are git-tracked (no secrets)
+# Override secrets in .env.local
+
+# Docker secrets directory
+secrets/
+!secrets/.gitkeep
 
 # Build outputs
 .next/

@@ -139,11 +139,12 @@ from fastapi import (
     status,
     Query,
     Depends,
-    # Security, # This was in original main.py, but APIKeyHeader is used directly in middleware
 )
+
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse  # Added FileResponse
-from fastapi.security import APIKeyHeader  # Added for potential API key auth
+from fastapi.responses import FileResponse, JSONResponse
+from fastapi.security import APIKeyHeader, HTTPBearer, HTTPAuthorizationCredentials
+import jwt
 from starlette.responses import StreamingResponse
 from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel, validator, ValidationError, Field, field_validator
@@ -156,6 +157,8 @@ try:
     from openai import RateLimitError as OpenAI_RateLimitError
     from openai import APIConnectionError as OpenAI_APIConnectionError
     from openai import AuthenticationError as OpenAI_AuthenticationError
+
+
 except ImportError:
     OpenAI = None
     AsyncOpenAI = None
@@ -173,6 +176,54 @@ except ImportError:
 try:
     from rich.console import Console
 except ImportError:
+    Console = None
+
+# --- Logger Setup ---
+import logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+# --- Security & Auth ---
+security = HTTPBearer(auto_error=False)
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
+
+async def verify_token(
+    credentials: Optional[HTTPAuthorizationCredentials] = Depends(security),
+    token: Optional[str] = Query(None),
+):
+    """
+    Verifies the Supabase JWT from the Authorization header or query parameter (for SSE).
+    """
+    if not SUPABASE_JWT_SECRET:
+        if "logger" in globals(): logger.warning("SUPABASE_JWT_SECRET not set. Skipping auth verification (INSECURE).")
+        return {"sub": "anonymous"}
+
+    jwt_token = None
+    if credentials:
+        jwt_token = credentials.credentials
+    elif token:
+        jwt_token = token
+    
+    if not jwt_token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing authentication credentials",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        payload = jwt.decode(
+            jwt_token,
+            SUPABASE_JWT_SECRET,
+            algorithms=["HS256"],
+            options={"verify_aud": False}, # Supabase audience might need config
+        )
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError as e:
+        if "logger" in globals(): logger.error(f"JWT Decode Error: {e}")
+        raise HTTPException(status_code=401, detail="Invalid token")
 
     class Console:
         def print(self, *args, **kwargs):
@@ -783,6 +834,40 @@ class FetchHistoryResponse(FetchHistoryBase):
 
 
 # --- Initialize FastAPI app ---
+# --- Supabase Auth Configuration ---
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
+security = HTTPBearer(auto_error=False)
+
+def verify_token(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
+    """Verifies the Supabase JWT token. Allows anonymous access when SUPABASE_JWT_SECRET not set."""
+    # Allow anonymous if no secret configured (standalone mode)
+    if not SUPABASE_JWT_SECRET:
+        logger.warning("SUPABASE_JWT_SECRET not set, allowing anonymous access (standalone mode)")
+        return {"sub": "anonymous"}
+
+    if not credentials:
+        raise HTTPException(status_code=401, detail="Missing authentication credentials")
+
+    token = credentials.credentials
+    try:
+        payload = jwt.decode(
+            token,
+            SUPABASE_JWT_SECRET,
+            algorithms=["HS256"],
+            audience="authenticated",
+            options={"verify_aud": False}
+        )
+        return payload
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired")
+    except jwt.InvalidTokenError:
+        raise HTTPException(status_code=401, detail="Invalid token")
+    except Exception as e:
+        logger.error(f"Token verification failed: {e}")
+        raise HTTPException(status_code=401, detail="Could not validate credentials")
+
+
+# Create FastAPI App
 app = FastAPI(
     title="PMOVES Transcription API",
     description="API for YouTube video processing, download, and search.",
@@ -809,9 +894,12 @@ app = FastAPI(
 )
 
 # --- Configure CORS ---
+# Read from environment variable with sensible localhost defaults
 allowed_origins = os.getenv(
-    "CORS_ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000"
+    "CORS_ALLOWED_ORIGINS",
+    "http://localhost,http://localhost:3000,http://localhost:448,http://127.0.0.1:3000,http://127.0.0.1:448"
 ).split(",")
+print("!!! DEBUG: CORS ORIGINS LOADED:", allowed_origins)
 logger.info(f"Configuring CORS for origins: {allowed_origins}")
 
 app.add_middleware(
@@ -915,6 +1003,14 @@ elif not PROJECT_MODULES_LOADED:
      logger.warning("Presets router not included as PROJECT_MODULES_LOADED is False.")
 else: # presets_routes is None
      logger.warning("Presets router (presets_routes) not imported correctly, skipping inclusion.")
+
+# Include Configurations Router
+if PROJECT_MODULES_LOADED:
+    try:
+        app.include_router(configurations_routes.router, prefix="/api/app-config", tags=["Configuration"])
+        logger.info("Configuration router included at /api/app-config")
+    except Exception as e:
+        logger.error(f"Failed to include configurations router: {e}")
 
 
 # --- App Lifecycle Events ---
@@ -1434,7 +1530,7 @@ def _handle_options_request(request: Request, allowed_origins_list: List[str]):
 
 # --- Transcription Status Endpoint ---
 @app.get("/transcription-status", tags=["Status"])
-async def transcription_status():
+async def transcription_status(user: dict = Depends(verify_token)):
     """Check if there's an active transcription process running."""
     try:
         active = False
@@ -1455,7 +1551,7 @@ async def transcription_status():
 # --- Process Video Endpoint ---
 @app.post("/process-video/", tags=["Processing"])
 async def process_video_endpoint(
-    request: VideoRequest, background_tasks: BackgroundTasks
+    request: VideoRequest, background_tasks: BackgroundTasks, user: dict = Depends(verify_token)
 ):
     """Initiate background processing (download, transcribe) for a YouTube video."""
     if not PROJECT_MODULES_LOADED or process_video is None:
@@ -3055,6 +3151,53 @@ async def health_check():
     }
 
 
+@app.get("/healthz", tags=["Health"])
+async def healthz():
+    """Kubernetes-style liveness probe endpoint.
+
+    Returns 200 OK if the service is running and can handle requests.
+    This is a lightweight check that should always succeed if the process is alive.
+    """
+    return {"status": "ok"}
+
+
+@app.get("/ready", tags=["Health"])
+async def readiness_check():
+    """Kubernetes-style readiness probe endpoint.
+
+    Returns 200 OK only if the service is ready to handle traffic.
+    Checks database connectivity and other critical dependencies.
+    """
+    logger.debug("Readiness check '/ready' called")
+
+    # Check database connectivity
+    db_ready = False
+    db_message = "unknown"
+    try:
+        client = get_client()
+        db_ready = True
+        db_message = "connected"
+    except Exception as e:
+        db_message = str(e)
+        logger.warning(f"Readiness check: Database unavailable: {e}")
+
+    # Aggregate readiness status
+    all_ready = db_ready
+    status_code = 200 if all_ready else 503
+
+    from fastapi.responses import JSONResponse
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "ready": all_ready,
+            "checks": {
+                "database": {"ready": db_ready, "message": db_message},
+            },
+            "timestamp": datetime.now().isoformat(),
+        }
+    )
+
+
 # --- Test Event Loop Policy Route ---
 @app.get("/test-event-loop-policy", tags=["Utility", "Debug"])
 async def test_event_loop_policy_route():
@@ -3091,7 +3234,7 @@ if __name__ == "__main__":
 
 # --- App Config Endpoint ---
 @app.get("/api/app-config", tags=["Utility"])
-async def get_app_config():
+async def get_app_config(user: dict = Depends(verify_token)):
     """Expose backend folder and subfolder config to the frontend."""
     return {"WORKSPACE_ROOT": WORKSPACE_ROOT, "SUBFOLDERS": SUBFOLDERS}
 

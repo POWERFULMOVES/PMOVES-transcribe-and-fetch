@@ -185,7 +185,8 @@ dependencies = [
     "pytest-cov",
     "hypothesis",
     "pytest-mock",
-    "pytest-xdist"
+    "pytest-xdist",
+    "pyjwt>=2.10.1",
 ]
 
 [project.optional-dependencies]
@@ -200,6 +201,9 @@ dev-dependencies = [
     "pytest",
     "pytest-asyncio"
 ]
+
+[tool.uv]
+# Note: Run post_sync.ps1 or post_sync.sh after `uv sync` to install PyTorch CUDA
 
 [tool.hatch.metadata]
 allow-direct-references = true

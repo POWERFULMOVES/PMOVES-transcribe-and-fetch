@@ -28,6 +28,19 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
   const [mainFetchLoading, setMainFetchLoading] = useState(false);
   const [mainFetchError, setMainFetchError] = useState(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
+  const [session, setSession] = useState(null);
+
+  // Initialize Supabase session
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   // State for SSE Fetch Progress (main content fetch)
   const [isFetchingSse, setIsFetchingSse] = useState(false); // Renamed to avoid conflict with useInfiniteQuery
@@ -195,6 +208,10 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
     crawl4aiBrowserUsePersistentContext: false,
     crawl4aiCrawlSessionId: "",
     crawl4aiCrawlCssSelector: "",
+
+    // crawl4ai - Agentic & Scripting (NEW)
+    crawl4aiScript: "",
+    crawl4aiAdaptiveMode: false,
 
     // crawl4ai - Strategy Configurations
     crawl4aiExtractionConfig: { strategy: 'none', params: {} },
@@ -439,6 +456,10 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
           if (formState.crawl4aiCrawlSessionId) params.append('crawl_session_id', formState.crawl4aiCrawlSessionId);
           if (formState.crawl4aiCrawlCssSelector) params.append('crawl_css_selector', formState.crawl4aiCrawlCssSelector);
 
+          // Add crawl4ai specific agentic parameters (NEW)
+          if (formState.crawl4aiScript) params.append('c4a_script', formState.crawl4aiScript);
+          params.append('adaptive_mode', formState.crawl4aiAdaptiveMode.toString());
+
           // Add crawl4ai strategy configurations
           if (formState.crawl4aiExtractionConfig && formState.crawl4aiExtractionConfig.strategy !== 'none') {
             params.append('extraction_config', JSON.stringify(formState.crawl4aiExtractionConfig)); // Changed to extraction_config
@@ -454,10 +475,15 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
           }
         }
 
-    const sseUrl = `${BACKEND_URL}/fetch-content?${params.toString()}`;
-    eventSourceRef.current = new EventSource(sseUrl);
-
-    eventSourceRef.current.onmessage = (event) => {
+     const sseUrl = `${BACKEND_URL}/fetch-content?${params.toString()}`;
+     // Append token for Auth
+     if (session?.access_token) {
+        eventSourceRef.current = new EventSource(`${sseUrl}&token=${session.access_token}`);
+     } else {
+        eventSourceRef.current = new EventSource(sseUrl);
+     }
+ 
+     eventSourceRef.current.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         // Update progress message based on type or status
@@ -681,6 +707,8 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
   const setCrawl4aiBrowserUsePersistentContextHandler = useCallback((val) => setFormValue('crawl4aiBrowserUsePersistentContext', val), [setFormValue]);
   const setCrawl4aiCrawlSessionIdHandler = useCallback((val) => setFormValue('crawl4aiCrawlSessionId', val), [setFormValue]);
   const setCrawl4aiCrawlCssSelectorHandler = useCallback((val) => setFormValue('crawl4aiCrawlCssSelector', val), [setFormValue]);
+  const setCrawl4aiScriptHandler = useCallback((val) => setFormValue('crawl4aiScript', val), [setFormValue]);
+  const setCrawl4aiAdaptiveModeHandler = useCallback((val) => setFormValue('crawl4aiAdaptiveMode', val), [setFormValue]);
 
   // Fetch History Data using Supabase client - REMOVED as useInfiniteQuery handles this
   // const fetchHistoryData = useCallback(async (pageToFetch, replace = false) => {
@@ -791,6 +819,10 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
       engineSpecificParams.crawl4ai_word_count_threshold = formState.crawl4aiWordCountThreshold;
       engineSpecificParams.crawl4ai_remove_forms = formState.crawl4aiRemoveForms;
       engineSpecificParams.crawl4ai_keep_data_attributes = formState.crawl4aiKeepDataAttributes;
+      // NEW crawl4ai Agentic params
+      engineSpecificParams.c4a_script = formState.crawl4aiScript;
+      engineSpecificParams.adaptive_mode = formState.crawl4aiAdaptiveMode;
+
       // NEW crawl4ai page interaction params
       engineSpecificParams.crawl4ai_execute_js_on_load = formState.crawl4aiExecuteJsOnLoad;
       engineSpecificParams.crawl4ai_scan_full_page = formState.crawl4aiScanFullPage;
@@ -1071,6 +1103,22 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
           if (espKey === 'crawl4ai_llm_base_url') {
             newPopulatedState.llmBaseUrl = value; // Directly assign to the correct formState field
             continue; // Value handled, skip general assignment for this key
+          } else if (espKey === 'browser_cookies') {
+             // Added explicit mapping for expert options
+             newPopulatedState.crawl4aiBrowserCookies = typeof value === 'string' ? value : JSON.stringify(value);
+             continue;
+          } else if (espKey === 'browser_headers') {
+             newPopulatedState.crawl4aiBrowserHeaders = typeof value === 'string' ? value : JSON.stringify(value);
+             continue;
+          } else if (espKey === 'crawl_session_id') {
+             newPopulatedState.crawl4aiCrawlSessionId = value;
+             continue;
+          } else if (espKey === 'crawl_css_selector') {
+             newPopulatedState.crawl4aiCrawlCssSelector = value;
+             continue;
+          } else if (espKey === 'browser_use_persistent_context') {
+              newPopulatedState.crawl4aiBrowserUsePersistentContext = value;
+              continue;
           } else if (espKey.startsWith('crawl4ai_')) {
             formKey = espKey.replace(/_([a-z])/g, (_match, letter) => letter.toUpperCase());
           } else if (espKey === 'excluded_selector') {
@@ -1078,9 +1126,14 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
           } else if (espKey === 'crawl4aiExtractionConfig') {
             newPopulatedState.crawl4aiExtractionConfig = value || { strategy: 'none', params: {} };
             continue;
-          } else if (espKey === 'crawl4aiDeepCrawlConfig') {
             newPopulatedState.crawl4aiDeepCrawlConfig = value || { strategy: 'none', params: {} };
             continue;
+          } else if (espKey === 'c4a_script') { // Map back c4a_script
+              newPopulatedState.crawl4aiScript = value;
+              continue;
+          } else if (espKey === 'adaptive_mode') { // Map back adaptive_mode
+             newPopulatedState.crawl4aiAdaptiveMode = value === 'true' || value === true;
+             continue;
           }
           // target_selector_advanced from esp maps directly to formState.targetSelectorAdvanced
 
@@ -1357,6 +1410,12 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
                 onCrawl4aiExtractionConfigChange={handleCrawl4aiExtractionConfigChange} // Use the correct handler
                 crawl4aiDeepCrawlConfig={formState.crawl4aiDeepCrawlConfig}
                 onCrawl4aiDeepCrawlConfigChange={handleCrawl4aiDeepCrawlConfigChange} // Use the correct handler
+
+                // Agentic / Scripting Options
+                crawl4aiScript={formState.crawl4aiScript}
+                setCrawl4aiScript={setCrawl4aiScriptHandler}
+                crawl4aiAdaptiveMode={formState.crawl4aiAdaptiveMode}
+                setCrawl4aiAdaptiveMode={setCrawl4aiAdaptiveModeHandler}
 
                 // Common options
                 uploadToSupabase={formState.uploadToSupabase}

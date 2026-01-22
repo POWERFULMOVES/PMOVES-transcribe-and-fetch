@@ -184,6 +184,11 @@ const AdvancedFetchOptions = ({
   setLlmBaseUrl,
   availableLlmModels,
   isLoadingLlmModels,
+  // New Agentic / Scripting props
+  crawl4aiScript,
+  setCrawl4aiScript,
+  crawl4aiAdaptiveMode, // Assuming this prop exists or will be added to parent
+  setCrawl4aiAdaptiveMode,
 }) => {
   console.log('[AdvancedFetchOptions] Rendering. Engine:', fetchingEngine);
 
@@ -193,6 +198,7 @@ const AdvancedFetchOptions = ({
     "crawl4ai-caching", "crawl4ai-media-handling", "crawl4ai-link-filtering",
     "crawl4ai-compliance", "crawl4ai-debugging", "crawl4ai-expert-options",
     "crawl4ai-llm-config", "crawl4ai-extraction-strategy", "crawl4ai-deep-crawl-strategy",
+    "crawl4ai-agentic-scripting", // New value
     "other-options"
   ], []);
 
@@ -1304,6 +1310,54 @@ const AdvancedFetchOptions = ({
                   max="1"
                   step="0.01"
                 />
+              </div>
+            </AccordionContent>
+          </AccordionItem>
+        )}
+
+        {/* crawl4ai Agentic & Scripting Section */}
+        {fetchingEngine === 'crawl4ai' && (
+          <AccordionItem value="crawl4ai-agentic-scripting" key="crawl4ai-agentic-scripting">
+            <AccordionTrigger>crawl4ai - Agentic & Scripting</AccordionTrigger>
+            <AccordionContent className="space-y-4 p-2">
+              <div>
+                <Label htmlFor="crawl4ai-script">
+                  Custom Crawl Script (DSL)
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <InfoCircledIcon className="inline-block ml-1 h-4 w-4 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{"Execute custom interactions using crawl4ai's DSL. Example: `CLICK #btn WAIT 500`."}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </Label>
+                <Textarea
+                  id="crawl4ai-script"
+                  placeholder="CLICK #load-more \nWAIT 1000"
+                  value={crawl4aiScript || ""}
+                  onChange={(e) => setCrawl4aiScript(e.target.value)}
+                  className="min-h-[100px] font-mono text-sm"
+                />
+              </div>
+
+               <div className="flex items-center space-x-2">
+                <Switch
+                  id="crawl4ai-adaptive-mode"
+                  checked={crawl4aiAdaptiveMode}
+                  onCheckedChange={setCrawl4aiAdaptiveMode}
+                />
+                <Label htmlFor="crawl4ai-adaptive-mode">
+                  Enable Adaptive Crawling (Smart Mode)
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <InfoCircledIcon className="inline-block ml-1 h-4 w-4 text-muted-foreground" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{"If enabled, uses heuristic scoring to optimize content extraction based on page structure and density."}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </Label>
               </div>
             </AccordionContent>
           </AccordionItem>

@@ -33,18 +33,18 @@ const LlmModelSelect = ({
   required = false, // Optional required indicator
   ...props // Pass any other props to the Select component
 }) => {
-  const [models, setModels] = useState([]);
+  const [allModels, setAllModels] = useState([]); // Store all fetched models
+  const [models, setModels] = useState([]); // Store filtered models (legacy state for now, or just use derived)
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
 
-  // Effect to fetch models on component mount and when filterCapabilities changes
+  // Effect to fetch models ONLY on component mount
   useEffect(() => {
     const fetchModels = async () => {
       setIsLoading(true);
       setError(null);
       try {
-        // Use the dedicated backend endpoint
-        const apiKey = process.env.NEXT_PUBLIC_BACKEND_API_KEY; // Or your method of accessing the API key
+        const apiKey = process.env.NEXT_PUBLIC_BACKEND_API_KEY;
         const headers = {};
         if (apiKey) {
           headers['Authorization'] = `Bearer ${apiKey}`;
@@ -54,36 +54,37 @@ const LlmModelSelect = ({
 
         const response = await fetch(`${BACKEND_URL}/api/v1/models`, { headers });
         if (!response.ok) {
-          // Attempt to read error body if available, otherwise use status text
           const errorBody = await response.text().catch(() => 'Unknown Error');
           throw new Error(`Failed to fetch LLM models: ${response.status} ${response.statusText} - ${errorBody.substring(0, 200)}...`);
         }
         const data = await response.json();
-
-        // Filter models based on required capabilities if filterCapabilities is provided
-        const filtered = filterCapabilities
-          ? (data || []).filter(model =>
-              model && // Ensure model is not null/undefined
-              model.capabilities &&
-              Array.isArray(model.capabilities) &&
-              filterCapabilities.every(cap => model.capabilities.includes(cap))
-            )
-          : (data || []);
-
-        setModels(filtered); // Ensure models is always an array
-        console.log("[LlmModelSelect] Fetched and filtered models:", filtered);
+        setAllModels(data || []);
+        console.log("[LlmModelSelect] Fetched models:", data);
 
       } catch (err) {
         console.error("Error fetching LLM models:", err);
         setError(err.message);
-        setModels([]); // Clear models on error
+        setAllModels([]);
       } finally {
         setIsLoading(false);
       }
     };
 
     fetchModels();
-  }, []); // Empty dependency array means this effect runs only once on mount
+  }, []);
+
+  // Filter models whenever allModels or filterCapabilities changes
+  useEffect(() => {
+     const filtered = filterCapabilities
+          ? allModels.filter(model =>
+              model && 
+              model.capabilities &&
+              Array.isArray(model.capabilities) &&
+              filterCapabilities.every(cap => model.capabilities.includes(cap))
+            )
+          : allModels;
+      setModels(filtered);
+  }, [allModels, filterCapabilities]);
 
   // Filter out models with empty or null aliases for Select.Item value
   // This is done here before mapping to SelectItems

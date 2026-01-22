@@ -399,7 +399,7 @@ class MarkdownUpserter:
             if (existing_segments.data or existing_full.data) and not force_overwrite:
                 self.logger.warning(f"Video ID {video_id} already exists in database")
                 if self.console:
-                    self.console.print(f"⚠️ Skipping {filename} - Video ID {video_id} already exists")
+                    self.console.print(f"[WARN] Skipping {filename} - Video ID {video_id} already exists")
                     self.console.print("   Use force_overwrite=True to overwrite existing content")
                 return {
                     'status': 'skipped',
@@ -450,7 +450,7 @@ class MarkdownUpserter:
             self.logger.info(f"Successfully upserted {len(segments)} segments for video_id: {video_id}")
             
             if self.console:
-                self.console.print(f"✓ Successfully processed {filename}")
+                self.console.print(f"[OK] Successfully processed {filename}")
                 self.console.print(f"  - Video ID: {video_id}")
                 self.console.print(f"  - Segments: {len(segments)}")
                 if existing_segments.data or existing_full.data:

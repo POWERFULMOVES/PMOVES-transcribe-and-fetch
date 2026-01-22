@@ -52,11 +52,18 @@ Each agent type is described with its core functionality, the capabilities it ex
 
 ### 4. Web Fetcher Agent
 
-*   **Description:** Specializes in fetching content from the web, potentially including crawling and structured data extraction. Integrates with services like crawl4AI.
+*   **Description:** Specializes in fetching content from the web, including advanced crawling, deep navigation, and structured data extraction. Integrates with **crawl4ai (v0.7.x+)** to provide intelligent, adaptive web interaction.
 *   **Core Capabilities (Registry Mapping):**
     *   `fetch_web_content`
-    *   `crawl_web`
+    *   `crawl_web` (Adaptive, Deep BFS/DFS)
     *   `extract_data`
+    *   `extract_data_structured` (JsonCss, Regex, Table)
+    *   `extract_data_semantic` (LLM, Cosine Similarity)
+    *   `execute_crawl_script` (C4A DSL for multi-step interactions)
+*   **Advanced Configuration:**
+    *   **Extraction Strategies:** JsonCss (schema-based), LLM (generative), Cosine (semantic clustering), Table (LLM/Heuristic), Regex.
+    *   **Agentic Behaviors:** Adaptive Crawling (Coverage/Consistency/Saturation scores), BestFirstCrawling (semantic prioritization).
+    *   **Browser Management:** Persistent Contexts, Managed Browsers, CDP Integration.
 *   **Suggested Adaptation Source(s):**
     *   `pmoves-ottomator-agents/crawl4AI-agent-v2/` (Designed for crawling and extraction)
     *   `pmoves-ottomator-agents/advanced-web-researcher/` (Likely includes web fetching logic)
