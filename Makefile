@@ -4,6 +4,7 @@
 # Deployment targets following PMOVES.AI-Edition-Hardened patterns.
 #
 # Usage:
+#   make env-bootstrap   # Copy credentials from parent PMOVES.AI
 #   make up              # Standalone mode (default)
 #   make up-docked       # Docked to PMOVES.AI
 #   make up-hardened     # With security overlay
@@ -18,6 +19,27 @@ DOCKED_MODE ?= false
 DB_BACKEND ?= sqlite
 SUPABASE_DUAL_WRITE ?= false
 AGENT_ZERO_MCP_ENABLED ?= false
+
+# =============================================================================
+# Environment Bootstrap (aligned with PMOVES-DoX pattern)
+# =============================================================================
+
+.PHONY: env-bootstrap
+env-bootstrap: ## Copy credentials from parent PMOVES.AI
+	@echo "Bootstrapping environment from parent PMOVES.AI..."
+	@chmod +x ./scripts/bootstrap_env.sh 2>/dev/null || true
+	@./scripts/bootstrap_env.sh
+
+.PHONY: ensure-standalone-networks
+ensure-standalone-networks: ## Create external networks for standalone mode
+	@echo "Ensuring external networks exist for standalone mode..."
+	@for network in pmoves_api pmoves_app pmoves_bus pmoves_data transcribe_api transcribe_app; do \
+		docker network inspect $$network >/dev/null 2>&1 || { \
+			echo "  Creating network: $$network"; \
+			docker network create $$network >/dev/null; \
+		}; \
+	done
+	@echo "External networks ready"
 
 # =============================================================================
 # Core Targets
@@ -44,7 +66,7 @@ ps: ## Show running services
 # =============================================================================
 
 .PHONY: up-standalone
-up-standalone: ## Start in standalone mode (SQLite, local services)
+up-standalone: ensure-standalone-networks ## Start in standalone mode (SQLite, local services)
 	DOCKED_MODE=false DB_BACKEND=sqlite $(COMPOSE) up -d
 
 .PHONY: up-docked
