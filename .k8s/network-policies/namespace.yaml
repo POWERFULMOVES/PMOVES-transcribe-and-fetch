@@ -1,0 +1,9 @@
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: pmoves
+  labels:
+    name: pmoves
+    app.kubernetes.io/part-of: pmoves
+    security-level: high

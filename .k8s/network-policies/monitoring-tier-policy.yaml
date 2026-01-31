@@ -1,0 +1,66 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: monitoring-tier-policy
+  namespace: pmoves
+  labels:
+    tier: monitoring
+    app.kubernetes.io/part-of: pmoves
+spec:
+  podSelector:
+    matchLabels:
+      tier: monitoring
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow Prometheus UI access (from ingress)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 9090  # Prometheus
+  # Allow Grafana UI access (from ingress)
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: ingress-nginx
+    ports:
+    - protocol: TCP
+      port: 3000  # Grafana
+  egress:
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Allow scraping all tiers (prometheus)
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: pmoves
+      podSelector: {}
+    ports:
+    - protocol: TCP
+      port: 9090  # Can scrape metrics
+  # Allow scraping kube-system metrics
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+    ports:
+    - protocol: TCP
+      port: 443   # HTTPS API servers
+    - protocol: TCP
+      port: 10250 # Kubelet metrics

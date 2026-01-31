@@ -1,0 +1,17 @@
+---
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: pmoves
+
+resources:
+  - namespace.yaml
+  - data-tier-policy.yaml
+  - api-tier-policy.yaml
+  - app-tier-policy.yaml
+  - bus-tier-policy.yaml
+  - monitoring-tier-policy.yaml
+
+commonLabels:
+  app.kubernetes.io/part-of: pmoves
+  security.policiy: network-segmentation

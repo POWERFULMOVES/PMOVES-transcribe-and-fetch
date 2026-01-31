@@ -1,0 +1,66 @@
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: bus-tier-policy
+  namespace: pmoves
+  labels:
+    tier: bus
+    app.kubernetes.io/part-of: pmoves
+spec:
+  podSelector:
+    matchLabels:
+      tier: bus
+  policyTypes:
+  - Ingress
+  - Egress
+  ingress:
+  # Allow connections from api-tier
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: pmoves
+      podSelector:
+        matchLabels:
+          tier: api
+    ports:
+    - protocol: TCP
+      port: 4222  # NATS
+  # Allow connections from app-tier
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: pmoves
+      podSelector:
+        matchLabels:
+          tier: app
+    ports:
+    - protocol: TCP
+      port: 4222
+  # Allow connections from monitoring tier
+  - from:
+    - namespaceSelector:
+        matchLabels:
+          name: pmoves
+      podSelector:
+        matchLabels:
+          tier: monitoring
+    ports:
+    - protocol: TCP
+      port: 8222  # NATS monitoring
+  egress:
+  # Allow DNS
+  - to:
+    - namespaceSelector:
+        matchLabels:
+          name: kube-system
+      podSelector:
+        matchLabels:
+          k8s-app: kube-dns
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+  # Bus tier primarily responds to connections (message delivery)
+  # Minimal egress needed beyond DNS
