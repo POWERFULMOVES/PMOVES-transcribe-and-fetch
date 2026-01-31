@@ -1,4 +1,9 @@
 # Root ignores
+# === DAMAGE CONTROL ===
+# CRITICAL: CATACLYSM_STUDIOS_INC contains vital business documents
+# NEVER add this folder to .gitignore - it must always be tracked
+# If this folder is accidentally deleted, restore from: git checkout origin/PMOVES.AI-Edition-Hardened -- CATACLYSM_STUDIOS_INC/
+# === END DAMAGE CONTROL ===
 # Python virtual environments
 .venv/
 venv/
