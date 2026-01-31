@@ -26,7 +26,7 @@ on:
         default: false
         type: boolean
   push:
-    branches: [main]
+    branches: [main, PMOVES.AI-Edition-Hardened]
     paths:
       # Rebuild images when submodules are updated
       - 'PMOVES-Open-Notebook'

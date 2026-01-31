@@ -2,7 +2,7 @@ name: Python Tests
 
 on:
   push:
-    branches: [main]
+    branches: [main, PMOVES.AI-Edition-Hardened]
     paths:
       - 'pmoves/__init__.py'
       - 'pmoves/services/**/*.py'
@@ -12,7 +12,7 @@ on:
       - 'pytest.ini'
       - '.github/workflows/python-tests.yml'
   pull_request:
-    branches: [main]
+    branches: [main, PMOVES.AI-Edition-Hardened]
     paths:
       - 'pmoves/__init__.py'
       - 'pmoves/services/**/*.py'
