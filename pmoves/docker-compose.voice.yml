@@ -1,0 +1,4 @@
+# Voice services compose file
+# Minimal placeholder for voice profile (VibeVoice, etc.)
+
+services: {}

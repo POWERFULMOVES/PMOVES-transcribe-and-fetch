@@ -1,0 +1,4 @@
+# ComfyUI services compose file
+# Placeholder for ComfyUI integration
+
+services: {}
