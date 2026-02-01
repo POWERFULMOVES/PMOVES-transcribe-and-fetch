@@ -68,6 +68,57 @@ PMOVES.AI is a **production-ready multi-agent orchestration platform** featuring
 - Request: `{"query": "...", "top_k": 10, "rerank": true}`
 - **Use for:** Knowledge retrieval, semantic search, RAG queries
 
+### Distributed Compute Services
+
+**Node Registry** [Port 8082] **[RESOURCE DISCOVERY]**
+- NATS-based P2P node discovery and capability tracking
+- Supabase-backed persistent storage
+- Tier-based classification (AI_FACTORY, GPU_PEER, GPU_INFRA, CPU_ONLY)
+- API: `POST http://localhost:8082/api/v1/nodes/query`
+- Health: `GET http://localhost:8082/healthz`
+- **Use for:** Finding available compute nodes, resource discovery
+- **See:** `pmoves/docs/DISTRIBUTED_COMPUTE_SERVICES.md` for detailed documentation
+
+**vLLM Orchestrator** [Port 8099]
+- Dynamic vLLM deployment with optimal parallelism configuration
+- Automatic TP/PP strategy selection based on available GPUs
+- TensorZero integration for model registration
+- API: `POST http://localhost:8099/api/v1/vllm/deploy`
+- Health: `GET http://localhost:8099/healthz`
+- **Use for:** Deploying LLM inference with dynamic resource allocation
+
+**GPU Orchestrator** [Port 8098]
+- VRAM reservation system to prevent overcommitment
+- System RAM tracking with OOM prediction
+- Per-GPU state management and NVLink topology detection
+- API: `POST http://localhost:8098/api/v1/gpu/reserve`
+- Health: `GET http://localhost:8098/healthz`
+- **Use for:** Pre-allocating GPU resources, preventing OOM
+
+**Work Marshaling** [Port 8100]
+- NATS-based work allocation with retry and blacklisting
+- Work item state machine (pending → assigned → completed/failed)
+- Priority queuing and automatic failover
+- API: `POST http://localhost:8100/api/v1/work/submit`
+- Health: `GET http://localhost:8100/healthz`
+- **Use for:** Distributing inference work across available nodes
+
+**Benchmark Runner** [Port 8101]
+- LLM performance testing via llama-throughput-lab
+- Configurable batch sizes and context lengths
+- TensorZero metrics publishing
+- API: `POST http://localhost:8101/api/v1/benchmark/run`
+- Health: `GET http://localhost:8101/healthz`
+- **Use for:** Performance testing, capacity planning
+
+**Resource Detector** [Port 8083]
+- Hardware detection (CPU, GPU, RAM) with tier classification
+- Platform-specific optimizations (CUDA, ROCm, CPU-only)
+- Runs on each node to auto-detect capabilities
+- **Use for:** Auto-discovery of node hardware
+
+### Retrieval & Knowledge Services (continued)
+
 **Hi-RAG Gateway v1** [Port 8089 CPU, 8090 GPU] **[LEGACY]**
 - Original hybrid RAG implementation
 - Use v2 instead for new features
@@ -232,8 +283,22 @@ PMOVES.AI is a **production-ready multi-agent orchestration platform** featuring
 - `ingest.summary.ready.v1` - Summary generated
 - `ingest.chapters.ready.v1` - Chapter markers created
 
+**Distributed Compute:**
+- `compute.nodes.announce.v1` - Node capability announcements
+- `compute.nodes.query.v1` - Query available nodes (request-response)
+- `compute.nodes.heartbeat.v1` - Node heartbeat updates
+- `compute.work.submit.v1` - Submit work for execution
+- `compute.work.assigned.v1` - Work assigned to node
+- `compute.work.completed.v1` - Work completed successfully
+- `compute.work.failed.v1` - Work failed (triggers retry)
+- `compute.vllm.request.v1` - Request vLLM deployment
+- `compute.gpu.reservation.v1` - VRAM reservation events
+- `compute.gpu.available.v1` - GPU availability changes
+
 **Agent Observability (for Claude Code CLI hooks):**
 - `claude.code.tool.executed.v1` - Claude CLI tool execution events
+
+**See:** `.claude/context/nats-subjects.md` for complete subject catalog
 
 ## Common Development Tasks
 

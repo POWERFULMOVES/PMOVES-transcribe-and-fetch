@@ -257,6 +257,221 @@ Example: `ingest.transcript.ready.v1`
 - **Frequency:** Every 15 seconds (configurable)
 - **Subscribers:** Orchestration services, load balancers
 
+## Distributed Compute Subjects
+
+### Node Registry
+
+**`compute.nodes.announce.v1`**
+- **Direction:** Published by Node Registry → Consumed by compute services
+- **Purpose:** Announce node capabilities to the mesh
+- **Payload:**
+  ```json
+  {
+    "node_id": "node-unique-id",
+    "hostname": "compute-node-01",
+    "tier": "GPU_PEER",
+    "ipv4": "192.168.1.100",
+    "cpu": {
+      "cores": 32,
+      "threads": 64,
+      "model_name": "Ryzen 9 7950X",
+      "mhz_per_cpu": 4500
+    },
+    "memory": {
+      "total_gb": 192,
+      "available_gb": 175.8
+    },
+    "gpus": [
+      {
+        "index": 0,
+        "name": "NVIDIA RTX 4090",
+        "vram_gb": 24
+      }
+    ],
+    "timestamp": "2025-12-06T12:00:00Z"
+  }
+  ```
+- **Subscribers:** vLLM Orchestrator, Work Marshaling
+
+**`compute.nodes.query.v1`**
+- **Direction:** Request-response via NATS
+- **Purpose:** Query for available compute nodes
+- **Request Payload:**
+  ```json
+  {
+    "query_id": "unique-query-id",
+    "requires_gpu": true,
+    "min_tier": "gpu_peer",
+    "online_only": true,
+    "min_vram_gb": 16,
+    "min_memory_gb": 64
+  }
+  ```
+- **Response Payload:**
+  ```json
+  {
+    "query_id": "matching-query-id",
+    "nodes": [
+      {
+        "node_id": "node-1",
+        "tier": "GPU_PEER",
+        "gpu_count": 2,
+        "gpu_vram_gb": 24,
+        "available_cpu_slots": 60,
+        "available_memory_mb": 180000
+      }
+    ]
+  }
+  ```
+
+**`compute.nodes.heartbeat.v1`**
+- **Direction:** Published by nodes → Consumed by Node Registry
+- **Purpose:** Update node status and availability
+- **Payload:**
+  ```json
+  {
+    "node_id": "node-unique-id",
+    "status": "online",
+    "available_cpu_slots": 60,
+    "available_memory_mb": 180000,
+    "gpu_utilization": 0.35,
+    "timestamp": "2025-12-06T12:00:00Z"
+  }
+  ```
+- **Frequency:** Every 30 seconds (configurable)
+
+### Work Marshaling
+
+**`compute.work.submit.v1`**
+- **Direction:** Published by clients → Consumed by Work Marshaling
+- **Purpose:** Submit work for distributed execution
+- **Payload:**
+  ```json
+  {
+    "work_id": "unique-work-id",
+    "work_type": "inference",
+    "model_name": "llama-3-70b",
+    "priority": 1,
+    "payload": {
+      "prompt": "Explain quantum computing",
+      "max_tokens": 500,
+      "temperature": 0.7
+    },
+    "timeout_seconds": 300,
+    "requester": "service-name"
+  }
+  ```
+- **Subscribers:** Work Marshaling service
+
+**`compute.work.assigned.v1`**
+- **Direction:** Published by Work Marshaling → Consumed by worker nodes
+- **Purpose:** Notify that work has been assigned to a node
+- **Payload:**
+  ```json
+  {
+    "work_id": "unique-work-id",
+    "node_id": "assigned-node-id",
+    "work_type": "inference",
+    "payload": {...},
+    "assigned_at": "2025-12-06T12:00:00Z"
+  }
+  ```
+- **Subscribers:** Worker nodes, GPU Orchestrator
+
+**`compute.work.completed.v1`**
+- **Direction:** Published by worker nodes → Consumed by Work Marshaling
+- **Purpose:** Notify that work completed successfully
+- **Payload:**
+  ```json
+  {
+    "work_id": "unique-work-id",
+    "node_id": "completing-node-id",
+    "result": {
+      "output": "generated text...",
+      "tokens_per_second": 45.2,
+      "duration_ms": 1234
+    },
+    "completed_at": "2025-12-06T12:00:00Z"
+  }
+  ```
+
+**`compute.work.failed.v1`**
+- **Direction:** Published by worker nodes → Consumed by Work Marshaling
+- **Purpose:** Notify that work failed (triggers retry)
+- **Payload:**
+  ```json
+  {
+    "work_id": "unique-work-id",
+    "node_id": "failing-node-id",
+    "error": "OOM error",
+    "error_type": "out_of_memory",
+    "retry_count": 2,
+    "failed_at": "2025-12-06T12:00:00Z"
+  }
+  ```
+
+### vLLM Orchestration
+
+**`compute.vllm.request.v1`**
+- **Direction:** Request-response via NATS
+- **Purpose:** Request vLLM instance deployment
+- **Request Payload:**
+  ```json
+  {
+    "request_id": "unique-request-id",
+    "model_name": "meta-llama/Llama-3-70B",
+    "tensor_parallel_size": 2,
+    "pipeline_parallel_size": 1,
+    "auto_start": true
+  }
+  ```
+- **Response Payload:**
+  ```json
+  {
+    "request_id": "matching-request-id",
+    "model_name": "meta-llama/Llama-3-70B",
+    "tensor_parallel_size": 2,
+    "pipeline_parallel_size": 1,
+    "strategy": "tensor_parallel",
+    "docker_compose": {...},
+    "endpoints": {
+      "api": "http://localhost:8090",
+      "metrics": "http://localhost:8091"
+    }
+  }
+  ```
+
+### GPU Orchestration
+
+**`compute.gpu.reservation.v1`**
+- **Direction:** Published by GPU Orchestrator
+- **Purpose:** Broadcast VRAM reservation events
+- **Payload:**
+  ```json
+  {
+    "reservation_id": "unique-reservation-id",
+    "node_id": "node-1",
+    "gpu_indices": [0, 1],
+    "reserved_mb": 24576,
+    "model_name": "llama-3-70b",
+    "expires_at": "2025-12-06T12:05:00Z"
+  }
+  ```
+
+**`compute.gpu.available.v1`**
+- **Direction:** Published by GPU Orchestrator
+- **Purpose:** Broadcast GPU availability changes
+- **Payload:**
+  ```json
+  {
+    "node_id": "node-1",
+    "gpu_index": 0,
+    "available_mb": 18432,
+    "utilization": 0.23,
+    "timestamp": "2025-12-06T12:00:00Z"
+  }
+  ```
+
 ## Testing & Development Subjects
 
 **`test.smoke.v1`**
