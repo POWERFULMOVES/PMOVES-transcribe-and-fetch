@@ -168,15 +168,14 @@ class SystemRamTracker:
             }
 
         except (OSError, ValueError) as e:
-            logger.warning(f"Error reading /proc/meminfo: {e}")
-            return {
-                "MemTotal": 16384,
-                "MemUsed": 8192,
-                "MemAvailable": 8192,
-                "MemFree": 8192,
-                "Buffers": 0,
-                "Cached": 0,
-            }
+            logger.error(
+                f"Critical: Cannot read system memory from /proc/meminfo: {e}. "
+                f"RAM tracking is DISABLED - cannot safely determine model loading capacity."
+            )
+            # Raise instead of returning fake values - this is a critical failure
+            raise RuntimeError(
+                f"Memory detection failed - cannot read /proc/meminfo: {e}"
+            ) from e
 
     async def _read_gpu_memory(self) -> Dict[str, int]:
         """Read GPU memory from nvidia-smi.
@@ -211,7 +210,10 @@ class SystemRamTracker:
             return {"total_mb": total_mb, "used_mb": used_mb, "free_mb": free_mb}
 
         except (subprocess.TimeoutExpired, FileNotFoundError, ValueError) as e:
-            logger.debug(f"Could not read GPU memory: {e}")
+            logger.warning(
+                f"GPU memory detection unavailable: {e}. "
+                f"VRAM tracking disabled - GPU models may fail to load."
+            )
             return {"total_mb": 0, "used_mb": 0, "free_mb": 0}
 
     async def start(self):

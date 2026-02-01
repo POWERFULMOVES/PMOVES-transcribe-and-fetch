@@ -389,14 +389,55 @@ class NodeRegistryAPI:
             )
 
     async def _handle_healthz(self, request):
-        """Handle health check request."""
+        """Handle health check request.
+
+        Checks:
+        - NATS connection status
+        - Storage backend availability
+        - Service running state
+        """
         from aiohttp import web
 
+        # Check service state
+        is_running = self.registry._running
+
+        # Check NATS connection
+        nats_connected = self.registry._nc is not None
+        if self.registry._nc:
+            try:
+                # Try to get current status
+                nats_status = self.registry._nc.status
+                nats_connected = nats_status.connected
+            except Exception:
+                nats_connected = False
+
+        # Check storage backend
+        storage_healthy = True
+        try:
+            # For Supabase, check if initialized
+            if hasattr(self.registry.storage, "_initialized"):
+                storage_healthy = self.registry.storage._initialized
+            # For in-memory, just check we can access it
+            else:
+                self.registry.storage.get_stats()
+        except Exception:
+            storage_healthy = False
+
+        # Overall health
+        is_healthy = is_running and nats_connected and storage_healthy
+
+        status_code = 200 if is_healthy else 503
+
         return web.json_response({
-            "status": "healthy",
+            "status": "healthy" if is_healthy else "unhealthy",
             "service": "node-registry",
             "timestamp": datetime.now().isoformat(),
-        })
+            "checks": {
+                "running": is_running,
+                "nats_connected": nats_connected,
+                "storage_healthy": storage_healthy,
+            },
+        }, status=status_code)
 
     async def _handle_query(self, request):
         """Handle node query request.

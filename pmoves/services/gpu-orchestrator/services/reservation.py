@@ -48,7 +48,8 @@ class GPUState:
     total_mb: int
     used_mb: int
     free_mb: int
-    reservations: List[str]  # IDs of reservations on this GPU
+    reservations: List[str] = dataclasses.field(default_factory=list)
+    reserved_mb: int = 0  # Total VRAM reserved by active reservations
 
     @property
     def utilization(self) -> float:
@@ -59,12 +60,12 @@ class GPUState:
 
     @property
     def available_mb(self) -> int:
-        """Available VRAM (free - reserved)."""
-        reserved_total = sum(
-            # Would need to look up reservation amounts
-            0  # Simplified
-        )
-        return max(0, self.free_mb - reserved_total)
+        """Available VRAM (free - reserved).
+
+        Returns the amount of VRAM available for new reservations.
+        This accounts for both system-used memory and reserved memory.
+        """
+        return max(0, self.free_mb - self.reserved_mb)
 
 
 class VRAMReservationManager:
@@ -175,7 +176,10 @@ class VRAMReservationManager:
             self._gpu_states = new_states
 
         except (subprocess.TimeoutExpired, FileNotFoundError, ValueError) as e:
-            logger.debug(f"Could not refresh GPU states: {e}")
+            logger.error(
+                f"Failed to refresh GPU states: {e}. "
+                f"VRAM reservations using stale data - OOM errors may occur."
+            )
 
     async def _cleanup_expired_reservations(self):
         """Remove expired reservations."""
@@ -249,7 +253,9 @@ class VRAMReservationManager:
             # Update GPU states
             for gpu_id in gpu_indices:
                 if gpu_id in self._gpu_states:
-                    self._gpu_states[gpu_id].reservations.append(res_id)
+                    gpu_state = self._gpu_states[gpu_id]
+                    gpu_state.reservations.append(res_id)
+                    gpu_state.reserved_mb += required_mb
 
             logger.info(
                 f"Reserved {required_mb}MB on GPUs {gpu_indices} "
@@ -278,6 +284,7 @@ class VRAMReservationManager:
                 gpu_state = self._gpu_states[gpu_id]
                 if reservation_id in gpu_state.reservations:
                     gpu_state.reservations.remove(reservation_id)
+                    gpu_state.reserved_mb -= reservation.reserved_mb
 
         del self._reservations[reservation_id]
 

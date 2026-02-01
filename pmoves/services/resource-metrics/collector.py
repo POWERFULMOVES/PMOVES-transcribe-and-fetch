@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 import subprocess
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, List, Optional
 
@@ -121,10 +122,6 @@ class ResourceMetrics:
             ])
 
         return "\n".join(lines)
-
-
-# Import dataclass after ResourceMetrics is defined
-from dataclasses import dataclass
 
 
 class ResourceCollector:
@@ -283,8 +280,17 @@ class ResourceCollector:
                 "gpu_power_draw_w": total_power / gpu_count,
             }
 
+        except (subprocess.TimeoutExpired, FileNotFoundError, ValueError, PermissionError) as e:
+            logger.warning(
+                f"GPU metrics collection failed: {e}. "
+                f"GPU observability degraded - check nvidia-smi availability."
+            )
+            return self._empty_gpu_metrics()
         except Exception as e:
-            logger.debug(f"Could not collect GPU metrics: {e}")
+            logger.error(
+                f"Unexpected error collecting GPU metrics: {e}",
+                exc_info=True
+            )
             return self._empty_gpu_metrics()
 
     @staticmethod

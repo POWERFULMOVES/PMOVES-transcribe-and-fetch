@@ -146,8 +146,12 @@ class BenchmarkRunner:
                 timeout=5,
             )
             dependencies["llama-throughput-lab"] = result.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
+        except FileNotFoundError:
+            logger.warning("llama-throughput-lab not found in PATH")
+            dependencies["llama-throughput-lab"] = False
+        except subprocess.TimeoutExpired:
+            logger.error("llama-throughput-lab timed out - process may be hung")
+            dependencies["llama-throughput-lab"] = False
 
         # Check for nvidia-smi
         try:
@@ -158,8 +162,12 @@ class BenchmarkRunner:
                 timeout=5,
             )
             dependencies["nvidia-smi"] = result.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
+        except FileNotFoundError:
+            logger.warning("nvidia-smi not found in PATH")
+            dependencies["nvidia-smi"] = False
+        except subprocess.TimeoutExpired:
+            logger.error("nvidia-smi timed out - GPU may be locked")
+            dependencies["nvidia-smi"] = False
 
         # Check for Python
         try:
@@ -170,8 +178,12 @@ class BenchmarkRunner:
                 timeout=5,
             )
             dependencies["python"] = result.returncode == 0
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
+        except FileNotFoundError:
+            logger.warning("python3 not found in PATH")
+            dependencies["python"] = False
+        except subprocess.TimeoutExpired:
+            logger.error("python3 timed out")
+            dependencies["python"] = False
 
         return dependencies
 

@@ -204,22 +204,25 @@ class VLLMOrchestrator:
             "online_only": True,
         }
 
-        # Publish query and wait for response
-        response_subject = f"compute.nodes.response.v1.{query['query_id']}"
-        await self._nc.publish(
-            "compute.nodes.query.v1",
-            json.dumps(query).encode(),
-            reply=response_subject,
-        )
-
-        # Wait for response with timeout
+        # Use NATS request-response pattern with timeout
         try:
-            msg = await self._nc.subscribe(response_subject)
-            # This is simplified - real implementation needs proper timeout
-            # For now, return empty list
-            return []
-        except Exception:
-            return []
+            response = await self._nc.request(
+                "compute.nodes.query.v1",
+                json.dumps(query).encode(),
+                timeout=5,  # 5 second timeout
+            )
+
+            if response:
+                data = response.data.decode()
+                payload = json.loads(data)
+                return payload.get("nodes", [])
+
+        except asyncio.TimeoutError:
+            logger.warning("Node registry query timed out")
+        except Exception as e:
+            logger.error(f"Error querying node registry: {e}")
+
+        return []
 
     def generate_compose_file(self, config: VLLMConfig) -> str:
         """Generate docker-compose.yml file content.
