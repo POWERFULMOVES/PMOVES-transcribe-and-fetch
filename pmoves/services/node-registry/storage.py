@@ -17,6 +17,15 @@ from ..resource_detector.models import NodeCapabilities, NodeHeartbeat
 logger = logging.getLogger(__name__)
 
 
+# Constants
+DEFAULT_STALE_THRESHOLD_SECONDS = 60  # 1 minute
+DEFAULT_CLEANUP_INTERVAL_SECONDS = 300  # 5 minutes
+STALE_HEARTBEAT_SECONDS = 60  # 1 minute - heartbeat threshold
+OFFLINE_HEARTBEAT_SECONDS = 120  # 2 minutes - offline threshold
+MB_TO_GB = 1024  # Memory unit conversion
+GB_TO_MB = 1024  # Memory unit conversion
+
+
 # SQL migration for creating the compute_nodes table
 CREATE_TABLE_SQL = """
 -- Create compute_nodes table for node registry
@@ -126,12 +135,12 @@ class NodeRecord:
     @property
     def is_stale(self) -> bool:
         """Check if node record is stale (no recent heartbeat)."""
-        return datetime.now() - self.last_heartbeat > timedelta(seconds=60)
+        return datetime.now() - self.last_heartbeat > timedelta(seconds=STALE_HEARTBEAT_SECONDS)
 
     @property
     def is_offline(self) -> bool:
         """Check if node should be considered offline."""
-        return datetime.now() - self.last_heartbeat > timedelta(seconds=120)
+        return datetime.now() - self.last_heartbeat > timedelta(seconds=OFFLINE_HEARTBEAT_SECONDS)
 
 
 class InMemoryNodeStore:
@@ -141,7 +150,7 @@ class InMemoryNodeStore:
     Data is lost on restart.
     """
 
-    def __init__(self, stale_threshold_seconds: int = 60):
+    def __init__(self, stale_threshold_seconds: int = DEFAULT_STALE_THRESHOLD_SECONDS):
         """Initialize in-memory store.
 
         Args:
@@ -552,10 +561,10 @@ class SupabaseNodeStore(InMemoryNodeStore):
         # Reconstruct SystemMemory
         memory_gb = float(row.get("memory_gb", 0))
         memory = SystemMemory(
-            total_mb=int(memory_gb * 1024) if memory_gb > 0 else row.get("memory_mb", 0),
+            total_mb=int(memory_gb * GB_TO_MB) if memory_gb > 0 else row.get("memory_mb", 0),
             total_gb=memory_gb,
             available_mb=row.get("available_memory_mb", 0),
-            available_gb=row.get("available_memory_mb", 0) / 1024,
+            available_gb=row.get("available_memory_mb", 0) / MB_TO_GB,
         )
 
         # Reconstruct GPU list
@@ -563,7 +572,7 @@ class SupabaseNodeStore(InMemoryNodeStore):
         gpu_models = row.get("gpu_models", [])
         gpu_drivers = row.get("gpu_driver_versions", [])
         gpu_count = row.get("gpu_count", len(gpu_models))
-        gpu_vram_total = int(row.get("gpu_vram_gb", 0) * 1024) or row.get("gpu_vram_mb", 0)
+        gpu_vram_total = int(row.get("gpu_vram_gb", 0) * GB_TO_MB) or row.get("gpu_vram_mb", 0)
         vram_per_gpu = gpu_vram_total // gpu_count if gpu_count > 0 else 0
 
         for i in range(gpu_count):
@@ -572,7 +581,7 @@ class SupabaseNodeStore(InMemoryNodeStore):
                     index=i,
                     name=gpu_models[i] if i < len(gpu_models) else "Unknown",
                     total_vram_mb=vram_per_gpu,
-                    total_vram_gb=vram_per_gpu / 1024,
+                    total_vram_gb=vram_per_gpu / MB_TO_GB,
                     driver_version=gpu_drivers[i] if i < len(gpu_drivers) else "unknown",
                     cuda_version="unknown",
                 )
@@ -674,7 +683,7 @@ class SupabaseNodeStore(InMemoryNodeStore):
                 "memory_mb": caps.memory.total_mb,
                 "memory_gb": round(caps.memory.total_gb, 2),
                 "gpu_count": len(caps.gpus),
-                "gpu_vram_mb": int(caps.total_gpu_vram_gb * 1024),
+                "gpu_vram_mb": int(caps.total_gpu_vram_gb * GB_TO_MB),
                 "gpu_vram_gb": round(caps.total_gpu_vram_gb, 2),
                 "gpu_models": [g.name for g in caps.gpus],
                 "gpu_driver_versions": [g.driver_version for g in caps.gpus],

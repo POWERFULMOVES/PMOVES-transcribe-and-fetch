@@ -15,6 +15,9 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Resource reservation constants
+DEFAULT_RESERVE_PERCENT = 0.15  # 15% of resources reserved by default
+
 
 class NodeTier(enum.Enum):
     """Node capability tier for P2P compute marshaling.
@@ -319,7 +322,7 @@ class HardwareProfile:
 class HardwareDetector:
     """Detects system hardware for dynamic resource allocation."""
 
-    def __init__(self, reserve_percent: float = 0.15):
+    def __init__(self, reserve_percent: float = DEFAULT_RESERVE_PERCENT):
         """Initialize hardware detector.
 
         Args:

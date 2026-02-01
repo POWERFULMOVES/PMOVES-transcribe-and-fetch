@@ -12,6 +12,9 @@ from ..resource_detector.hardware import GpuInfo, NodeTier
 
 logger = logging.getLogger(__name__)
 
+# Memory estimation constants
+ACTIVATION_MEMORY_RATIO = 0.25  # Activation memory is ~25% of weights
+
 
 @dataclasses.dataclass
 class ParallelismConfig:
@@ -193,7 +196,7 @@ class ParallelismCalculator:
         kv_cache_mb = kv_cache_bytes // (1024 * 1024)
 
         # Activation memory (rough estimate: 25% of weights for inference)
-        activation_mb = int(weights_mb * 0.25)
+        activation_mb = int(weights_mb * ACTIVATION_MEMORY_RATIO)
 
         # Overhead (CUDA, fragmentation, etc.)
         overhead_mb = 512  # 512MB overhead

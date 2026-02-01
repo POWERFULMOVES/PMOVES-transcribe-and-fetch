@@ -67,6 +67,27 @@ class NodeCapabilities:
     cgp_public_key: Optional[str] = None  # For geometric swarm coordination
     geometric_position: Optional[Dict[str, float]] = None  # {x, y, z} in hyperbolic space
 
+    def __post_init__(self):
+        """Validate node capabilities after initialization."""
+        if not self.node_id:
+            raise ValueError("node_id cannot be empty")
+        if not self.hostname:
+            raise ValueError("hostname cannot be empty")
+        if self.available_cpu_slots < 0:
+            raise ValueError(f"available_cpu_slots must be non-negative, got {self.available_cpu_slots}")
+        if self.available_gpu_slots < 0:
+            raise ValueError(f"available_gpu_slots must be non-negative, got {self.available_gpu_slots}")
+        if self.available_memory_mb < 0:
+            raise ValueError(f"available_memory_mb must be non-negative, got {self.available_memory_mb}")
+        if self.available_vram_mb < 0:
+            raise ValueError(f"available_vram_mb must be non-negative, got {self.available_vram_mb}")
+        if self.port < 0 or self.port > 65535:
+            raise ValueError(f"port must be in range 0-65535, got {self.port}")
+        if self.uptime_seconds < 0:
+            raise ValueError(f"uptime_seconds must be non-negative, got {self.uptime_seconds}")
+        if self.total_gpu_vram_gb < 0:
+            raise ValueError(f"total_gpu_vram_gb must be non-negative, got {self.total_gpu_vram_gb}")
+
     def to_nats_message(self) -> dict:
         """Convert to NATS message format for node announcement."""
         return {
@@ -333,6 +354,25 @@ class WorkRequest:
     min_tier: Optional[NodeTier] = None  # Minimum node tier required
     timeout_seconds: int = 300
     metadata: Dict = dataclasses.field(default_factory=dict)
+
+    def __post_init__(self):
+        """Validate work request after initialization."""
+        if not self.request_id:
+            raise ValueError("request_id cannot be empty")
+        if not self.workload_type:
+            raise ValueError("workload_type cannot be empty")
+        if not self.model_name:
+            raise ValueError("model_name cannot be empty")
+        if self.required_cpu_slots < 0:
+            raise ValueError(f"required_cpu_slots must be non-negative, got {self.required_cpu_slots}")
+        if self.required_ram_mb <= 0:
+            raise ValueError(f"required_ram_mb must be positive, got {self.required_ram_mb}")
+        if self.required_gpu_slots < 0:
+            raise ValueError(f"required_gpu_slots must be non-negative, got {self.required_gpu_slots}")
+        if self.required_vram_mb < 0:
+            raise ValueError(f"required_vram_mb must be non-negative, got {self.required_vram_mb}")
+        if self.timeout_seconds <= 0:
+            raise ValueError(f"timeout_seconds must be positive, got {self.timeout_seconds}")
 
     def to_nats_message(self) -> dict:
         """Convert to NATS message format."""

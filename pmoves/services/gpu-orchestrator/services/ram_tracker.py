@@ -16,6 +16,16 @@ from typing import Dict, List, Optional
 
 logger = logging.getLogger(__name__)
 
+# Memory estimation constants
+DEFAULT_SAFETY_MARGIN = 0.1  # 10% default safety margin
+CAN_FIT_SAFETY_MARGIN = 0.1  # 10% safety margin for can_fit_model
+CAN_LOAD_SAFETY_MARGIN = 0.15  # 15% safety margin for can_load_model
+ACTIVATION_MEMORY_RATIO = 0.25  # Activation memory is ~25% of weights
+
+# Tracker runtime constants
+DEFAULT_POLL_INTERVAL_SECONDS = 5.0  # Default polling interval
+DEFAULT_HISTORY_SIZE = 60  # Default number of snapshots to keep
+
 
 @dataclasses.dataclass
 class MemorySnapshot:
@@ -35,6 +45,25 @@ class MemorySnapshot:
     gpu_used_mb: int = 0
     gpu_free_mb: int = 0
 
+    def __post_init__(self):
+        """Validate memory snapshot data after initialization."""
+        if self.system_total_mb <= 0:
+            raise ValueError(f"system_total_mb must be positive, got {self.system_total_mb}")
+        if self.system_used_mb < 0:
+            raise ValueError(f"system_used_mb must be non-negative, got {self.system_used_mb}")
+        if self.system_available_mb < 0:
+            raise ValueError(f"system_available_mb must be non-negative, got {self.system_available_mb}")
+        if self.system_buffers_mb < 0:
+            raise ValueError(f"system_buffers_mb must be non-negative, got {self.system_buffers_mb}")
+        if self.system_cached_mb < 0:
+            raise ValueError(f"system_cached_mb must be non-negative, got {self.system_cached_mb}")
+        # GPU validation (only if GPU data is provided)
+        if self.gpu_total_mb > 0:
+            if self.gpu_used_mb < 0:
+                raise ValueError(f"gpu_used_mb must be non-negative, got {self.gpu_used_mb}")
+            if self.gpu_free_mb < 0:
+                raise ValueError(f"gpu_free_mb must be non-negative, got {self.gpu_free_mb}")
+
     @property
     def system_utilization(self) -> float:
         """System memory utilization (0.0-1.0)."""
@@ -50,7 +79,7 @@ class MemorySnapshot:
         return self.gpu_used_mb / self.gpu_total_mb
 
     @property
-    def can_fit_model(self, model_ram_mb: int, safety_margin: float = 0.1) -> bool:
+    def can_fit_model(self, model_ram_mb: int, safety_margin: float = CAN_FIT_SAFETY_MARGIN) -> bool:
         """Check if model can fit in available system RAM.
 
         Args:
@@ -338,7 +367,7 @@ class SystemRamTracker:
         kv_cache_mb = kv_cache_bytes // (1024 * 1024)
 
         # Activation memory (rough estimate, typically 20-30% of weights)
-        activation_mb = int(weights_mb * 0.25)
+        activation_mb = int(weights_mb * ACTIVATION_MEMORY_RATIO)
 
         # Overhead for optimizer state (if training)
         # For inference, this is minimal
@@ -357,7 +386,7 @@ class SystemRamTracker:
         model_params: int,
         quantization_bits: int = 16,
         context_length: int = 4096,
-        safety_margin: float = 0.15,
+        safety_margin: float = CAN_LOAD_SAFETY_MARGIN,
     ) -> tuple[bool, str]:
         """Check if model can be loaded safely.
 
@@ -423,8 +452,8 @@ class SystemRamTracker:
 
 
 async def run_tracker(
-    poll_interval_seconds: float = 5.0,
-    history_size: int = 60,
+    poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
+    history_size: int = DEFAULT_HISTORY_SIZE,
 ):
     """Run RAM tracker as standalone service.
 

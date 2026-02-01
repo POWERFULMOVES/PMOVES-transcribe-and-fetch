@@ -13,6 +13,10 @@ from typing import Dict, List, Optional, Set
 
 logger = logging.getLogger(__name__)
 
+# VRAM reservation constants
+DEFAULT_RESERVATION_TIMEOUT_SECONDS = 300  # 5 minutes
+DEFAULT_POLL_INTERVAL_SECONDS = 5.0
+
 
 @dataclasses.dataclass
 class VRAMReservation:
@@ -25,6 +29,17 @@ class VRAMReservation:
     expires_at: Optional[datetime] = None
     owner: Optional[str] = None  # Service or process that made the reservation
     model_name: Optional[str] = None
+
+    def __post_init__(self):
+        """Validate reservation data after initialization."""
+        if not self.gpu_indices:
+            raise ValueError("gpu_indices cannot be empty")
+        if self.reserved_mb <= 0:
+            raise ValueError(f"reserved_mb must be positive, got {self.reserved_mb}")
+        if any(idx < 0 for idx in self.gpu_indices):
+            raise ValueError(f"gpu_indices must be non-negative, got {self.gpu_indices}")
+        if self.expires_at is not None and self.expires_at < self.created_at:
+            raise ValueError("expires_at must be after created_at")
 
     @property
     def is_expired(self) -> bool:
@@ -50,6 +65,24 @@ class GPUState:
     free_mb: int
     reservations: List[str] = dataclasses.field(default_factory=list)
     reserved_mb: int = 0  # Total VRAM reserved by active reservations
+
+    def __post_init__(self):
+        """Validate GPU state data after initialization."""
+        if self.index < 0:
+            raise ValueError(f"GPU index must be non-negative, got {self.index}")
+        if self.total_mb <= 0:
+            raise ValueError(f"total_mb must be positive, got {self.total_mb}")
+        if self.used_mb < 0:
+            raise ValueError(f"used_mb must be non-negative, got {self.used_mb}")
+        if self.free_mb < 0:
+            raise ValueError(f"free_mb must be non-negative, got {self.free_mb}")
+        if self.used_mb + self.free_mb > self.total_mb:
+            raise ValueError(
+                f"used_mb ({self.used_mb}) + free_mb ({self.free_mb}) "
+                f"cannot exceed total_mb ({self.total_mb})"
+            )
+        if self.reserved_mb < 0:
+            raise ValueError(f"reserved_mb must be non-negative, got {self.reserved_mb}")
 
     @property
     def utilization(self) -> float:
@@ -77,8 +110,8 @@ class VRAMReservationManager:
 
     def __init__(
         self,
-        reservation_timeout_seconds: int = 300,  # 5 minutes
-        poll_interval_seconds: float = 5.0,
+        reservation_timeout_seconds: int = DEFAULT_RESERVATION_TIMEOUT_SECONDS,
+        poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
     ):
         """Initialize VRAM reservation manager.
 
@@ -449,8 +482,8 @@ class VRAMReservationManager:
 
 
 async def run_manager(
-    reservation_timeout_seconds: int = 300,
-    poll_interval_seconds: float = 5.0,
+    reservation_timeout_seconds: int = DEFAULT_RESERVATION_TIMEOUT_SECONDS,
+    poll_interval_seconds: float = DEFAULT_POLL_INTERVAL_SECONDS,
 ):
     """Run VRAM reservation manager as standalone service.
 
