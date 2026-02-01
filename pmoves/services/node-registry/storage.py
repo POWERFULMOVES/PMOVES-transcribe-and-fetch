@@ -853,19 +853,31 @@ class SupabaseNodeStore(InMemoryNodeStore):
             node_id: Node identifier
 
         Returns:
-            True if node was found and removed
+            True if node was found and removed from both Supabase and memory
+            False if node was not found or deletion failed
         """
         client = await self._get_client()
         if client is None:
+            # No Supabase connection - fall back to memory-only
+            logger.warning(f"Supabase unavailable, removing from memory only: {node_id}")
             return await super().remove(node_id)
 
         try:
-            # Delete from Supabase
-            client.table(self._table_name).delete().eq("node_id", node_id).execute()
+            # Delete from Supabase - check result
+            result = client.table(self._table_name).delete().eq("node_id", node_id).execute()
 
-            # Remove from memory
+            # Check if deletion actually happened (Supabase returns data for deleted rows)
+            if hasattr(result, 'data') and len(result.data) == 0:
+                # Node wasn't in Supabase
+                logger.debug(f"Node not found in Supabase: {node_id}")
+                # Still try to remove from memory
+                return await super().remove(node_id)
+
+            # Remove from memory after successful Supabase deletion
             return await super().remove(node_id)
 
         except Exception as e:
-            logger.warning(f"Failed to delete from Supabase: {e}")
-            return await super().remove(node_id)
+            logger.error(f"Failed to delete from Supabase: {e}", exc_info=True)
+            # Don't silently fall back - if Supabase fails, the operation failed
+            # This prevents divergence between memory and persistent storage
+            return False

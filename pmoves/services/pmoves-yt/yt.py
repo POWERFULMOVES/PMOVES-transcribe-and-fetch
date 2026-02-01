@@ -899,7 +899,8 @@ def _parse_upload_date(value: Optional[str]) -> Optional[str]:
         else:
             dt = dt.astimezone(timezone.utc)
         return dt.isoformat().replace("+00:00", "Z")
-    except ValueError:
+    except ValueError as e:
+        logger.warning(f"Failed to parse upload date '{value}': {e}")
         return None
 
 

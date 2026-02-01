@@ -339,14 +339,21 @@ class VRAMReservationManager:
         available_gpus: List[int],
         group_size: int,
     ) -> List[List[int]]:
-        """Find groups of NVLink-connected GPUs.
+        """Find groups of potentially NVLink-connected GPUs.
+
+        NOTE: Current implementation uses sequential GPU indices as a heuristic
+        since true NVLink topology detection is not yet implemented. This
+        assumes GPUs are ordered consecutively on the PCIe/NVLink fabric.
+
+        True NVLink topology detection would require querying hardware
+        topology from nvidia-smi or pynvml.
 
         Args:
             available_gpus: Available GPU indices
             group_size: Desired group size
 
         Returns:
-            List of GPU groups (each group is a list of indices)
+            List of GPU groups with consecutive indices (heuristic for NVLink)
         """
         # This would require NVLink topology info from hardware detection
         # For now, return sequential GPUs as a simple heuristic
