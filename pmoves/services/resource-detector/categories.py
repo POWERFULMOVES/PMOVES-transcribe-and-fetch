@@ -94,6 +94,34 @@ SERVICE_CATEGORIES: Dict[str, ServiceRequirements] = {
         required_gpu_slots=1,
         required_vram_mb=4096,
     ),
+    # ===== vLLM Inference Services =====
+    "vllm-8b": ServiceRequirements(
+        min_tier=NodeTier.GPU_PEER,
+        required_cpu_slots=2,
+        required_ram_mb=8192,
+        required_gpu_slots=1,
+        required_vram_mb=16384,
+        max_context_tokens=8192,
+        supported_models=["llama-3-8b", "gemma-2-9b"],
+    ),
+    "vllm-70b": ServiceRequirements(
+        min_tier=NodeTier.AI_FACTORY,
+        required_cpu_slots=4,
+        required_ram_mb=16384,
+        required_gpu_slots=4,
+        required_vram_mb=40960,
+        max_context_tokens=8192,
+        supported_models=["llama-3-70b", "mixtral-8x7b", "qwen-2-72b"],
+    ),
+    "vllm-400b": ServiceRequirements(
+        min_tier=NodeTier.AI_FACTORY,
+        required_cpu_slots=8,
+        required_ram_mb=32768,
+        required_gpu_slots=8,
+        required_vram_mb=81920,
+        max_context_tokens=32768,
+        supported_models=["mixtral-8x22b"],
+    ),
     # ===== Agent Services =====
     "agent-zero": ServiceRequirements(
         min_tier=NodeTier.CPU_PEER,

@@ -20,9 +20,11 @@ __all__ = [
     "publisher_discord",
     "pmoves_yt",
     "common",
+    "resource_detector",
 ]
 
 # Import common package directly since it's a real package with __init__.py
+# Note: resource_detector is imported on-demand to avoid circular imports
 from . import common  # noqa: E402, F401
 
 _BASE = Path(__file__).resolve().parent

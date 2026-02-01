@@ -100,6 +100,133 @@ class NodeCapabilities:
             "geometric_position": self.geometric_position,
         }
 
+    def to_dict(self) -> dict:
+        """Convert to dictionary for storage (e.g., Supabase JSON).
+
+        Similar to to_nats_message but optimized for storage format.
+        """
+        return {
+            "node_id": self.node_id,
+            "hostname": self.hostname,
+            "tier": self.tier.value,
+            "cpu_cores": self.cpu.cores,
+            "cpu_threads": self.cpu.total_threads,
+            "cpu_model": self.cpu.model_name,
+            "cpu_mhz": self.cpu.mhz_per_cpu,
+            "memory_mb": self.memory.total_mb,
+            "memory_gb": round(self.memory.total_gb, 2),
+            "gpu_count": len(self.gpus),
+            "gpu_vram_mb": int(self.total_gpu_vram_gb * 1024),
+            "gpu_vram_gb": round(self.total_gpu_vram_gb, 2),
+            "gpu_models": [g.name for g in self.gpus],
+            "gpu_driver_versions": [g.driver_version for g in self.gpus],
+            "ipv4": self.ipv4,
+            "ipv6": self.ipv6,
+            "port": self.port,
+            "bandwidth_mbps": self.bandwidth_mbps,
+            "latency_ms": self.latency_ms,
+            "available_cpu_slots": self.available_cpu_slots,
+            "available_gpu_slots": self.available_gpu_slots,
+            "available_memory_mb": self.available_memory_mb,
+            "available_vram_mb": self.available_vram_mb,
+            "supported_models": self.supported_models,
+            "supported_frameworks": self.supported_frameworks,
+            "max_context_tokens": self.max_context_tokens,
+            "quantization_support": self.quantization_support,
+            "is_online": self.is_online,
+            "is_draining": self.is_draining,
+            "last_heartbeat": self.last_heartbeat.isoformat() if self.last_heartbeat else None,
+            "uptime_seconds": self.uptime_seconds,
+            "cgp_public_key": self.cgp_public_key,
+            "geometric_position": self.geometric_position,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict) -> "NodeCapabilities":
+        """Create from dictionary format (e.g., Supabase JSON).
+
+        Similar to from_nats_message but handles storage format.
+        """
+        # Reconstruct CpuInfo
+        cpu = CpuInfo(
+            cores=data.get("cpu_cores", 0),
+            threads_per_core=1,
+            total_threads=data.get("cpu_threads", data.get("cpu_cores", 0)),
+            model_name=data.get("cpu_model", "Unknown"),
+            mhz_per_cpu=data.get("cpu_mhz", 0.0),
+        )
+
+        # Reconstruct SystemMemory
+        memory_gb = data.get("memory_gb", 0.0)
+        if memory_gb == 0.0:
+            memory_mb = data.get("memory_mb", 0)
+            memory_gb = memory_mb / 1024 if memory_mb > 0 else 0.0
+
+        memory = SystemMemory(
+            total_mb=data.get("memory_mb", int(memory_gb * 1024)),
+            total_gb=memory_gb,
+            available_mb=data.get("available_memory_mb", 0),
+            available_gb=data.get("available_memory_mb", 0) / 1024,
+        )
+
+        # Reconstruct GPU list
+        gpus = []
+        gpu_names = data.get("gpu_models", [])
+        gpu_drivers = data.get("gpu_driver_versions", [])
+        gpu_vram_total = data.get("gpu_vram_mb", 0) or data.get("gpu_vram_gb", 0) * 1024
+
+        gpu_count = data.get("gpu_count", len(gpu_names))
+        vram_per_gpu = gpu_vram_total // gpu_count if gpu_count > 0 else 0
+
+        for i in range(gpu_count):
+            gpus.append(
+                GpuInfo(
+                    index=i,
+                    name=gpu_names[i] if i < len(gpu_names) else "Unknown",
+                    total_vram_mb=vram_per_gpu,
+                    total_vram_gb=vram_per_gpu / 1024,
+                    driver_version=gpu_drivers[i] if i < len(gpu_drivers) else "unknown",
+                    cuda_version="unknown",
+                )
+            )
+
+        # Handle timestamp parsing
+        last_heartbeat = None
+        if data.get("last_heartbeat"):
+            try:
+                last_heartbeat = datetime.datetime.fromisoformat(data["last_heartbeat"])
+            except (ValueError, TypeError):
+                pass
+
+        return cls(
+            node_id=data["node_id"],
+            hostname=data["hostname"],
+            tier=NodeTier(data["tier"]),
+            cpu=cpu,
+            memory=memory,
+            gpus=gpus,
+            total_gpu_vram_gb=data.get("gpu_vram_gb", 0.0),
+            ipv4=data.get("ipv4"),
+            ipv6=data.get("ipv6"),
+            port=data.get("port", 4222),
+            bandwidth_mbps=data.get("bandwidth_mbps"),
+            latency_ms=data.get("latency_ms"),
+            available_cpu_slots=data.get("available_cpu_slots", 0),
+            available_gpu_slots=data.get("available_gpu_slots", 0),
+            available_memory_mb=data.get("available_memory_mb", 0),
+            available_vram_mb=data.get("available_vram_mb", 0),
+            supported_models=data.get("supported_models", []),
+            supported_frameworks=data.get("supported_frameworks", []),
+            max_context_tokens=data.get("max_context_tokens", 4096),
+            quantization_support=data.get("quantization_support", []),
+            is_online=data.get("is_online", True),
+            is_draining=data.get("is_draining", False),
+            last_heartbeat=last_heartbeat,
+            uptime_seconds=data.get("uptime_seconds", 0.0),
+            cgp_public_key=data.get("cgp_public_key"),
+            geometric_position=data.get("geometric_position"),
+        )
+
     @classmethod
     def from_nats_message(cls, msg: dict) -> "NodeCapabilities":
         """Create from NATS message format."""

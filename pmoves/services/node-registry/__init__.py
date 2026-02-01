@@ -38,6 +38,7 @@ from .storage import (
     InMemoryNodeStore,
     SupabaseNodeStore,
     NodeRecord,
+    CREATE_TABLE_SQL,
 )
 from .api import NodeRegistryAPI, run_api_server
 
@@ -51,4 +52,5 @@ __all__ = [
     "NodeRecord",
     "NodeRegistryAPI",
     "run_api_server",
+    "CREATE_TABLE_SQL",
 ]
