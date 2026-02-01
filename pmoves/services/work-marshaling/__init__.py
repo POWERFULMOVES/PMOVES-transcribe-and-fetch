@@ -248,8 +248,33 @@ class WorkMarshaling:
                 request = WorkRequest.from_nats_message(payload)
                 await self._handle_request(request, msg.reply)
 
+            except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                logger.error(f"Invalid work request message format: {e}", exc_info=True)
+                if msg.reply:
+                    error_response = {
+                        "status": "error",
+                        "error": "Invalid message format",
+                        "error_id": "WORK_FORMAT_ERROR",
+                    }
+                    await self._nc.publish(msg.reply, json.dumps(error_response).encode())
+            except (KeyError, ValueError, TypeError) as e:
+                logger.error(f"Invalid work request payload: {e}", exc_info=True)
+                if msg.reply:
+                    error_response = {
+                        "status": "error",
+                        "error": "Invalid request parameters",
+                        "error_id": "WORK_PARAM_ERROR",
+                    }
+                    await self._nc.publish(msg.reply, json.dumps(error_response).encode())
             except Exception as e:
-                logger.error(f"Error processing work request: {e}")
+                logger.error(f"Error processing work request: {e}", exc_info=True)
+                if msg.reply:
+                    error_response = {
+                        "status": "error",
+                        "error": "Request processing failed",
+                        "error_id": "WORK_INTERNAL_ERROR",
+                    }
+                    await self._nc.publish(msg.reply, json.dumps(error_response).encode())
 
         # Subscribe with JetStream for durability
         try:
@@ -282,7 +307,7 @@ class WorkMarshaling:
                 await self._handle_completion(work_id, node_id, payload)
 
             except Exception as e:
-                logger.error(f"Error processing completion: {e}")
+                logger.error(f"Error processing completion: {e}", exc_info=True)
 
         sub = await self._nc.subscribe(SUBJECTS["completed"], cb=on_completion)
         self._subscriptions.append(sub)
@@ -305,7 +330,7 @@ class WorkMarshaling:
                 await self._handle_failure(work_id, node_id, error)
 
             except Exception as e:
-                logger.error(f"Error processing failure: {e}")
+                logger.error(f"Error processing failure: {e}", exc_info=True)
 
         sub = await self._nc.subscribe(SUBJECTS["failed"], cb=on_failure)
         self._subscriptions.append(sub)
@@ -331,8 +356,22 @@ class WorkMarshaling:
                 if msg.reply:
                     await self._nc.publish(msg.reply, json.dumps(status).encode())
 
+            except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                logger.error(f"Invalid status query message format: {e}", exc_info=True)
+                if msg.reply:
+                    error_response = {
+                        "error": "Invalid message format",
+                        "error_id": "STATUS_FORMAT_ERROR",
+                    }
+                    await self._nc.publish(msg.reply, json.dumps(error_response).encode())
             except Exception as e:
-                logger.error(f"Error processing status query: {e}")
+                logger.error(f"Error processing status query: {e}", exc_info=True)
+                if msg.reply:
+                    error_response = {
+                        "error": "Status query failed",
+                        "error_id": "STATUS_INTERNAL_ERROR",
+                    }
+                    await self._nc.publish(msg.reply, json.dumps(error_response).encode())
 
         sub = await self._nc.subscribe(SUBJECTS["status"], cb=on_status)
         self._subscriptions.append(sub)
@@ -355,8 +394,26 @@ class WorkMarshaling:
                     response = {"work_id": work_id, "cancelled": result}
                     await self._nc.publish(msg.reply, json.dumps(response).encode())
 
+            except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                logger.error(f"Invalid cancellation message format: {e}", exc_info=True)
+                if msg.reply:
+                    error_response = {
+                        "work_id": payload.get("work_id") if 'payload' in locals() else None,
+                        "cancelled": False,
+                        "error": "Invalid message format",
+                        "error_id": "CANCEL_FORMAT_ERROR",
+                    }
+                    await self._nc.publish(msg.reply, json.dumps(error_response).encode())
             except Exception as e:
-                logger.error(f"Error processing cancellation: {e}")
+                logger.error(f"Error processing cancellation: {e}", exc_info=True)
+                if msg.reply:
+                    error_response = {
+                        "work_id": payload.get("work_id") if 'payload' in locals() else None,
+                        "cancelled": False,
+                        "error": "Cancellation failed",
+                        "error_id": "CANCEL_INTERNAL_ERROR",
+                    }
+                    await self._nc.publish(msg.reply, json.dumps(error_response).encode())
 
         sub = await self._nc.subscribe(SUBJECTS["cancel"], cb=on_cancel)
         self._subscriptions.append(sub)

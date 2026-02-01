@@ -304,8 +304,7 @@ class SystemRamTracker:
         predicted_oom_seconds = None
         if trend_mb_per_sec > 0:
             remaining_mb = last.system_available_mb
-            if trend_mb_per_sec > 0:
-                predicted_oom_seconds = remaining_mb / trend_mb_per_sec
+            predicted_oom_seconds = remaining_mb / trend_mb_per_sec
 
         return {
             "trend_mb_per_sec": trend_mb_per_sec,

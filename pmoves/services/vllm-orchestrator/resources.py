@@ -344,12 +344,12 @@ def generate_service_resources(
     """
     from ..resource_detector.categories import SERVICE_CATEGORIES
 
-    allocator = ResourceAllocator(profile)
     resources = {}
 
     # Determine which services to allocate
     if services is None:
-        services = allocator.get_recommended_services()
+        # Use all defined service categories as default
+        services = list(SERVICE_CATEGORIES.keys())
 
     # Calculate total required for vLLM
     vllm_requirements = {}

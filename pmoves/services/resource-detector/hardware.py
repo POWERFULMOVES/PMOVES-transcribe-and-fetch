@@ -327,6 +327,8 @@ class HardwareDetector:
         """
         self.reserve_percent = reserve_percent
         self._profile: Optional[HardwareProfile] = None
+        # Track if actual hardware detection succeeded (vs fallback defaults)
+        self._detection_succeeded = False
 
     def detect(self) -> HardwareProfile:
         """Detect all system hardware."""
@@ -340,12 +342,14 @@ class HardwareDetector:
 
         total_gpu_vram = sum(g.total_vram_gb for g in gpus)
 
+        # is_detected is True only when actual detection succeeded
+        # (not when we used fake/safe default values)
         self._profile = HardwareProfile(
             cpu=cpu,
             memory=memory,
             gpus=gpus,
             total_gpu_vram_gb=total_gpu_vram,
-            is_detected=True,
+            is_detected=self._detection_succeeded,
             network=network,
         )
 
@@ -379,17 +383,19 @@ class HardwareDetector:
             # Fallback to /proc/cpuinfo
             return self._parse_proc_cpuinfo()
         except (subprocess.TimeoutExpired, FileNotFoundError) as e:
-            logger.warning(f"Could not detect CPU: {e}")
+            logger.error(f"Could not detect CPU: {e}", exc_info=True)
+            # Return safe defaults - is_detected will be False
             return CpuInfo(
-                cores=4,
+                cores=1,  # Minimal, not fake
                 threads_per_core=1,
-                total_threads=4,
-                model_name="Unknown",
+                total_threads=1,
+                model_name="Detection Failed",
                 mhz_per_cpu=0.0,
             )
 
     def _parse_lscpu(self, output: str) -> CpuInfo:
         """Parse lscpu output."""
+        self._detection_succeeded = True  # Mark successful detection
         data = {}
         for line in output.splitlines():
             if ":" in line:
@@ -431,6 +437,8 @@ class HardwareDetector:
                     elif line.startswith("cpu MHz"):
                         mhz = float(line.split(":", 1)[1].strip())
 
+            self._detection_succeeded = True  # Mark successful detection
+
             return CpuInfo(
                 cores=len(processors),
                 threads_per_core=1,
@@ -439,8 +447,9 @@ class HardwareDetector:
                 mhz_per_cpu=mhz,
             )
         except (OSError, ValueError) as e:
-            logger.warning(f"Could not parse /proc/cpuinfo: {e}")
-            return CpuInfo(4, 1, 4, "Unknown", 0.0)
+            logger.error(f"Could not parse /proc/cpuinfo: {e}", exc_info=True)
+            # Return safe defaults - is_detected will be False
+            return CpuInfo(1, 1, 1, "Detection Failed", 0.0)
 
     def _detect_memory(self) -> SystemMemory:
         """Detect system memory."""
@@ -459,6 +468,7 @@ class HardwareDetector:
                     if len(parts) >= 3:
                         total_mb = int(parts[1])
                         avail_mb = int(parts[3]) if len(parts) > 3 else total_mb
+                        self._detection_succeeded = True  # Mark successful detection
                         return SystemMemory(
                             total_mb=total_mb,
                             total_gb=total_mb / 1024,
@@ -466,13 +476,15 @@ class HardwareDetector:
                             available_gb=avail_mb / 1024,
                         )
         except (subprocess.TimeoutExpired, FileNotFoundError, ValueError) as e:
-            logger.warning(f"Could not detect memory: {e}")
+            logger.error(f"Could not detect memory: {e}", exc_info=True)
 
+        # Return minimal safe defaults - is_detected will be False
+        # Use 1GB minimum (not fake 16GB) so allocation doesn't OOM immediately
         return SystemMemory(
-            total_mb=16384,
-            total_gb=16.0,
-            available_mb=16384,
-            available_gb=16.0,
+            total_mb=1024,
+            total_gb=1.0,
+            available_mb=1024,
+            available_gb=1.0,
         )
 
     def _detect_gpus(self) -> List[GpuInfo]:

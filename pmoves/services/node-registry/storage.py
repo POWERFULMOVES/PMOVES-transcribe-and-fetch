@@ -476,8 +476,8 @@ class SupabaseNodeStore(InMemoryNodeStore):
                     f"{CREATE_TABLE_SQL}"
                 )
             else:
-                logger.warning(f"Supabase initialization failed: {e}")
-            self._initialized = True
+                logger.error(f"Supabase initialization failed: {e}", exc_info=True)
+            self._initialized = False  # Mark as NOT initialized since connection failed
 
     async def _load_from_supabase(self):
         """Load all nodes from Supabase into memory.

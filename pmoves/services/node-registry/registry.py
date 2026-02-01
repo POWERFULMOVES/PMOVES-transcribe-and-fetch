@@ -146,8 +146,12 @@ class NodeRegistry:
                     f"Node announcement: {capabilities.node_id} ({capabilities.tier.value})"
                 )
 
+            except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                logger.error(f"Invalid announcement message format: {e}", exc_info=True)
+            except (KeyError, ValueError, TypeError) as e:
+                logger.error(f"Invalid announcement payload: {e}", exc_info=True)
             except Exception as e:
-                logger.error(f"Error processing announcement: {e}")
+                logger.error(f"Error processing announcement: {e}", exc_info=True)
 
         # Create JetStream consumer for announcements
         try:
@@ -186,8 +190,12 @@ class NodeRegistry:
 
                 await self.storage.update_heartbeat(heartbeat)
 
+            except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                logger.error(f"Invalid heartbeat message format: {e}", exc_info=True)
+            except (KeyError, ValueError, TypeError) as e:
+                logger.error(f"Invalid heartbeat payload: {e}", exc_info=True)
             except Exception as e:
-                logger.error(f"Error processing heartbeat: {e}")
+                logger.error(f"Error processing heartbeat: {e}", exc_info=True)
 
         # Subscribe to heartbeats (high volume, use regular subscription)
         sub = await self._nc.subscribe(SUBJECTS["heartbeat"], cb=on_heartbeat)
@@ -199,11 +207,28 @@ class NodeRegistry:
         import nats
 
         async def on_query(msg):
+            # Define error response helper
+            async def send_error(reply_subject, query_id, error_msg, error_id="QUERY_ERROR"):
+                if reply_subject:
+                    error_response = {
+                        "query_id": query_id,
+                        "error": error_msg,
+                        "error_id": error_id,
+                        "nodes": [],
+                        "count": 0,
+                        "timestamp": datetime.now().isoformat(),
+                    }
+                    await self._nc.publish(reply_subject, json.dumps(error_response).encode())
+
+            payload = None
+            query_id = None
+
             try:
                 data = msg.data.decode()
                 import json
 
                 payload = json.loads(data)
+                query_id = payload.get("query_id")
 
                 # Query parameters
                 tier = payload.get("tier")
@@ -225,7 +250,7 @@ class NodeRegistry:
                 nodes = [r.capabilities.to_nats_message() for r in records]
 
                 response = {
-                    "query_id": payload.get("query_id"),
+                    "query_id": query_id,
                     "nodes": nodes,
                     "count": len(nodes),
                     "timestamp": datetime.now().isoformat(),
@@ -236,8 +261,18 @@ class NodeRegistry:
                 if reply_subject:
                     await self._nc.publish(reply_subject, json.dumps(response).encode())
 
+            except (UnicodeDecodeError, json.JSONDecodeError) as e:
+                logger.error(f"Invalid query message format: {e}", exc_info=True)
+                if msg.reply:
+                    await send_error(msg.reply, query_id, "Invalid message format", "QUERY_FORMAT_ERROR")
+            except (KeyError, ValueError, TypeError) as e:
+                logger.error(f"Invalid query payload: {e}", exc_info=True)
+                if msg.reply:
+                    await send_error(msg.reply, query_id, "Invalid query parameters", "QUERY_PARAM_ERROR")
             except Exception as e:
-                logger.error(f"Error processing query: {e}")
+                logger.error(f"Error processing query: {e}", exc_info=True)
+                if msg.reply:
+                    await send_error(msg.reply, query_id, "Query processing failed", "QUERY_INTERNAL_ERROR")
 
         sub = await self._nc.subscribe(SUBJECTS["query"], cb=on_query)
         self._subscriptions.append(sub)

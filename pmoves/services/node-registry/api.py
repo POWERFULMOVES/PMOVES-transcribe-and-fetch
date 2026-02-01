@@ -144,10 +144,16 @@ class NodeRegistryAPI:
                 "tier": capabilities.tier.value,
             })
 
-        except Exception as e:
-            logger.error(f"Error in register endpoint: {e}")
+        except (ValueError, KeyError) as e:
+            logger.warning(f"Invalid payload for node registration: {e}")
             return web.json_response(
-                {"error": str(e)},
+                {"error": "Invalid payload format", "detail": "node_id, hostname, and tier are required"},
+                status=400,
+            )
+        except Exception as e:
+            logger.error(f"Error in register endpoint: {e}", exc_info=True)
+            return web.json_response(
+                {"error": "Registration failed", "error_id": "NODE_REGISTRY_001"},
                 status=500,
             )
 
@@ -196,10 +202,16 @@ class NodeRegistryAPI:
                 "node_id": heartbeat.node_id,
             })
 
-        except Exception as e:
-            logger.error(f"Error in heartbeat endpoint: {e}")
+        except (ValueError, KeyError) as e:
+            logger.warning(f"Invalid heartbeat payload: {e}")
             return web.json_response(
-                {"error": str(e)},
+                {"error": "Invalid payload format", "detail": "node_id is required"},
+                status=400,
+            )
+        except Exception as e:
+            logger.error(f"Error in heartbeat endpoint: {e}", exc_info=True)
+            return web.json_response(
+                {"error": "Heartbeat failed", "error_id": "NODE_REGISTRY_002"},
                 status=500,
             )
 
