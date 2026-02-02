@@ -27,18 +27,19 @@ COPY services/agent-zero/requirements.txt ./requirements.txt
 RUN pip install --no-cache-dir uv
 RUN uv pip install --system --break-system-packages --no-cache-dir -r requirements.txt
 
-# Copy vendored Agent Zero runtime assets
-COPY services/agent-zero/runtime ${AGENT_ZERO_HOME}/runtime
+# Note: Agent Zero runtime is included in the base image (agent0ai/agent-zero:latest)
+# No need to copy runtime assets separately
+
 RUN pip install --no-cache-dir -r /git/agent-zero/requirements.txt \
     && pip install --no-cache-dir -r requirements.txt
 
-RUN chmod +x /ins/copy_A0.sh
+RUN chmod +x /ins/copy_A0.sh 2>/dev/null || true
 
-# Include PMOVES contract schemas so Agent Zero can validate envelopes.
-COPY contracts /app/contracts
+# Include PMOVES contract schemas (optional - create contracts/ if needed)
+# COPY contracts /app/contracts
 
-# Include PMOVES agent forms (used by /mcp/execute form.get and related flows).
-COPY configs /app/configs
+# Include PMOVES agent forms (optional - create configs/ if needed)
+# COPY configs /app/configs
 
 # Copy PMOVES service implementation on top of the upstream runtime
 COPY services /app/services
