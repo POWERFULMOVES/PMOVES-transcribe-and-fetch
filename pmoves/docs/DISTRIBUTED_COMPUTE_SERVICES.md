@@ -22,7 +22,7 @@ The distributed compute services enable **P2P resource discovery** and **dynamic
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                  │
 │  │   Node       │    │   vLLM       │    │   Work       │                  │
 │  │  Registry    │◄──►│ Orchestrator │◄──►│ Marshaling   │                  │
-│  │   :8082      │    │   :8099      │    │   :8100      │                  │
+│  │   :8115      │    │   :8117      │    │   :8118      │                  │
 │  └──────┬───────┘    └──────┬───────┘    └──────┬───────┘                  │
 │         │                   │                   │                          │
 │         └───────────────────┴───────────────────┘                          │
@@ -36,7 +36,7 @@ The distributed compute services enable **P2P resource discovery** and **dynamic
 │  ┌──────────────┐    ┌──────────────┐    ┌──────────────┐                  │
 │  │  Resource    │    │   GPU        │    │  Benchmark   │                  │
 │  │  Detector    │    │ Orchestrator │    │   Runner     │                  │
-│  │   :8083      │    │   :8098      │    │   :8101      │                  │
+│  │   :8116      │    │   :8098      │    │   :8119      │                  │
 │  └──────────────┘    └──────────────┘    └──────────────┘                  │
 │                                                                             │
 └─────────────────────────────────────────────────────────────────────────────┘
@@ -44,7 +44,7 @@ The distributed compute services enable **P2P resource discovery** and **dynamic
 
 ## Services
 
-### 1. Node Registry [Port 8082]
+### 1. Node Registry [Port 8115]
 
 **Purpose:** P2P node discovery and capability tracking via NATS.
 
@@ -58,10 +58,10 @@ The distributed compute services enable **P2P resource discovery** and **dynamic
 
 ```bash
 # Health check
-GET http://localhost:8082/healthz
+GET http://localhost:8115/healthz
 
 # Query for available nodes
-POST http://localhost:8082/api/v1/nodes/query
+POST http://localhost:8115/api/v1/nodes/query
 {
   "requires_gpu": true,
   "min_tier": "gpu_peer",
@@ -69,10 +69,10 @@ POST http://localhost:8082/api/v1/nodes/query
 }
 
 # Get specific node
-GET http://localhost:8082/api/v1/nodes/{node_id}
+GET http://localhost:8115/api/v1/nodes/{node_id}
 
 # Register node (internal)
-POST http://localhost:8082/api/v1/nodes/register
+POST http://localhost:8115/api/v1/nodes/register
 ```
 
 **Node Tiers:**
@@ -89,7 +89,7 @@ POST http://localhost:8082/api/v1/nodes/register
 - `compute.nodes.query.v1` - Node queries (request-response)
 - `compute.nodes.heartbeat.v1` - Heartbeat updates
 
-### 2. vLLM Orchestrator [Port 8099]
+### 2. vLLM Orchestrator [Port 8117]
 
 **Purpose:** Dynamic vLLM deployment with optimal parallelism configuration.
 
@@ -103,7 +103,7 @@ POST http://localhost:8082/api/v1/nodes/register
 
 ```bash
 # Deploy vLLM instance
-POST http://localhost:8099/api/v1/vllm/deploy
+POST http://localhost:8117/api/v1/vllm/deploy
 {
   "model_name": "meta-llama/Llama-3-70B",
   "instance_name": "llama-3-70b-main",
@@ -111,13 +111,13 @@ POST http://localhost:8099/api/v1/vllm/deploy
 }
 
 # Stop instance
-DELETE http://localhost:8099/api/v1/vllm/instances/{instance_name}
+DELETE http://localhost:8117/api/v1/vllm/instances/{instance_name}
 
 # List instances
-GET http://localhost:8099/api/v1/vllm/instances
+GET http://localhost:8117/api/v1/vllm/instances
 
 # Get instance status
-GET http://localhost:8099/api/v1/vllm/instances/{instance_name}
+GET http://localhost:8117/api/v1/vllm/instances/{instance_name}
 ```
 
 **Parallelism Strategies:**
@@ -129,7 +129,7 @@ GET http://localhost:8099/api/v1/vllm/instances/{instance_name}
 | `PIPELINE_PARALLEL` | Sequential GPU stages | Very large models |
 | `HYBRID_TP_PP` | Combined TP + PP | Largest models (70B+) |
 
-### 3. Work Marshaling [Port 8100]
+### 3. Work Marshaling [Port 8118]
 
 **Purpose:** NATS-based work allocation with retry and blacklisting.
 
@@ -143,7 +143,7 @@ GET http://localhost:8099/api/v1/vllm/instances/{instance_name}
 
 ```bash
 # Submit work
-POST http://localhost:8100/api/v1/work/submit
+POST http://localhost:8118/api/v1/work/submit
 {
   "work_type": "inference",
   "model_name": "llama-3-70b",
@@ -152,13 +152,13 @@ POST http://localhost:8100/api/v1/work/submit
 }
 
 # Get work status
-GET http://localhost:8100/api/v1/work/{work_id}
+GET http://localhost:8118/api/v1/work/{work_id}
 
 # Cancel work
-DELETE http://localhost:8100/api/v1/work/{work_id}
+DELETE http://localhost:8118/api/v1/work/{work_id}
 
 # List active work
-GET http://localhost:8100/api/v1/work?status=assigned
+GET http://localhost:8118/api/v1/work?status=assigned
 ```
 
 **NATS Subjects:**
@@ -167,7 +167,7 @@ GET http://localhost:8100/api/v1/work?status=assigned
 - `compute.work.completed.v1` - Work completed
 - `compute.work.failed.v1` - Work failed
 
-### 4. Resource Detector [Port 8083]
+### 4. Resource Detector [Port 8116]
 
 **Purpose:** Hardware detection and tier classification.
 
@@ -217,7 +217,7 @@ POST http://localhost:8098/api/v1/gpu/can-fit
 }
 ```
 
-### 6. Benchmark Runner [Port 8101]
+### 6. Benchmark Runner [Port 8119]
 
 **Purpose:** LLM performance testing via llama-throughput-lab.
 
@@ -231,7 +231,7 @@ POST http://localhost:8098/api/v1/gpu/can-fit
 
 ```bash
 # Run benchmark
-POST http://localhost:8101/api/v1/benchmark/run
+POST http://localhost:8119/api/v1/benchmark/run
 {
   "model_name": "meta-llama/Llama-3-70B",
   "model_path": "/models/llama-3-70b",
@@ -242,13 +242,13 @@ POST http://localhost:8101/api/v1/benchmark/run
 }
 
 # Get benchmark status
-GET http://localhost:8101/api/v1/benchmark/{benchmark_id}
+GET http://localhost:8119/api/v1/benchmark/{benchmark_id}
 
 # Cancel benchmark
-DELETE http://localhost:8101/api/v1/benchmark/{benchmark_id}
+DELETE http://localhost:8119/api/v1/benchmark/{benchmark_id}
 
 # List benchmarks
-GET http://localhost:8101/api/v1/benchmarks
+GET http://localhost:8119/api/v1/benchmarks
 ```
 
 ## Environment Configuration
@@ -259,11 +259,11 @@ Add to your `env.shared`:
 # Distributed Compute Services
 
 # Node Registry
-NODE_REGISTRY_URL=http://node-registry:8082
+NODE_REGISTRY_URL=http://node-registry:8115
 NODE_REGISTRY_NATS_URL=nats://nats:4222
 
 # vLLM Orchestrator
-VLLM_ORCHESTRATOR_URL=http://vllm-orchestrator:8099
+VLLM_ORCHESTRATOR_URL=http://vllm-orchestrator:8117
 VLLM_MODEL_PATH=/models
 
 # GPU Orchestrator
@@ -271,18 +271,18 @@ GPU_ORCHESTRATOR_URL=http://gpu-orchestrator:8098
 GPU_RESERVATION_TIMEOUT=300
 
 # Work Marshaling
-WORK_MARSHALING_URL=http://work-marshaling:8100
+WORK_MARSHALING_URL=http://work-marshaling:8118
 WORK_RETRY_MAX=3
 WORK_RETRY_DELAY=5
 
 # Benchmark Runner
-BENCHMARK_RUNNER_URL=http://benchmark-runner:8101
+BENCHMARK_RUNNER_URL=http://benchmark-runner:8119
 BENCHMARK_OUTPUT_DIR=/data/benchmarks
 
 # Standalone mode (connect from external node)
 # Use host.docker.internal to reach PMOVES.AI services
-NODE_REGISTRY_URL=http://host.docker.internal:8082
-VLLM_ORCHESTRATOR_URL=http://host.docker.internal:8099
+NODE_REGISTRY_URL=http://host.docker.internal:8115
+VLLM_ORCHESTRATOR_URL=http://host.docker.internal:8117
 NATS_URL=nats://host.docker.internal:4222
 ```
 
@@ -294,8 +294,8 @@ When a PMOVES submodule runs outside the main docker-compose, it can still acces
 
 ```bash
 # In your submodule's .env or docker-compose.yml
-NODE_REGISTRY_URL=http://host.docker.internal:8082
-VLLM_ORCHESTRATOR_URL=http://host.docker.internal:8099
+NODE_REGISTRY_URL=http://host.docker.internal:8115
+VLLM_ORCHESTRATOR_URL=http://host.docker.internal:8117
 NATS_URL=nats://host.docker.internal:4222
 
 # For Linux, ensure host.docker.internal is defined in docker-compose.yml
@@ -379,14 +379,14 @@ docker compose --profile compute up -d
 
 ```bash
 # Check all health endpoints
-curl http://localhost:8082/healthz  # Node Registry
-curl http://localhost:8099/healthz  # vLLM Orchestrator
+curl http://localhost:8115/healthz  # Node Registry
+curl http://localhost:8117/healthz  # vLLM Orchestrator
 curl http://localhost:8098/healthz  # GPU Orchestrator
-curl http://localhost:8100/healthz  # Work Marshaling
-curl http://localhost:8101/healthz  # Benchmark Runner
+curl http://localhost:8118/healthz  # Work Marshaling
+curl http://localhost:8119/healthz  # Benchmark Runner
 
 # Query available nodes
-curl -X POST http://localhost:8082/api/v1/nodes/query \
+curl -X POST http://localhost:8115/api/v1/nodes/query \
   -H "Content-Type: application/json" \
   -d '{"requires_gpu": true, "online_only": true}'
 ```
@@ -396,7 +396,7 @@ curl -X POST http://localhost:8082/api/v1/nodes/query \
 ### Deploy a vLLM Instance
 
 ```bash
-curl -X POST http://localhost:8099/api/v1/vllm/deploy \
+curl -X POST http://localhost:8117/api/v1/vllm/deploy \
   -H "Content-Type: application/json" \
   -d '{
     "model_name": "meta-llama/Llama-3-70B",
@@ -407,7 +407,7 @@ curl -X POST http://localhost:8099/api/v1/vllm/deploy \
 ### Submit Work for Distributed Execution
 
 ```bash
-curl -X POST http://localhost:8100/api/v1/work/submit \
+curl -X POST http://localhost:8118/api/v1/work/submit \
   -H "Content-Type: application/json" \
   -d '{
     "work_type": "inference",
@@ -423,7 +423,7 @@ curl -X POST http://localhost:8100/api/v1/work/submit \
 ### Run Benchmark
 
 ```bash
-curl -X POST http://localhost:8101/api/v1/benchmark/run \
+curl -X POST http://localhost:8119/api/v1/benchmark/run \
   -H "Content-Type: application/json" \
   -d '{
     "model_name": "meta-llama/Llama-3-70B",
@@ -443,13 +443,13 @@ All services expose metrics at `/metrics`:
 
 ```bash
 # Node Registry
-curl http://localhost:8082/metrics
+curl http://localhost:8115/metrics
 
 # GPU Orchestrator
 curl http://localhost:8098/metrics
 
 # Work Marshaling
-curl http://localhost:8100/metrics
+curl http://localhost:8118/metrics
 ```
 
 ### Grafana Dashboards
@@ -471,7 +471,7 @@ nats server info
 nats sub "compute.nodes.announce.v1"
 
 # Check registry health
-curl http://localhost:8082/healthz
+curl http://localhost:8115/healthz
 ```
 
 ### vLLM Deployment Failed
@@ -491,13 +491,13 @@ docker logs vllm-orchestrator
 
 ```bash
 # Check work queue
-curl http://localhost:8100/api/v1/work?status=pending
+curl http://localhost:8118/api/v1/work?status=pending
 
 # Verify NATS connectivity
 nats pub "compute.work.test.v1" '{"test": true}'
 
 # Check worker node status
-curl http://localhost:8082/api/v1/nodes
+curl http://localhost:8115/api/v1/nodes
 ```
 
 ## NATS Subjects Reference

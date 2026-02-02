@@ -83,6 +83,16 @@ Central registry of all service ports to prevent conflicts and ensure consistenc
 | 8104 | GitHub Runner Controller | CI/CD runner orchestration |
 | 8181 | Archon | Alternative Archon port |
 
+### Distributed Compute Services (Tier 4)
+
+| Port | Service | Description |
+|------|---------|-------------|
+| 8115 | Node Registry | P2P node discovery and capability tracking |
+| 8116 | Resource Detector | Hardware detection with tier classification |
+| 8117 | vLLM Orchestrator | Dynamic vLLM deployment with parallelism |
+| 8118 | Work Marshaling | NATS-based work allocation with retry |
+| 8119 | Benchmark Runner | LLM performance testing |
+
 ### External Integrations
 
 | Port | Service | Description |
