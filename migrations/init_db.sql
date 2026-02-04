@@ -1,10 +1,10 @@
 -- Combined SQL Migration Script for PMOVES Supabase
--- This script combines all versioned migrations (V1 to V5) for database initialization.
+-- This script combines all versioned migrations (V1 to V8) for database initialization.
 
 -- V1: Adds embedding and PDF path to webpage_content, and integrates webpages into search functions.
 -- Ensure required extensions are enabled (idempotent)
 CREATE EXTENSION IF NOT EXISTS vector;
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; -- If not already globally enabled
+-- Note: gen_random_uuid() is built-in (PostgreSQL 13+), no extension needed
 CREATE EXTENSION IF NOT EXISTS pg_trgm;   -- If not already globally enabled
 
 -- 1. Alter 'webpage_content' table
@@ -457,3 +457,161 @@ ALTER TABLE fetch_history ADD COLUMN raw_content_path TEXT NULL;
 
 -- V5: Adds supabase_content_id to fetch_history
 ALTER TABLE fetch_history ADD COLUMN supabase_content_id UUID NULL;
+
+-- ====================================================================
+-- V6: Create llm_models, app_configurations, agent_registry tables
+-- ====================================================================
+
+-- Table for storing LLM Models
+CREATE TABLE IF NOT EXISTS llm_models (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    model_id TEXT UNIQUE NOT NULL, -- e.g., "openai/gpt-3.5-turbo", "ollama/llama2"
+    display_name TEXT NOT NULL, -- User-friendly name, e.g., "GPT-3.5 Turbo (OpenAI)"
+    provider TEXT NOT NULL, -- e.g., "openai", "ollama", "anthropic", "google"
+    family TEXT, -- e.g., "GPT-3.5", "Llama", "Claude 3"
+    context_window INTEGER,
+    capabilities JSONB DEFAULT '[]'::jsonb, -- Store as array of objects: [{"type": "chat", "details": {}}, {"type": "vision", ...}]
+    status TEXT DEFAULT 'active', -- e.g., 'active', 'deprecated', 'beta'
+    pricing JSONB, -- Optional: e.g., {"input_cost_per_mtok": 0.50, "output_cost_per_mtok": 1.50, "currency": "USD"}
+    rate_limits JSONB, -- Optional: e.g., {"requests_per_minute": 100, "tokens_per_minute": 60000}
+    last_synced_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_llm_models_model_id ON llm_models(model_id);
+CREATE INDEX IF NOT EXISTS idx_llm_models_provider ON llm_models(provider);
+CREATE INDEX IF NOT EXISTS idx_llm_models_family ON llm_models(family);
+
+-- Table for storing Application Configurations
+CREATE TABLE IF NOT EXISTS app_configurations (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    config_key TEXT UNIQUE NOT NULL, -- e.g., "DEFAULT_SEARCH_PARAMS", "MAX_FETCH_RETRIES"
+    config_value JSONB NOT NULL,
+    description TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_app_configurations_config_key ON app_configurations(config_key);
+
+-- Table for storing Agent Registry
+CREATE TABLE IF NOT EXISTS agent_registry (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    agent_id TEXT UNIQUE NOT NULL, -- A unique identifier for the agent
+    name TEXT NOT NULL,
+    description TEXT,
+    type TEXT NOT NULL, -- e.g., "data_fetcher", "analyzer", "transcriber"
+    endpoints JSONB, -- e.g., {"process": "/api/v1/agents/myagent/process", "status": "/api/v1/agents/myagent/status"}
+    capabilities JSONB DEFAULT '[]'::jsonb, -- Similar to llm_models.capabilities
+    required_config_keys TEXT[], -- Array of keys from app_configurations needed by this agent
+    status TEXT DEFAULT 'disabled', -- e.g., 'active', 'disabled', 'beta', 'maintenance'
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_registry_agent_id ON agent_registry(agent_id);
+CREATE INDEX IF NOT EXISTS idx_agent_registry_type ON agent_registry(type);
+CREATE INDEX IF NOT EXISTS idx_agent_registry_status ON agent_registry(status);
+
+-- Triggers for updated_at timestamps (ensure function exists)
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_proc WHERE proname = 'update_updated_at_column') THEN
+        CREATE FUNCTION update_updated_at_column()
+        RETURNS TRIGGER AS $func$
+        BEGIN
+            NEW.updated_at = CURRENT_TIMESTAMP;
+            RETURN NEW;
+        END;
+        $func$ language 'plpgsql';
+    END IF;
+END
+$$;
+
+CREATE TRIGGER update_llm_models_updated_at
+BEFORE UPDATE ON llm_models
+FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+
+CREATE TRIGGER update_app_configurations_updated_at
+BEFORE UPDATE ON app_configurations
+FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+
+CREATE TRIGGER update_agent_registry_updated_at
+BEFORE UPDATE ON agent_registry
+FOR EACH ROW EXECUTE PROCEDURE update_updated_at_column();
+
+-- ====================================================================
+-- V7: Create crawl_presets table
+-- ====================================================================
+
+-- Create the crawl_presets table
+CREATE TABLE crawl_presets (
+    preset_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    preset_name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    version INTEGER DEFAULT 1,
+    crawl_tool TEXT DEFAULT 'crawl4ai',
+    strategy_definition JSONB NOT NULL,
+    target_capability TEXT,
+    tags JSONB,
+    created_by UUID REFERENCES auth.users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- Add comments to the table and columns
+COMMENT ON TABLE crawl_presets IS 'Stores reusable crawl configurations (presets) for agents.';
+COMMENT ON COLUMN crawl_presets.preset_id IS 'Unique identifier for the crawl preset.';
+COMMENT ON COLUMN crawl_presets.preset_name IS 'Human-readable, unique name for the preset (e.g., "deep_dive_news", "quick_product_scrape").';
+COMMENT ON COLUMN crawl_presets.description IS 'Brief explanation of what the preset is designed for.';
+COMMENT ON COLUMN crawl_presets.version IS 'Version number for the preset to allow for updates.';
+COMMENT ON COLUMN crawl_presets.crawl_tool IS 'Specifies the underlying crawl engine this preset is for (e.g., "crawl4ai").';
+COMMENT ON COLUMN crawl_presets.strategy_definition IS 'The core JSON structure defining the crawl strategy and its parameters.';
+COMMENT ON COLUMN crawl_presets.target_capability IS 'Tag indicating agent capability this preset serves (e.g., "web_research", "data_extraction").';
+COMMENT ON COLUMN crawl_presets.tags IS 'JSONB array of strings for categorization and search (e.g., ["news", "finance"]).';
+COMMENT ON COLUMN crawl_presets.created_by IS 'Identifier of the user/agent who created the preset. References auth.users(id).';
+COMMENT ON COLUMN crawl_presets.created_at IS 'Timestamp of when the preset was created.';
+COMMENT ON COLUMN crawl_presets.updated_at IS 'Timestamp of the last update to the preset.';
+
+-- Create the trigger to automatically update updated_at on row update
+CREATE TRIGGER update_crawl_presets_updated_at
+BEFORE UPDATE ON public.crawl_presets
+FOR EACH ROW
+EXECUTE FUNCTION public.update_updated_at_column();
+
+-- Enable Row Level Security
+ALTER TABLE crawl_presets ENABLE ROW LEVEL SECURITY;
+
+-- Allow public read access to all presets
+CREATE POLICY "Allow public read access"
+ON crawl_presets
+FOR SELECT
+USING (true);
+
+-- Allow authenticated users to insert new presets
+CREATE POLICY "Allow authenticated users to insert presets"
+ON crawl_presets
+FOR INSERT
+WITH CHECK (auth.role() = 'authenticated');
+
+-- Allow users to update their own presets
+CREATE POLICY "Allow users to update their own presets"
+ON crawl_presets
+FOR UPDATE
+USING (auth.uid() = created_by)
+WITH CHECK (auth.uid() = created_by);
+
+-- Allow users to delete their own presets
+CREATE POLICY "Allow users to delete their own presets"
+ON crawl_presets
+FOR DELETE
+USING (auth.uid() = created_by);
+
+-- ====================================================================
+-- V8: Add supabase_storage_path to fetch_history
+-- ====================================================================
+
+ALTER TABLE public.fetch_history ADD COLUMN supabase_storage_path TEXT NULL;
+
+COMMENT ON COLUMN public.fetch_history.supabase_storage_path IS 'Path to the content file if stored in Supabase Storage (e.g., in a specific bucket).';

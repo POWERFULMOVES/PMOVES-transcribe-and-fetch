@@ -1,5 +1,5 @@
 CREATE TABLE public.llm_call_logs (
-    id uuid NOT NULL DEFAULT uuid_generate_v4(),
+    id uuid NOT NULL DEFAULT gen_random_uuid(),
     created_at timestamp with time zone NOT NULL DEFAULT now(),
     url_crawled text,
     request_timestamp timestamp with time zone,
