@@ -1,29 +1,13 @@
 import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { BACKEND_URL } from '@/lib/constants';
-import { createClient } from '@/lib/supabase';
+import { useSession } from '@supabase/auth-helpers-react';
 
 export default function useAppConfig() {
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [session, setSession] = useState(null);
-
-  useEffect(() => {
-    const supabase = createClient();
-
-    // Get initial session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-    });
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
+  const session = useSession();
 
   useEffect(() => {
     let isMounted = true;

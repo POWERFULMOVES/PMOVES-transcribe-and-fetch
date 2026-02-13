@@ -20,6 +20,7 @@ import FetchedContentViewer from '@/components/fetch/FetchedContentViewer'; // I
 import PresetsManager from '@/components/fetch/PresetsManager'; // Import PresetsManager
 import { createClient } from '@/lib/client'; // Import Supabase client creator
 import { useInfiniteQuery } from '@/hooks/use-infinite-query'; // Import the hook
+import { useSession } from '@supabase/auth-helpers-react';
 
 const ITEMS_PER_PAGE = 15;
 
@@ -28,19 +29,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
   const [mainFetchLoading, setMainFetchLoading] = useState(false);
   const [mainFetchError, setMainFetchError] = useState(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const [session, setSession] = useState(null);
-
-  // Initialize Supabase session
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-    return () => subscription.unsubscribe();
-  }, []);
+  const session = useSession();
 
   // State for SSE Fetch Progress (main content fetch)
   const [isFetchingSse, setIsFetchingSse] = useState(false); // Renamed to avoid conflict with useInfiniteQuery

@@ -23,7 +23,6 @@ import {
 import { transcriptionReducer, initialState as transcriptionInitialState, ACTIONS } from '@/app/reducers/transcriptionReducer';
 import { storage } from '@/app/utils/storage';
 import { SSE_CONFIG, BACKEND_URL } from '@/lib/constants';
-import { createClient } from '@/lib/supabase';
 
 import ProcessingOptionsSelector from '@/components/transcription/ProcessingOptionsSelector';
 import TranscriptionJobSummary from '@/components/transcription/TranscriptionJobSummary';
@@ -118,20 +117,7 @@ export default function TranscribePage() {
   const router = useRouter(); // Though not heavily used here, might be useful
   const [initialStateLoaded, setInitialStateLoaded] = useState(false);
   const [persistedState, setPersistedState] = useState(null);
-  const [session, setSession] = useState(null);
-
-  // Initialize Supabase session
-  useEffect(() => {
-    const supabase = createClient();
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      setSession(session);
-    });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setSession(session);
-    });
-    return () => subscription.unsubscribe();
-  }, []);
-
+  
   useEffect(() => {
     const savedState = storage.get('transcriptionState');
     if (savedState) {
@@ -482,37 +468,7 @@ export default function TranscribePage() {
                          </div>
                          <div className="space-y-2">
                              <Label htmlFor="obsidian-dir">Save Directory</Label>
-                             <div className="flex gap-2">
-                                 <Input
-                                     id="obsidian-dir"
-                                     placeholder={appConfig?.DEFAULT_OBSIDIAN_DIR || "Full path on disk"}
-                                     value={state.obsidianDir}
-                                     onChange={(e) => dispatch({ type: ACTIONS.SET_OBSIDIAN_DIR, payload: e.target.value })}
-                                     className={`flex-1 ${!validateObsidianDir(state.obsidianDir) && state.obsidianDir === '' ? 'border-amber-500/50' : ''}`}
-                                 />
-                                 {appConfig?.DEFAULT_OBSIDIAN_DIR && state.obsidianDir !== appConfig.DEFAULT_OBSIDIAN_DIR && (
-                                     <Button
-                                         type="button"
-                                         variant="outline"
-                                         size="sm"
-                                         className="shrink-0 text-xs"
-                                         onClick={() => dispatch({ type: ACTIONS.SET_OBSIDIAN_DIR, payload: appConfig.DEFAULT_OBSIDIAN_DIR })}
-                                     >
-                                         Use Default
-                                     </Button>
-                                 )}
-                             </div>
-                             {appConfig?.DEFAULT_OBSIDIAN_DIR && !state.obsidianDir && (
-                                 <p className="text-xs text-muted-foreground">
-                                     Default: <button
-                                         type="button"
-                                         className="text-primary hover:underline cursor-pointer"
-                                         onClick={() => dispatch({ type: ACTIONS.SET_OBSIDIAN_DIR, payload: appConfig.DEFAULT_OBSIDIAN_DIR })}
-                                     >
-                                         {appConfig.DEFAULT_OBSIDIAN_DIR}
-                                     </button>
-                                 </p>
-                             )}
+                             <Input id="obsidian-dir" placeholder={appConfig?.DEFAULT_OBSIDIAN_DIR || "Full path on disk"} value={state.obsidianDir} onChange={(e) => dispatch({ type: ACTIONS.SET_OBSIDIAN_DIR, payload: e.target.value })} />
                          </div>
                      </div>
 

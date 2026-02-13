@@ -836,20 +836,18 @@ class FetchHistoryResponse(FetchHistoryBase):
 # --- Initialize FastAPI app ---
 # --- Supabase Auth Configuration ---
 SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET")
-security = HTTPBearer(auto_error=False)
+security = HTTPBearer()
 
-def verify_token(credentials: Optional[HTTPAuthorizationCredentials] = Depends(security)):
-    """Verifies the Supabase JWT token. Allows anonymous access when SUPABASE_JWT_SECRET not set."""
-    # Allow anonymous if no secret configured (standalone mode)
-    if not SUPABASE_JWT_SECRET:
-        logger.warning("SUPABASE_JWT_SECRET not set, allowing anonymous access (standalone mode)")
-        return {"sub": "anonymous"}
-
-    if not credentials:
-        raise HTTPException(status_code=401, detail="Missing authentication credentials")
-
+def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    """Verifies the Supabase JWT token."""
     token = credentials.credentials
     try:
+        # If secret is not set, we can't verify signature locally in this simple example
+        # In production, use JWKS or properly set secret
+        if not SUPABASE_JWT_SECRET:
+             logger.warning("SUPABASE_JWT_SECRET not set, skipping signature verification (UNSAFE for production)")
+             return jwt.decode(token, options={"verify_signature": False})
+        
         payload = jwt.decode(
             token,
             SUPABASE_JWT_SECRET,

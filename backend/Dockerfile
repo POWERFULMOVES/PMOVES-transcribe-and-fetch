@@ -1,4 +1,4 @@
-# Backend Dockerfile - Hardened with GPU Support
+# Backend Dockerfile - Hardened
 FROM python:3.12-slim AS builder
 
 WORKDIR /app
@@ -21,12 +21,6 @@ RUN uv sync --frozen --no-cache
 FROM python:3.12-slim
 
 WORKDIR /app
-
-# Install runtime dependencies: curl (healthcheck), ffmpeg (yt-dlp video processing)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    curl \
-    ffmpeg \
-    && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
 RUN groupadd -g 65532 nonroot && \
