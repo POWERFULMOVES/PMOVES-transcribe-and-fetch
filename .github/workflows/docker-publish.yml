@@ -242,13 +242,13 @@ jobs:
           COSIGN_EXPERIMENTAL: 'true'
         run: |
           cosign verify ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME_BACKEND }}:pmoves-latest \
-            --certificate-identity-regexp=".*" \
-            --certificate-oidc-issuer-regexp=".*"
+            --certificate-identity-regexp="https://github.com/POWERFULMOVES/.*" \
+            --certificate-oidc-issuer-regexp="https://token.actions.githubusercontent.com"
 
       - name: Verify frontend signature
         env:
           COSIGN_EXPERIMENTAL: 'true'
         run: |
           cosign verify ${{ env.REGISTRY }}/${{ github.repository_owner }}/${{ env.IMAGE_NAME_FRONTEND }}:pmoves-latest \
-            --certificate-identity-regexp=".*" \
-            --certificate-oidc-issuer-regexp=".*"
+            --certificate-identity-regexp="https://github.com/POWERFULMOVES/.*" \
+            --certificate-oidc-issuer-regexp="https://token.actions.githubusercontent.com"

@@ -68,10 +68,15 @@ pmoves_backend.egg-info/
 backend/temp_pdfs/
 
 # Package management
-package-lock.json
 yarn.lock
 pmoves-v1-ref
 pmoves-v1-ref
+
+# Monitoring env files (may contain real credentials)
+monitoring/*.env
+
+# AI chat logs (not needed in repo)
+docs/chats/
 
 # Ignore fixes folder
 fixes/
