@@ -4,7 +4,7 @@
 
 -- Ensure required extensions are enabled (idempotent)
 CREATE EXTENSION IF NOT EXISTS vector;
-CREATE EXTENSION IF NOT EXISTS "uuid-ossp"; -- If not already globally enabled
+-- Note: gen_random_uuid() is built-in (PostgreSQL 13+), no extension needed
 CREATE EXTENSION IF NOT EXISTS pg_trgm;   -- If not already globally enabled
 
 -- 1. Alter 'webpage_content' table

@@ -1,13 +1,27 @@
 'use client'
 
-import { useSession, useSupabaseClient } from '@supabase/auth-helpers-react'
+import { createClient } from '@/lib/supabase'
 import { Button } from '@/components/ui/button'
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 
 export default function AuthButton() {
-  const session = useSession()
-  const supabase = useSupabaseClient()
+  const [session, setSession] = useState(null)
   const [loading, setLoading] = useState(false)
+  const supabase = createClient()
+
+  useEffect(() => {
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session)
+    })
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session)
+    })
+
+    return () => subscription.unsubscribe()
+  }, [])
 
   const handleSignIn = async () => {
     try {
