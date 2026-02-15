@@ -1,0 +1,19 @@
+subjects:
+  - name: pmoves.announcer.event.v1
+    purpose: Integration announcements and operator UX notifications
+  - name: mesh.gpu.model.loaded.v1
+    purpose: GPU orchestrator model loaded event
+  - name: mesh.gpu.model.unloaded.v1
+    purpose: GPU orchestrator model unloaded event
+  - name: transcribe.fetch.request.v1
+    purpose: Transcribe/fetch workflow request envelope
+  - name: transcribe.fetch.result.v1
+    purpose: Transcribe/fetch workflow completion envelope
+  - name: transcribe.archon.request.v1
+    purpose: Request Archon orchestration from transcribe pipeline
+  - name: transcribe.archon.result.v1
+    purpose: Archon orchestration response for transcribe pipeline
+  - name: retrieval.hirag.query.v1
+    purpose: Planned HiRAG query request for retrieval augmentation
+  - name: retrieval.hirag.result.v1
+    purpose: Planned HiRAG retrieval response payload

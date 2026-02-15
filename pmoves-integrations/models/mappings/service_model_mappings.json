@@ -1,0 +1,20 @@
+{
+  "service": "PMOVES-transcribe-and-fetch",
+  "version": 1,
+  "mappings": {
+    "transcription.default": {
+      "provider": "tensorzero-gateway",
+      "model_alias": "qwen2_5_14b_local",
+      "fallback": "groq_whisper_large_v3"
+    },
+    "orchestration.archon": {
+      "provider": "model-registry",
+      "model_alias": "archon_default_agent_model"
+    },
+    "retrieval.hirag": {
+      "provider": "model-registry",
+      "model_alias": "hirag_retrieval_default",
+      "status": "planned"
+    }
+  }
+}

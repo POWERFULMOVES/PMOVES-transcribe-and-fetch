@@ -2,6 +2,20 @@
 
 A powerful web application that transcribes YouTube videos using multiple AI models, with support for both local processing via Faster Whisper and cloud processing via Groq API. Built with Next.js frontend and Python FastAPI backend.
 
+## PMOVES.AI Integration Overlay
+
+This repository includes a PMOVES integration contract under
+`pmoves-integrations/` for docked/hardened operation with the parent stack.
+
+```bash
+make integration-bootstrap
+make integration-audit
+```
+
+The bootstrap seeds docked defaults for Supabase dual-write and service
+discovery (`ARCHON_URL`, `HIRAG_URL`, `HIRAG_GPU_URL`, `NEO4J_URI`, `NATS_URL`)
+without overwriting existing `.env.local` values.
+
 ## Features
 
 ### Transcription Capabilities

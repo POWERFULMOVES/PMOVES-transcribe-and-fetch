@@ -12,6 +12,11 @@
 
 PROJECT := pmoves-transcribe
 COMPOSE := docker compose -p $(PROJECT)
+ifeq ($(OS),Windows_NT)
+PYTHON ?= python
+else
+PYTHON ?= python3
+endif
 
 # Environment defaults
 DOCKED_MODE ?= false
@@ -113,6 +118,30 @@ config: ## Validate compose configuration
 .PHONY: config-hardened
 config-hardened: ## Validate hardened compose configuration
 	$(COMPOSE) -f docker-compose.yml -f docker-compose.hardened.yml config
+
+# =============================================================================
+# PMOVES Integration Contract
+# =============================================================================
+
+.PHONY: integration-bootstrap
+integration-bootstrap: ## Seed docked auth defaults in .env.local (idempotent)
+	$(PYTHON) pmoves-integrations/auth/bootstrap.py
+
+.PHONY: integration-contract-check
+integration-contract-check: ## Validate pmoves-integrations contract layout/hooks
+	$(PYTHON) pmoves-integrations/tools/validate_integration.py --strict-hooks
+
+.PHONY: integration-submodule-check
+integration-submodule-check: ## Run PMOVES submodule integrity check through wrapper
+	$(PYTHON) pmoves-integrations/tools/validate_submodule.py
+
+.PHONY: integration-sitrep
+integration-sitrep: ## Emit PMOVES submodule sitrep through wrapper
+	$(PYTHON) pmoves-integrations/tools/submodule_sitrep.py
+
+.PHONY: integration-audit
+integration-audit: config config-hardened build integration-contract-check integration-submodule-check integration-sitrep ## Build then run all integration gates
+	@echo "Integration audit passed"
 
 # =============================================================================
 # Development

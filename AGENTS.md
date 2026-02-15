@@ -31,6 +31,13 @@ make up-hardened
 
 # Docked to PMOVES.AI
 make up-docked
+
+# Docked + Supabase dual-write migration mode
+make up-dual-write
+
+# PMOVES integration contract gates
+make integration-bootstrap
+make integration-audit
 ```
 
 ## Environment Configuration
@@ -98,6 +105,7 @@ make config                  # Validate compose config
 ```bash
 make build                   # Build all images
 make build-no-cache          # Rebuild without cache
+make integration-audit       # Build + integration contract/submodule checks
 ```
 
 ### Debugging
