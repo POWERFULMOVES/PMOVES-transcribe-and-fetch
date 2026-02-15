@@ -27,16 +27,13 @@ RUN groupadd -g 65532 nonroot && \
     useradd -u 65532 -g 65532 -m -s /bin/bash nonroot
 
 # Copy virtualenv from builder
-COPY --from=builder /app/.venv /app/.venv
+COPY --from=builder --chown=65532:65532 /app/.venv /app/.venv
 
 # Add virtualenv to PATH
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy application code
-COPY backend/app ./app
-
-# Set ownership
-RUN chown -R nonroot:nonroot /app
+COPY --chown=65532:65532 backend/app ./app
 
 # Switch to non-root user
 USER 65532:65532
