@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input"; // Added
@@ -20,7 +20,6 @@ import FetchedContentViewer from '@/components/fetch/FetchedContentViewer'; // I
 import PresetsManager from '@/components/fetch/PresetsManager'; // Import PresetsManager
 import { createClient } from '@/lib/client'; // Import Supabase client creator
 import { useInfiniteQuery } from '@/hooks/use-infinite-query'; // Import the hook
-import { useSession } from '@supabase/auth-helpers-react';
 
 const ITEMS_PER_PAGE = 15;
 
@@ -29,7 +28,7 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
   const [mainFetchLoading, setMainFetchLoading] = useState(false);
   const [mainFetchError, setMainFetchError] = useState(null);
   const [showAdvanced, setShowAdvanced] = useState(false);
-  const session = useSession();
+  const [sessionToken, setSessionToken] = useState(null);
 
   // State for SSE Fetch Progress (main content fetch)
   const [isFetchingSse, setIsFetchingSse] = useState(false); // Renamed to avoid conflict with useInfiniteQuery
@@ -49,7 +48,31 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
   const [isSavingToHistory, setIsSavingToHistory] = useState(false);
   const [fetchingEngine, setFetchingEngine] = useState("jina"); // Isolate fetchingEngine state
 
-  const supabase = createClient(); // Instantiate Supabase client
+  const supabase = useMemo(() => createClient(), []); // Instantiate Supabase client once
+
+  useEffect(() => {
+    let active = true;
+
+    const loadSession = async () => {
+      const { data } = await supabase.auth.getSession();
+      if (active) {
+        setSessionToken(data?.session?.access_token ?? null);
+      }
+    };
+
+    loadSession();
+
+    const { data: authListener } = supabase.auth.onAuthStateChange((_event, session) => {
+      if (active) {
+        setSessionToken(session?.access_token ?? null);
+      }
+    });
+
+    return () => {
+      active = false;
+      authListener?.subscription?.unsubscribe();
+    };
+  }, [supabase]);
 
   // State for available LLM Models
   const [availableLlmModels, setAvailableLlmModels] = useState([]);
@@ -466,8 +489,8 @@ export default function FetchContentPage({ initialActiveMainTab = "fetchContent"
 
      const sseUrl = `${BACKEND_URL}/fetch-content?${params.toString()}`;
      // Append token for Auth
-     if (session?.access_token) {
-        eventSourceRef.current = new EventSource(`${sseUrl}&token=${session.access_token}`);
+     if (sessionToken) {
+        eventSourceRef.current = new EventSource(`${sseUrl}&token=${sessionToken}`);
      } else {
         eventSourceRef.current = new EventSource(sseUrl);
      }

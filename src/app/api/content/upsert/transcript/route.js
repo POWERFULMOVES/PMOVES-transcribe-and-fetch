@@ -1,12 +1,5 @@
 import { NextResponse } from 'next/server';
 
-export const config = {
-  api: {
-    bodyParser: false,
-    responseLimit: false,
-  },
-};
-
 export async function POST(request) {
   try {
     // Extract force_overwrite parameter from query
