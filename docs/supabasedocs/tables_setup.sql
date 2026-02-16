@@ -51,9 +51,9 @@ ALTER TABLE video_transcriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE video_transcriptions_full ENABLE ROW LEVEL SECURITY;
 
 -- Create policies for public access
-CREATE POLICY "Allow public access to document_embeddings" ON document_embeddings FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public access to video_transcriptions" ON video_transcriptions FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public access to video_transcriptions_full" ON video_transcriptions_full FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow service_role access to document_embeddings" ON document_embeddings FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+CREATE POLICY "Allow service_role access to video_transcriptions" ON video_transcriptions FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+CREATE POLICY "Allow service_role access to video_transcriptions_full" ON video_transcriptions_full FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
 
 -- Extensions needed for vector operations and UUID generation
 CREATE EXTENSION IF NOT EXISTS vector;

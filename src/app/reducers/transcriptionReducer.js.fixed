@@ -30,8 +30,8 @@ export const ACTIONS = {
 
 export const initialState = {
   youtubeUrl: '',
-  obsidianDir: 'J:\\My Drive\\CataclysmstudiosInc\\POWERFULMOVES\\005 - Transcriptions',
-  outputFolder: 'M:\\PMOVEStransciber\\output',
+  obsidianDir: './data/transcriptions',
+  outputFolder: './output',
   loading: false,
   error: null,
   processResult: {},

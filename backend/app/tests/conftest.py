@@ -5,7 +5,7 @@ import tracemalloc
 tracemalloc.start()
 
 # Assuming conftest.py is in backend/app/tests/
-# Navigate three levels up to reach the project root (c:/Users/russe/Documents/GitHub/PMOVES-transcribe-and-fetch)
+# Navigate three levels up to reach the project root
 # backend/app/tests/ -> backend/app/ -> backend/ -> project_root/
 project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', '..'))
 if project_root not in sys.path:
