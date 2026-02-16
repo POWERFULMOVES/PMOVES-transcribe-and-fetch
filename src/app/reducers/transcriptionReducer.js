@@ -41,8 +41,8 @@ function getInitialConfigValue(key, fallback) {
 export const initialState = {
   videoMetadata: null,
   youtubeUrl: '',
-  obsidianDir: getInitialConfigValue('DEFAULT_OBSIDIAN_DIR', 'J:\\My Drive\\CataclysmstudiosInc\\POWERFULMOVES\\005 - Transcriptions'),
-  outputFolder: getInitialConfigValue('DEFAULT_OUTPUT_FOLDER', 'M:\\PMOVEStransciber\\output'),
+  obsidianDir: getInitialConfigValue('DEFAULT_OBSIDIAN_DIR', './data/transcriptions'),
+  outputFolder: getInitialConfigValue('DEFAULT_OUTPUT_FOLDER', './output'),
   loading: false,
   error: null,
   processResult: {},

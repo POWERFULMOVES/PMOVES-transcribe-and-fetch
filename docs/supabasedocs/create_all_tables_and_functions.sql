@@ -109,12 +109,12 @@ ALTER TABLE text_content ENABLE ROW LEVEL SECURITY;
 ALTER TABLE media_content ENABLE ROW LEVEL SECURITY;
 
 -- Create policies for public access
-CREATE POLICY "Allow public access to document_embeddings" ON document_embeddings FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public access to video_transcriptions" ON video_transcriptions FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public access to video_transcriptions_full" ON video_transcriptions_full FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public access to webpage_content" ON webpage_content FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public access to text_content" ON text_content FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public access to media_content" ON media_content FOR ALL USING (true) WITH CHECK (true);
+CREATE POLICY "Allow service_role access to document_embeddings" ON document_embeddings FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+CREATE POLICY "Allow service_role access to video_transcriptions" ON video_transcriptions FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+CREATE POLICY "Allow service_role access to video_transcriptions_full" ON video_transcriptions_full FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+CREATE POLICY "Allow service_role access to webpage_content" ON webpage_content FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+CREATE POLICY "Allow service_role access to text_content" ON text_content FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+CREATE POLICY "Allow service_role access to media_content" ON media_content FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
 
 -- ==========================================
 -- DATABASE FUNCTIONS

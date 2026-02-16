@@ -285,7 +285,7 @@ This subsection details the concept and planned implementation of the Supabase a
 1.  **Setup LiteLLM Proxy (Docker Deployment):**
     *   Status: COMPLETED
     *   The LiteLLM proxy server has been successfully deployed using Docker.
-    *   The `docker run` command was updated to use `--env-file "c:/Users/russe/Documents/GitHub/PMOVES-transcribe-and-fetch/backend/app/.env"` (adjusted for PowerShell with backticks for line continuation) to securely pass API keys from the application's `.env` file to the proxy container. This simplifies API key management for the proxy.
+    *   The `docker run` command was updated to use `--env-file "./backend/app/.env"` (adjusted for PowerShell with backticks for line continuation) to securely pass API keys from the application's `.env` file to the proxy container. This simplifies API key management for the proxy.
     *   The proxy is running and accessible at `http://localhost:4000`.
     *   The `litellm_proxy_config/config.yaml` is mounted and being used by the proxy.
     *   Initial `config.yaml` in `litellm_proxy_config/` includes configurations for an OpenAI model (`gpt-4.1-mini-proxy`) and an Ollama model (`ollama-model-proxy`).

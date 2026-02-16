@@ -1,5 +1,3 @@
-version: '3.8'
-
 # This file is for integrating the Supabase Agent with the full PMOVES platform
 # Use with: docker-compose -f docker-compose.platform.yml up
 

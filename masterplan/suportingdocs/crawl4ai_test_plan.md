@@ -191,14 +191,14 @@ This plan provides a structured approach to testing the `crawl4ai` integration.
 
 ### Prerequisites
 
-*   **Frontend (Jest):** Ensure Node.js and npm are installed. Navigate to the project root directory (`c:/Users/russe/Documents/GitHub/PMOVES-transcribe-and-fetch`) in your terminal and run `npm install` to install necessary dependencies defined in [`package.json`](package.json).
-*   **Backend (Pytest):** Ensure Python and pip are installed. It's recommended to use a virtual environment. Navigate to the `backend` directory (`c:/Users/russe/Documents/GitHub/PMOVES-transcribe-and-fetch/backend`) and install dependencies using `pip install -r requirements.txt`. This should include `pytest`. If `pytest` is not included, install it separately (`pip install pytest`).
+*   **Frontend (Jest):** Ensure Node.js and npm are installed. Navigate to the project root directory in your terminal and run `npm install` to install necessary dependencies defined in [`package.json`](package.json).
+*   **Backend (Pytest):** Ensure Python and pip are installed. It's recommended to use a virtual environment. Navigate to the `backend` directory and install dependencies using `pip install -r requirements.txt`. This should include `pytest`. If `pytest` is not included, install it separately (`pip install pytest`).
 *   **Backend Server (for some tests):** As noted in Section 2, for tests involving actual `crawl4ai` execution (though many backend tests mock this), the backend server must be running *without* the `--reload` flag on Windows.
 
 ### Frontend Tests (Jest)
 
 *   **Location:** Frontend tests (React components and integration) are located primarily within `__tests__` subdirectories under [`src/components/fetch/`](src/components/fetch/) and [`src/app/fetch/`](src/app/fetch/).
-*   **Command:** Navigate to the project root directory (`c:/Users/russe/Documents/GitHub/PMOVES-transcribe-and-fetch`) in your terminal.
+*   **Command:** Navigate to the project root directory in your terminal.
     *   To run all frontend tests:
         ```bash
         npm test
@@ -215,7 +215,7 @@ This plan provides a structured approach to testing the `crawl4ai` integration.
 ### Backend Tests (Pytest)
 
 *   **Location:** Backend tests (API and integration) are located in [`backend/app/tests/`](backend/app/tests/).
-*   **Command:** Navigate to the project root directory (`c:/Users/russe/Documents/GitHub/PMOVES-transcribe-and-fetch`) in your terminal and run:
+*   **Command:** Navigate to the project root directory in your terminal and run:
     ```bash
     pytest backend/app/tests/
     ```

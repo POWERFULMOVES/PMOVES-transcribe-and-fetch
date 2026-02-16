@@ -48,6 +48,6 @@ ALTER TABLE IF EXISTS video_transcriptions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE IF EXISTS video_transcriptions_full ENABLE ROW LEVEL SECURITY;
 
 -- Create RLS policies for all tables
-CREATE POLICY "Allow public access to webpage_content" ON webpage_content FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public access to text_content" ON text_content FOR ALL USING (true) WITH CHECK (true);
-CREATE POLICY "Allow public access to media_content" ON media_content FOR ALL USING (true) WITH CHECK (true); 
+CREATE POLICY "Allow service_role access to webpage_content" ON webpage_content FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+CREATE POLICY "Allow service_role access to text_content" ON text_content FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role');
+CREATE POLICY "Allow service_role access to media_content" ON media_content FOR ALL USING (auth.role() = 'service_role') WITH CHECK (auth.role() = 'service_role'); 

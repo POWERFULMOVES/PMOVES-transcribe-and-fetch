@@ -195,8 +195,10 @@ async def verify_token(
     Verifies the Supabase JWT from the Authorization header or query parameter (for SSE).
     """
     if not SUPABASE_JWT_SECRET:
-        if "logger" in globals(): logger.warning("SUPABASE_JWT_SECRET not set. Skipping auth verification (INSECURE).")
-        return {"sub": "anonymous"}
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Authentication misconfigured: SUPABASE_JWT_SECRET not set"
+        )
 
     jwt_token = None
     if credentials:
@@ -845,8 +847,10 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
         # If secret is not set, we can't verify signature locally in this simple example
         # In production, use JWKS or properly set secret
         if not SUPABASE_JWT_SECRET:
-             logger.warning("SUPABASE_JWT_SECRET not set, skipping signature verification (UNSAFE for production)")
-             return jwt.decode(token, options={"verify_signature": False})
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Authentication misconfigured: SUPABASE_JWT_SECRET not set"
+            )
         
         payload = jwt.decode(
             token,
