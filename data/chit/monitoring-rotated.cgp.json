@@ -1,0 +1,127 @@
+{
+  "version": "chit.cgp.v0.1",
+  "namespace": "pmoves.transcribe-and-fetch.monitoring",
+  "description": "Rotated monitoring credentials archived 2026-02-16. All values are DEAD \u2014 rotated before archiving.",
+  "points": [
+    {
+      "label": "BASIC_AUTH_PASSWORD",
+      "value": "6D6F6E69746F72696E67313233",
+      "anchor": [
+        0.3623142403,
+        0.2867355493,
+        0.6757817536
+      ],
+      "encoding": "hex"
+    },
+    {
+      "label": "GF_SECURITY_ADMIN_PASSWORD",
+      "value": "61646D696E313233",
+      "anchor": [
+        0.2306570725,
+        0.1490533384,
+        0.7753932043
+      ],
+      "encoding": "hex"
+    },
+    {
+      "label": "GF_USERS_ALLOW_SIGN_UP",
+      "value": "66616C7365",
+      "anchor": [
+        0.9066039785,
+        0.8935315504,
+        0.4484668255
+      ],
+      "encoding": "hex"
+    },
+    {
+      "label": "GRAFANA_ADMIN_PASSWORD",
+      "value": "61646D696E313233",
+      "anchor": [
+        0.2814834556,
+        0.2866101817,
+        0.710508185
+      ],
+      "encoding": "hex"
+    },
+    {
+      "label": "LANGFUSE_DB_PASSWORD",
+      "value": "6C616E6766757365313233",
+      "anchor": [
+        0.4278327429,
+        0.5008387147,
+        0.9690547837
+      ],
+      "encoding": "hex"
+    },
+    {
+      "label": "LANGFUSE_PUBLIC_KEY",
+      "value": "706B2D6C662D32616633663261642D613831622D346331392D396462362D623431326230303734646636",
+      "anchor": [
+        0.0584309092,
+        0.9821709765,
+        0.4572636557
+      ],
+      "encoding": "hex"
+    },
+    {
+      "label": "LANGFUSE_SALT",
+      "value": "796F75722D73616C742D666F722D68617368696E67",
+      "anchor": [
+        0.8879687886,
+        0.7753549465,
+        0.3843399824
+      ],
+      "encoding": "hex"
+    },
+    {
+      "label": "LANGFUSE_SECRET",
+      "value": "796F75722D7365637265742D6B65792D666F722D6E65787461757468",
+      "anchor": [
+        0.9536480699,
+        0.5186265279,
+        0.4684673413
+      ],
+      "encoding": "hex"
+    },
+    {
+      "label": "LANGFUSE_SECRET_KEY",
+      "value": "736B2D6C662D63656533356535642D386266342D343939312D626539322D313832333064383435643031",
+      "anchor": [
+        0.2452340689,
+        0.2666904388,
+        0.7819255046
+      ],
+      "encoding": "hex"
+    },
+    {
+      "label": "REDIS_PASSWORD",
+      "value": "7265646973313233",
+      "anchor": [
+        0.9173362365,
+        0.8593961815,
+        0.401645324
+      ],
+      "encoding": "hex"
+    },
+    {
+      "label": "SLACK_WEBHOOK_URL",
+      "value": "68747470733A2F2F686F6F6B732E736C61636B2E636F6D2F73657276696365732F594F55522F534C41434B2F574542484F4F4B",
+      "anchor": [
+        0.842441102,
+        0.9767451913,
+        0.2096632628
+      ],
+      "encoding": "hex"
+    },
+    {
+      "label": "SMTP_AUTH_PASSWORD",
+      "value": "796F75722D656D61696C2D70617373776F7264",
+      "anchor": [
+        0.5644370303,
+        0.4249099942,
+        0.6293372342
+      ],
+      "encoding": "hex"
+    }
+  ]
+}
