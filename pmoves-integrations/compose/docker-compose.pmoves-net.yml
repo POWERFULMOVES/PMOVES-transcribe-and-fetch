@@ -9,8 +9,8 @@ services:
       - SUPABASE_DUAL_WRITE=true
       - AGENT_ZERO_MCP_ENABLED=true
       - TRANSCRIBE_ARCHON_ENABLED=true
-      - SUPABASE_URL=http://host.docker.internal:65421
-      - SUPA_REST_URL=http://host.docker.internal:65421/rest/v1
+      - SUPABASE_URL=${SUPABASE_URL:-http://host.docker.internal:54321}
+      - SUPA_REST_URL=${SUPA_REST_URL:-http://host.docker.internal:54321/rest/v1}
       - ARCHON_URL=http://archon-server:8051
       - HIRAG_URL=http://hi-rag-gateway-v2-cpu:8086
       - HIRAG_GPU_URL=http://hi-rag-gateway-v2-gpu:8086

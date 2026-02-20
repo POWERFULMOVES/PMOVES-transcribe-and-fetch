@@ -29,6 +29,8 @@ make integration-audit
 - Archon mapping is present in `.gitmodules` and seeded via `ARCHON_URL`.
 - HiRAG CPU/GPU endpoints are seeded in bootstrap and compose overlay.
 - Neo4j endpoint is seeded via `NEO4J_URI`.
+- Supabase defaults now mirror PMOVES CLI runtime (`http://host.docker.internal:54321/rest/v1`);
+  override `SUPABASE_URL` / `SUPA_REST_URL` from the parent runtime status when needed.
 - This legacy iteration still needs endpoint consumption hardening in backend
   logic; integration contract now provides canonical runtime keys.
 
