@@ -72,7 +72,8 @@ jobs:
           context: .
           file: ./backend/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
-          platforms: linux/amd64,linux/arm64
+          # Backend requires CUDA (nvidia-cublas, nvidia-cudnn, torch) — amd64 only
+          platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
