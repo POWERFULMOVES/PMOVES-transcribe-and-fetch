@@ -36,6 +36,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # CUDA + PyTorch deps are ~8 GB; reclaim space from pre-installed runtimes
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/share/swift
+          sudo docker image prune --all --force
+          df -h /
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
