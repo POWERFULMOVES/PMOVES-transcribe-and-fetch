@@ -36,6 +36,13 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      # CUDA + PyTorch deps are ~8 GB; reclaim space from pre-installed runtimes
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /usr/share/swift
+          sudo docker image prune --all --force
+          df -h /
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -69,10 +76,11 @@ jobs:
         id: build
         uses: docker/build-push-action@v6
         with:
-          context: ./backend
+          context: .
           file: ./backend/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
-          platforms: linux/amd64,linux/arm64
+          # Backend requires CUDA (nvidia-cublas, nvidia-cudnn, torch) — amd64 only
+          platforms: linux/amd64
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha

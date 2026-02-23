@@ -1,0 +1,23 @@
+# Keep Docker build context small
+node_modules
+.next
+.git
+.github
+docs
+monitoring
+fixes
+output
+mp4
+csv
+excel
+md
+pdf
+*.md
+!backend/app/**
+*.ipynb
+__pycache__
+*.pyc
+.env*
+secrets/
+venv/
+.uv/
