@@ -20,7 +20,7 @@ replace_legacy_kv() {
   local key="$1"
   local legacy="$2"
   local value="$3"
-  if grep -qE "^${key}=${legacy}$" "${ENV_LOCAL}"; then
+  if grep -qF "${key}=${legacy}" "${ENV_LOCAL}"; then
     if command -v sed >/dev/null 2>&1; then
       sed -i.bak "s|^${key}=.*$|${key}=${value}|" "${ENV_LOCAL}" && rm -f "${ENV_LOCAL}.bak"
     else
@@ -42,6 +42,6 @@ ensure_kv "ARCHON_URL" "http://archon-server:8051"
 ensure_kv "HIRAG_URL" "http://hi-rag-gateway-v2-cpu:8086"
 ensure_kv "HIRAG_GPU_URL" "http://hi-rag-gateway-v2-gpu:8086"
 ensure_kv "NEO4J_URI" "bolt://neo4j:7687"
-ensure_kv "NATS_URL" "nats://nats:4222"
+ensure_kv "NATS_URL" "nats://nats:pmoves@nats:4222"
 
 echo "Bootstrap complete: ${ENV_LOCAL}"

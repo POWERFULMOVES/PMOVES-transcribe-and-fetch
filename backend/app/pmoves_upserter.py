@@ -8,34 +8,29 @@ import glob
 from tqdm import tqdm
 import re
 import frontmatter
-from openai import OpenAI
 import asyncio
 import json
 import hashlib
 from pathlib import Path
 
 class MarkdownUpserter:
-    def __init__(self, console=None, logger=None, openai_api_key=None):
+    def __init__(self, console=None, logger=None):
         # Load environment variables from the correct path
         env_path = os.path.join(os.path.dirname(__file__), '.env')
         load_dotenv(dotenv_path=env_path)
-        
+
         # Initialize Supabase client
         supabase_url = os.getenv("SUPABASE_URL")
         supabase_key = os.getenv("SUPABASE_SERVICE_KEY")
-        
+
         if not supabase_url or not supabase_key:
             raise ValueError(f"Missing SUPABASE_URL or SUPABASE_SERVICE_KEY in .env file at {env_path}")
-            
+
         self.supabase = create_client(supabase_url, supabase_key)
-        
+
         # Setup console
         self.console = console
-        
-        # Setup OpenAI client (v2 pattern)
-        self.openai_api_key = openai_api_key
-        self.openai_client = OpenAI(api_key=openai_api_key) if openai_api_key else None
-        
+
         # Setup logging if not provided
         if logger:
             self.logger = logger
