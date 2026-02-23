@@ -8,7 +8,7 @@ import glob
 from tqdm import tqdm
 import re
 import frontmatter
-import openai
+from openai import OpenAI
 import asyncio
 import json
 import hashlib
@@ -32,10 +32,9 @@ class MarkdownUpserter:
         # Setup console
         self.console = console
         
-        # Setup OpenAI
+        # Setup OpenAI client (v2 pattern)
         self.openai_api_key = openai_api_key
-        if openai_api_key:
-            openai.api_key = openai_api_key
+        self.openai_client = OpenAI(api_key=openai_api_key) if openai_api_key else None
         
         # Setup logging if not provided
         if logger:
