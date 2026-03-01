@@ -16,6 +16,7 @@ realtime
 # Environment and configuration
 python-dotenv
 pydantic
+python-jose[cryptography]==3.3.0
 
 # A2A protocol support (will be imported conditionally)
 # google-a2a-python  # Not available in PyPI, will be handled conditionally
