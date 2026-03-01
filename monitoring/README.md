@@ -24,7 +24,7 @@ docker-compose -f docker-compose.monitoring.yml up -d
 
 ### 2. Access the Dashboards
 
-- **Grafana**: http://localhost:3001 (admin/admin123)
+- **Grafana**: http://localhost:3001 (admin/$GRAFANA_ADMIN_PASSWORD)
 - **Prometheus**: http://localhost:9090
 - **Langfuse**: http://localhost:3002
 - **AlertManager**: http://localhost:9093

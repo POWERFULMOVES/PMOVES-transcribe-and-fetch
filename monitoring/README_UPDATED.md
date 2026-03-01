@@ -56,7 +56,7 @@ LANGFUSE_HOST=http://localhost:3002  # or https://cloud.langfuse.com
 OPENAI_API_KEY=sk-your-openai-key
 
 # Monitoring Configuration
-GRAFANA_ADMIN_PASSWORD=admin123
+GRAFANA_ADMIN_PASSWORD=CHANGE_ME
 REDIS_URL=redis://localhost:6379
 ```
 
@@ -73,7 +73,7 @@ docker-compose -f docker-compose.monitoring.yml ps
 
 ### 3. Access Dashboards
 
-- **Grafana**: http://localhost:3001 (admin/admin123)
+- **Grafana**: http://localhost:3001 (admin/$GRAFANA_ADMIN_PASSWORD)
 - **Prometheus**: http://localhost:9090
 - **Langfuse**: http://localhost:3002
 - **AlertManager**: http://localhost:9093
