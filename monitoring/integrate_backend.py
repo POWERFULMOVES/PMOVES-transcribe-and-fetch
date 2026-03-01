@@ -111,7 +111,7 @@ LANGFUSE_HOST=http://localhost:3002
 REDIS_URL=redis://localhost:6379
 PROMETHEUS_PORT=9090
 GRAFANA_PORT=3001
-GRAFANA_ADMIN_PASSWORD=admin123
+GRAFANA_ADMIN_PASSWORD=CHANGE_ME
 
 # Optional: Debug mode
 LANGFUSE_DEBUG=false
@@ -148,7 +148,7 @@ def create_docker_compose_env():
     """Create docker-compose environment file"""
 
     compose_env = """# Docker Compose Environment for Monitoring
-GRAFANA_ADMIN_PASSWORD=admin123
+GRAFANA_ADMIN_PASSWORD=CHANGE_ME
 PROMETHEUS_PORT=9090
 GRAFANA_PORT=3001
 LANGFUSE_PORT=3002
@@ -157,7 +157,7 @@ REDIS_PORT=6379
 # Langfuse Database
 POSTGRES_DB=langfuse
 POSTGRES_USER=langfuse
-POSTGRES_PASSWORD=langfuse123
+POSTGRES_PASSWORD=CHANGE_ME
 """
 
     env_file = Path("monitoring/monitoring.env")
@@ -214,7 +214,7 @@ def main():
     print("   curl http://localhost:8000/metrics")
     print("   curl http://localhost:8000/monitoring/status")
     print("\nDashboards:")
-    print("- Grafana: http://localhost:3001 (admin/admin123)")
+    print("- Grafana: http://localhost:3001 (admin/CHANGE_ME)")
     print("- Prometheus: http://localhost:9090")
     print("- Langfuse: http://localhost:3002")
 
