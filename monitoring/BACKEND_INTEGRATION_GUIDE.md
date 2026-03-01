@@ -52,7 +52,7 @@ Visit these URLs to confirm everything is working:
 - **Backend Metrics**: http://localhost:8000/metrics
 - **Backend Health**: http://localhost:8000/health
 - **Monitoring Status**: http://localhost:8000/monitoring/status
-- **Grafana Dashboard**: http://localhost:3001 (admin/admin123)
+- **Grafana Dashboard**: http://localhost:3001 (admin/$GRAFANA_ADMIN_PASSWORD)
 - **Langfuse Traces**: http://localhost:3002
 
 ## Detailed Integration for Specific Components
