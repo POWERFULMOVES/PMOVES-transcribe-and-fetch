@@ -17,8 +17,15 @@ COPY pyproject.toml uv.lock ./
 # Sync dependencies to system python (since we are in a container)
 RUN uv sync --frozen --no-cache
 
+# Lightweight PR target to validate backend source packaging without heavy GPU deps.
+FROM python:3.12-slim AS ci-smoke
+
+WORKDIR /app
+COPY backend/app ./app
+RUN python -m compileall -q -x '(^|/)(tests|test_).*' app
+
 # Runtime stage
-FROM python:3.12-slim
+FROM python:3.12-slim AS runtime
 
 WORKDIR /app
 

@@ -19,6 +19,7 @@ env:
   IMAGE_NAME_BACKEND: pmoves-transcribe-backend
   IMAGE_NAME_FRONTEND: pmoves-transcribe-frontend
   BUILD_PLATFORMS: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
+  BACKEND_TARGET: ${{ github.event_name == 'pull_request' && 'ci-smoke' || 'runtime' }}
 
 permissions:
   contents: read
@@ -72,6 +73,7 @@ jobs:
         with:
           context: .
           file: ./backend/Dockerfile
+          target: ${{ env.BACKEND_TARGET }}
           push: ${{ github.event_name != 'pull_request' }}
           platforms: ${{ env.BUILD_PLATFORMS }}
           tags: ${{ steps.meta.outputs.tags }}
