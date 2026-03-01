@@ -15,7 +15,7 @@ import asyncio
 import logging
 import json
 from typing import Dict, List, Optional, Any
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from pydantic import BaseModel
@@ -138,6 +138,64 @@ def load_config() -> PipecatConfig:
 
 
 config = load_config()
+
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "").strip()
+
+try:
+    from jose import jwt as jose_jwt
+
+    HAS_JOSE = True
+except Exception:
+    jose_jwt = None
+    HAS_JOSE = False
+
+
+def _is_discovery_public() -> bool:
+    value = os.getenv("A2A_DISCOVERY_PUBLIC", "false").strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _require_a2a_discovery_auth(authorization: Optional[str]) -> None:
+    if _is_discovery_public():
+        return
+
+    if not HAS_JOSE:
+        raise HTTPException(
+            status_code=500,
+            detail="python-jose not installed - JWT validation unavailable",
+        )
+
+    if not SUPABASE_JWT_SECRET:
+        raise HTTPException(
+            status_code=500,
+            detail="SUPABASE_JWT_SECRET not configured - authentication unavailable",
+        )
+
+    if not authorization:
+        raise HTTPException(status_code=401, detail="Missing Authorization header")
+
+    token = authorization[7:] if authorization.startswith("Bearer ") else authorization
+    token = token.strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="Empty token")
+
+    try:
+        payload = jose_jwt.decode(
+            token,
+            SUPABASE_JWT_SECRET,
+            algorithms=[JWT_ALGORITHM],
+            options={"verify_signature": True, "verify_aud": False, "verify_exp": True},
+        )
+    except jose_jwt.ExpiredSignatureError:
+        raise HTTPException(status_code=401, detail="Token expired") from None
+    except jose_jwt.InvalidSignatureError:
+        raise HTTPException(status_code=403, detail="Invalid token signature") from None
+    except jose_jwt.JWTError as exc:
+        raise HTTPException(status_code=403, detail=f"JWT validation failed: {exc}") from None
+
+    if payload.get("role", "") == "anon":
+        raise HTTPException(status_code=403, detail="Anonymous keys are not permitted")
 
 
 # Agent management with multimodal capabilities
@@ -930,8 +988,11 @@ async def websocket_endpoint(websocket: WebSocket, agent_id: str):
 if a2a_available:
 
     @app.get("/.well-known/agent.json")
-    async def well_known_agent() -> Dict[str, Any]:
+    async def well_known_agent(
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    ) -> Dict[str, Any]:
         """Serve a minimal AgentCard for discovery."""
+        _require_a2a_discovery_auth(authorization)
         card = AgentCard(
             name="PMOVES Pipecat",
             description="Pipecat core service",

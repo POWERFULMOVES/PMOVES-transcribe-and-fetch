@@ -19,6 +19,10 @@ COPY . .
 # Learn more here: https://nextjs.org/telemetry
 # Uncomment the following line in case you want to disable telemetry during the build.
 ENV NEXT_TELEMETRY_DISABLED=1
+ARG NEXT_PUBLIC_SUPABASE_URL=http://127.0.0.1:65421
+ARG NEXT_PUBLIC_SUPABASE_ANON_KEY=local-build-anon-key
+ENV NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL}
+ENV NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY}
 
 RUN npm run build
 
