@@ -18,6 +18,7 @@ env:
   REGISTRY: ghcr.io
   IMAGE_NAME_BACKEND: pmoves-transcribe-backend
   IMAGE_NAME_FRONTEND: pmoves-transcribe-frontend
+  BUILD_PLATFORMS: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
 
 permissions:
   contents: read
@@ -72,7 +73,7 @@ jobs:
           context: .
           file: ./backend/Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ env.BUILD_PLATFORMS }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
@@ -173,7 +174,7 @@ jobs:
           context: .
           file: ./Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ env.BUILD_PLATFORMS }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
