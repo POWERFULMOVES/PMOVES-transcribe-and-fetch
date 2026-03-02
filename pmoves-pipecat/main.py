@@ -15,7 +15,7 @@ import asyncio
 import logging
 import json
 from typing import Dict, List, Optional, Any
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Header, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from pydantic import BaseModel
@@ -138,6 +138,94 @@ def load_config() -> PipecatConfig:
 
 
 config = load_config()
+
+JWT_ALGORITHM = os.getenv("JWT_ALGORITHM", "HS256")
+SUPABASE_JWT_SECRET = os.getenv("SUPABASE_JWT_SECRET", "").strip()
+WELL_KNOWN_AGENT_CARD_PATH = "/.well-known/agent-card.json"
+LEGACY_AGENT_CARD_PATH = "/.well-known/agent.json"
+
+try:
+    from jose import jwt as jose_jwt
+
+    HAS_JOSE = True
+except Exception:
+    jose_jwt = None
+    HAS_JOSE = False
+
+
+def _is_enabled_env(var_name: str, default: str = "false") -> bool:
+    value = os.getenv(var_name, default).strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
+def _is_discovery_public() -> bool:
+    return _is_enabled_env("A2A_DISCOVERY_PUBLIC")
+
+
+def _is_task_api_public() -> bool:
+    return _is_enabled_env("A2A_TASKS_PUBLIC")
+
+
+def _require_a2a_auth(authorization: Optional[str], public_mode: bool = False) -> None:
+    if public_mode:
+        return
+
+    if not HAS_JOSE:
+        raise HTTPException(
+            status_code=500,
+            detail="python-jose not installed - JWT validation unavailable",
+        )
+
+    if not SUPABASE_JWT_SECRET:
+        raise HTTPException(
+            status_code=500,
+            detail="SUPABASE_JWT_SECRET not configured - authentication unavailable",
+        )
+
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing Authorization header",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    token = authorization[7:] if authorization.startswith("Bearer ") else authorization
+    token = token.strip()
+    if not token:
+        raise HTTPException(
+            status_code=401,
+            detail="Empty token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        payload = jose_jwt.decode(
+            token,
+            SUPABASE_JWT_SECRET,
+            algorithms=[JWT_ALGORITHM],
+            options={"verify_signature": True, "verify_aud": False, "verify_exp": True},
+        )
+    except jose_jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=401,
+            detail="Token expired",
+            headers={"WWW-Authenticate": "Bearer"},
+        ) from None
+    except jose_jwt.InvalidSignatureError:
+        raise HTTPException(status_code=403, detail="Invalid token signature") from None
+    except jose_jwt.JWTError:
+        raise HTTPException(status_code=403, detail="JWT validation failed") from None
+
+    if payload.get("role", "") == "anon":
+        raise HTTPException(status_code=403, detail="Anonymous keys are not permitted")
+
+
+def _require_a2a_discovery_auth(authorization: Optional[str]) -> None:
+    _require_a2a_auth(authorization, public_mode=_is_discovery_public())
+
+
+def _require_a2a_task_auth(authorization: Optional[str]) -> None:
+    _require_a2a_auth(authorization, public_mode=_is_task_api_public())
 
 
 # Agent management with multimodal capabilities
@@ -929,9 +1017,13 @@ async def websocket_endpoint(websocket: WebSocket, agent_id: str):
 # A2A Protocol endpoints (if available)
 if a2a_available:
 
-    @app.get("/.well-known/agent.json")
-    async def well_known_agent() -> Dict[str, Any]:
+    @app.get(WELL_KNOWN_AGENT_CARD_PATH)
+    @app.get(LEGACY_AGENT_CARD_PATH, include_in_schema=False)
+    async def well_known_agent(
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    ) -> Dict[str, Any]:
         """Serve a minimal AgentCard for discovery."""
+        _require_a2a_discovery_auth(authorization)
         card = AgentCard(
             name="PMOVES Pipecat",
             description="Pipecat core service",
@@ -943,12 +1035,19 @@ if a2a_available:
         return card.model_dump(exclude_none=True)
 
     @app.post("/a2a/rpc")
-    async def a2a_rpc(request: Dict[str, Any]):
+    async def a2a_rpc(
+        request: Dict[str, Any],
+        authorization: Optional[str] = Header(default=None, alias="Authorization"),
+    ):
         """Handle basic A2A JSON-RPC requests."""
+        _require_a2a_task_auth(authorization)
+
         try:
             rpc = JSONRPCRequest.model_validate(request)
-        except Exception as exc:
-            return JSONRPCResponse(id=None, error={"code": -32600, "message": str(exc)}).model_dump()
+        except Exception:
+            return JSONRPCResponse(
+                id=None, error={"code": -32600, "message": "Invalid request payload"}
+            ).model_dump()
 
         if rpc.method == "tasks/send":
             send_req = TaskSendRequest.model_validate(request)

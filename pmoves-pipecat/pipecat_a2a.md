@@ -9,7 +9,7 @@ The A2A protocol is designed for interoperability between AI agents. Key aspects
 *   **Transport:** HTTP(S) with JSON-RPC 2.0 as the payload format.
     *   Reference: `docs/A2A/docs/specification.md#3-transport-and-format`
 *   **Agent Discovery (`AgentCard`):**
-    *   A JSON metadata document (typically `/.well-known/agent.json`) describing an agent server.
+    *   A JSON metadata document (typically `/.well-known/agent-card.json`; legacy alias `/.well-known/agent.json`) describing an agent server.
     *   Key Fields: `name`, `description`, `url` (the A2A JSON-RPC service endpoint), `version`, `provider`, `capabilities` (e.g., support for streaming, push notifications), `authentication` (schemes required to call the agent), and `skills` (specific functions the agent offers).
     *   Reference: `docs/A2A/docs/specification.md#5-agent-discovery-the-agent-card` and `docs/A2A/docs/specification.md#55-agentcard-object-structure`.
 *   **Interaction Model (`Task`):**
@@ -55,7 +55,7 @@ To make your Pipecat agents A2A-compliant, consider the following steps:
 
 ### 3.2. Implement Standard Agent Discovery
 *   **What:** Expose an endpoint that serves a valid A2A `AgentCard` JSON document.
-*   **Where:** The recommended location is `/.well-known/agent.json`. Your FastAPI application should serve this.
+*   **Where:** The recommended location is `/.well-known/agent-card.json` (keep `/.well-known/agent.json` as a legacy alias). Your FastAPI application should serve this.
 *   **Content:** The `AgentCard` should accurately describe your Pipecat agent service:
     *   `name`, `description`, `version`.
     *   `url`: The URL of your new A2A JSON-RPC endpoint (see 3.3).
