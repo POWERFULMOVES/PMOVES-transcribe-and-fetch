@@ -1,0 +1,13 @@
+[submodule "PMOVES-Archon"]
+	path = PMOVES-Archon
+	url = https://github.com/POWERFULMOVES/PMOVES-Archon.git
+	branch = PMOVES.AI-Edition-Hardened
+[submodule "docs/Seed1.5-VL"]
+	path = docs/Seed1.5-VL
+	url = https://github.com/ByteDance-Seed/Seed1.5-VL.git
+[submodule "github-mcp-server"]
+	path = github-mcp-server
+	url = https://github.com/github/github-mcp-server.git
+[submodule "pmoves-ottomator-agents"]
+	path = pmoves-ottomator-agents
+	url = https://github.com/POWERFULMOVES/pmoves-ottomator-agents.git
