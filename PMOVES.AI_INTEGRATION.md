@@ -1,80 +1,51 @@
-# PMOVES-transcribe-and-fetch Integration Dossier
+# PMOVES.AI Integration Guide for PMOVES Transcribe-and-Fetch
 
-## Purpose
+## Overview
 
-This document defines how `PMOVES-transcribe-and-fetch` integrates with the
-PMOVES.AI hardened stack and where the remaining gaps are.
+PMOVES-transcribe-and-fetch is integrated as a PMOVES.AI submodule and validated through the parent deterministic gate chain:
 
-## Current Integration Status
+- `make -C pmoves submodule-layer-validate-all-strict`
+- `make -C pmoves submodule-integrity-strict`
+- `make -C pmoves audit-layers-static`
 
-### Implemented
+This module provides ingestion, transcription, fetch/crawl workflows, and UI surfaces that connect into PMOVES event and runtime lanes.
 
-- Archon submodule is wired as a nested gitlink:
-  - `PMOVES-Archon`
-- Supporting nested submodules for agent workflows are mapped:
-  - `docs/Seed1.5-VL`
-  - `github-mcp-server`
-  - `pmoves-ottomator-agents`
-- PMOVES hardened deployment modes are present in:
-  - `docker-compose.hardened.yml`
-  - `AGENTS.md`
-- PMOVES integration overlay is present:
-  - `pmoves-integrations/`
-- Docked bootstrap now seeds Supabase dual-write + service endpoints:
-  - `SUPABASE_DUAL_WRITE=true`
-  - `ARCHON_URL`
-  - `HIRAG_URL`, `HIRAG_GPU_URL`
-  - `NEO4J_URI`
-  - `NATS_URL`
+## Runtime Integration Points
 
-### Not Yet Implemented (explicit gap)
+- **Tiering**: uses PMOVES tiered environment model (`env.shared` + tier overlays).
+- **Data**: Supabase-backed flows for operational/stateful paths.
+- **Agents/Automation**: n8n and PMOVES agent lanes for orchestration.
+- **Media Pipeline**: transcript/fetch paths align with PMOVES.YT and creator ingestion surfaces.
 
-- Backend runtime logic in this legacy iteration does not yet consume the
-  newly-seeded Archon/HiRAG/Neo4j env keys end-to-end.
-- No direct `hirag`/`hi-rag` container dependency is declared in this
-  submodule's top-level compose (expected in docked PMOVES parent stack).
+## Local Validation Baseline
 
-## Integration Contract Alignment
+### Deterministic parent gate
 
-The submodule now includes a first-class `pmoves-integrations/` overlay:
-
-- `pmoves-integrations/compose/docker-compose.pmoves-net.yml`
-- `pmoves-integrations/tools/*` validation helpers
-- `pmoves-integrations/events/subjects.yaml`
-- `pmoves-integrations/models/mappings/service_model_mappings.json`
-- `pmoves-integrations/secrets/labels.yaml`
-- `pmoves-integrations/auth/bootstrap.sh`
-- `pmoves-integrations/docs/OPERATIONS.md`
-
-Run checks:
+Run from parent repo root:
 
 ```bash
-make integration-contract-check
-make integration-submodule-check
-make integration-sitrep
+make -C pmoves submodule-layer-validate-one SUBMODULE=PMOVES-transcribe-and-fetch
 ```
 
-## Archon + HiRAG Plan for This Submodule
+### Submodule-native checks
 
-1. Keep Archon nested submodule mapping as the orchestration anchor.
-2. Add explicit HiRAG routing knobs in env + compose:
-   - `HIRAG_URL`
-   - `HIRAG_GPU_URL`
-3. Add explicit Neo4j routing knob:
-   - `NEO4J_URI`
-4. Add smoke path for retrieval-assisted transcription/fetch workflow.
-5. Gate changes through integration-contract and hardened compose validation.
+Run from `PMOVES-transcribe-and-fetch/`:
 
-## Build and Audit Sequence
+```bash
+npm ci
+npm test
+```
 
-1. `make config`
-2. `make config-hardened`
-3. `make build`
-4. `make integration-contract-check`
-5. `make integration-submodule-check`
-6. `make health` (after services are up)
+Current known test debt (captured during 2026-03-03 local replay):
+
+- Jest suites include broken import/mock references and outdated hook testing patterns (`waitForNextUpdate`), causing broad frontend unit test failures.
+- Some suites expect test doubles (`mockToast`) that are not defined in setup.
+
+## Nested Submodule Mapping
+
+This repo includes a nested Archon gitlink at `PMOVES-Archon`. The `.gitmodules` mapping in this repository is required so recursive integrity checks can resolve nested submodule metadata.
 
 ## Notes
 
-- Keep commits atomic: pointer hygiene, contract scaffolding, runtime wiring.
-- Root PMOVES.AI should only move this submodule pointer once local checks pass.
+- Keep this file updated when runtime contracts, event subjects, or validation commands change.
+- Keep parent `pmoves/docs/NEXT_STEPS.md` and `pmoves/docs/PMOVES.AI PLANS/ROADMAP.md` aligned with any integration-impacting changes.
