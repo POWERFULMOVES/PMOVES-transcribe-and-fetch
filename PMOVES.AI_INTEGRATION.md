@@ -1,51 +1,39 @@
-# PMOVES.AI Integration Guide for PMOVES Transcribe-and-Fetch
+# PMOVES.AI Integration Dossier
 
-## Overview
+_Last updated: 2026-04-04_
 
-PMOVES-transcribe-and-fetch is integrated as a PMOVES.AI submodule and validated through the parent deterministic gate chain:
+## Module
+- Name: PMOVES-transcribe-and-fetch
+- Path: PMOVES-transcribe-and-fetch
 
-- `make -C pmoves submodule-layer-validate-all-strict`
-- `make -C pmoves submodule-integrity-strict`
-- `make -C pmoves audit-layers-static`
+## Purpose in PMOVES.AI
+- Media transcription pipeline with content fetch capabilities.
 
-This module provides ingestion, transcription, fetch/crawl workflows, and UI surfaces that connect into PMOVES event and runtime lanes.
+## PMOVES Overlay Surface
+- pmoves-integrations/ overlay path (if used): _TBD_
+- Compose/profile wiring: _TBD_
+- Env/secret inputs: _TBD_
+- Auth/JWT requirements: _TBD_
 
-## Runtime Integration Points
+## Contracts and Topics
+- NATS subjects (if any): _TBD_
+- Supabase schema/tables touched (if any): _TBD_
+- MCP endpoints/skills (if any): _TBD_
 
-- **Tiering**: uses PMOVES tiered environment model (`env.shared` + tier overlays).
-- **Data**: Supabase-backed flows for operational/stateful paths.
-- **Agents/Automation**: n8n and PMOVES agent lanes for orchestration.
-- **Media Pipeline**: transcript/fetch paths align with PMOVES.YT and creator ingestion surfaces.
+## Boot Order and Health
+- Bring-up dependency order: _TBD_
+- Health endpoints: _TBD_
+- Smoke targets: _TBD_
 
-## Local Validation Baseline
+## Hardening Notes
+- Image pinning / provenance: _TBD_
+- Secrets source (*_FILE / vault / GH env): _TBD_
+- Network/security policy constraints: _TBD_
 
-### Deterministic parent gate
+## Source Documentation
+- Upstream docs entrypoint: README.md
+- PMOVES docs index reference: pmoves/docs/SUBMODULE_DOCS_DOSSIER.md
 
-Run from parent repo root:
-
-```bash
-make -C pmoves submodule-layer-validate-one SUBMODULE=PMOVES-transcribe-and-fetch
-```
-
-### Submodule-native checks
-
-Run from `PMOVES-transcribe-and-fetch/`:
-
-```bash
-npm ci
-npm test
-```
-
-Current known test debt (captured during 2026-03-03 local replay):
-
-- Jest suites include broken import/mock references and outdated hook testing patterns (`waitForNextUpdate`), causing broad frontend unit test failures.
-- Some suites expect test doubles (`mockToast`) that are not defined in setup.
-
-## Nested Submodule Mapping
-
-This repo includes a nested Archon gitlink at `PMOVES-Archon`. The `.gitmodules` mapping in this repository is required so recursive integrity checks can resolve nested submodule metadata.
-
-## Notes
-
-- Keep this file updated when runtime contracts, event subjects, or validation commands change.
-- Keep parent `pmoves/docs/NEXT_STEPS.md` and `pmoves/docs/PMOVES.AI PLANS/ROADMAP.md` aligned with any integration-impacting changes.
+## Owner / Audit
+- Owning lane: _TBD_
+- Last integration audit run: 2026-04-04
