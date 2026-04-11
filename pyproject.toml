@@ -130,7 +130,7 @@ dependencies = [
     "XlsxWriter",
     "yarl",
     "zopfli",
-    "crawl4ai==0.6.2",
+    "crawl4ai>=0.7.0,<0.8.0",
     "transformers",
     "aiosqlite==0.21.0",
     "xxhash==3.5.0",
