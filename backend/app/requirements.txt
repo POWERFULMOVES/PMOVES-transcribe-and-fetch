@@ -61,7 +61,7 @@ openpyxl==3.1.5
 packaging==24.2
 pandas==2.2.3
 pdfkit==1.0.0
-pillow==10.3.0
+pillow==12.2.0
 postgrest==0.18.0
 propcache==0.2.0
 protobuf==5.29.0
@@ -78,7 +78,7 @@ pyreadline3==3.5.4
 python-dateutil==2.9.0.post0
 python-frontmatter==1.1.0
 python-markdown-math==0.8
-python-multipart==0.0.20
+python-multipart==0.0.26
 pytz==2024.2
 PyYAML==6.0.2
 realtime==2.0.6
@@ -112,9 +112,9 @@ XlsxWriter==3.2.0
 yarl==1.18.0
 yt-dlp==2025.5.28.232948.dev0
 zopfli==0.2.3.post1
-pytest==8.3.2
+pytest==9.0.3
 pytest-asyncio==0.23.7
-python-dotenv==1.0.1
+python-dotenv==1.2.2
 torch==2.4.0
 torchvision==0.19.0
 torchaudio==2.4.0
