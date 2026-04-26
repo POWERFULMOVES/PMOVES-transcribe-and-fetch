@@ -7,7 +7,7 @@ requires-python = ">=3.12"
 dependencies = [
     "a2a-samples",
     "jsonschema>=4.23.0",
-    "pytest>=8.3.5",
+    "pytest>=9.0.3",
 ]
 
 
