@@ -4,7 +4,7 @@ uvicorn[standard]>=0.24.0
 pydantic>=2.5.0
 httpx>=0.25.2
 websockets>=12.0
-python-multipart>=0.0.6
+python-multipart>=0.0.26
 
 # Database and storage
 supabase>=2.3.0
@@ -55,4 +55,4 @@ click>=8.1.7
 rich>=13.7.0
 
 # Pipecat for agent communication with all extras
-pipecat-ai[all]>=0.0.40
+pipecat-ai[all]>=0.0.94
