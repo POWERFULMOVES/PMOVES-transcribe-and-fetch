@@ -55,4 +55,4 @@ click>=8.1.7
 rich>=13.7.0
 
 # Pipecat for agent communication with all extras
-pipecat-ai[all]>=0.0.40
+pipecat-ai[all]>=0.0.94
