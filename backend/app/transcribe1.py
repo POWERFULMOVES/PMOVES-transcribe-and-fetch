@@ -1096,11 +1096,13 @@ async def process_video(
                 # The transcribe_audio_from_registry should return a dict like:
                 # {"text": "full transcript", "segments": [{"start": S, "end": E, "text": T, "speaker": S}...]}
                 # or None on failure.
+                target_language = model_config.get("target_language")
+                task = model_config.get("task", "transcribe")
                 registry_response = await registry_service.transcribe_audio( # Call the method on the instance
                     model_id=transcription_model_id,
                     audio_data=audio_data_bytes,
-                    # Potentially pass other kwargs like language if supported by LiteLLM endpoint
-                    # For diarization, the registry function or LiteLLM should handle it if model supports
+                    language=target_language,
+                    task=task
                 )
 
                 if registry_response and "segments" in registry_response and "text" in registry_response:
@@ -1140,7 +1142,11 @@ async def process_video(
                         full_text_parts_temp.append(formatted_text_part)
                     
                     # Assemble full_text for markdown
+                    target_language = model_config.get("target_language")
+                    task = model_config.get("task", "transcribe")
                     title_md_header = f"# Transcription for Video: [{video_id_for_md}]({base_url_for_md})\n\n"
+                    title_md_header += f"**Detected Language:** {target_language or 'Auto'}\n"
+                    title_md_header += f"**Task:** {task.capitalize()}\n\n"
                     table_header_md_content = "| Timestamp Link | Video ID | Seg ID | Start | End | Text |\n"
                     table_separator_md_content = "|---|---|---|---|---|---|\n"
                     full_text = title_md_header + table_header_md_content + table_separator_md_content + "".join(full_text_parts_temp)
@@ -1161,8 +1167,10 @@ async def process_video(
                     segments = None # Indicate failure
                     full_text = None
             else: # Local Faster Whisper
+                target_language = model_config.get("target_language")
+                task = model_config.get("task", "transcribe")
                 segments, full_text = await transcribe_audio( # This is the original local transcribe_audio
-                    actual_audio_path, status_queue, transcription_queue, youtube_video_url
+                    actual_audio_path, status_queue, transcription_queue, youtube_video_url, target_language=target_language, task=task
                 )
 
             transcription_duration = time.time() - transcription_start_time
