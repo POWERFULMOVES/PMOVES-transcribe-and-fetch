@@ -141,6 +141,8 @@ class VideoProcessRequest(BaseModel): # Matches definition in main.py or caller
     output_folder: str
     use_groq: bool = False # Should be determined by transcription_model in caller's logic
     transcription_model: str = "faster-whisper" # Default value
+    target_language: Optional[str] = None
+    task: Literal["transcribe", "translate"] = "transcribe"
 
 
 # --- Utility Functions (Copied from provided code for completeness) ---

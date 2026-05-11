@@ -677,6 +677,8 @@ class VideoRequest(BaseModel):
     output_folder: str
     transcription_model: str = "faster-whisper"
     use_groq: Optional[bool] = None
+    target_language: Optional[str] = None
+    task: str = "transcribe"
 
     @field_validator("youtube_video_url")
     def validate_youtube_url(cls, v):
@@ -1584,6 +1586,8 @@ async def process_video_endpoint(
         model_config = {
             "model": request.transcription_model,
             "use_groq": request.use_groq,
+            "target_language": request.target_language,
+            "task": request.task,
         }
 
         try:
