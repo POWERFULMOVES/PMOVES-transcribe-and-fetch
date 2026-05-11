@@ -141,6 +141,8 @@ class VideoProcessRequest(BaseModel): # Matches definition in main.py or caller
     output_folder: str
     use_groq: bool = False # Should be determined by transcription_model in caller's logic
     transcription_model: str = "faster-whisper" # Default value
+    target_language: Optional[str] = None
+    task: Literal["transcribe", "translate"] = "transcribe"
 
 
 # --- Utility Functions (Copied from provided code for completeness) ---
@@ -420,7 +422,8 @@ def extract_video_id(youtube_url: str) -> str:
 # --- Transcription Functions ---
 
 def _transcribe_loop_sync(model: WhisperModel, audio_path: str, video_id: str, base_url: str,
-                         status_queue_sync: asyncio.Queue, transcription_queue_sync: asyncio.Queue, loop: asyncio.AbstractEventLoop):
+                         status_queue_sync: asyncio.Queue, transcription_queue_sync: asyncio.Queue, loop: asyncio.AbstractEventLoop,
+                         target_language: Optional[str] = None, task: Literal["transcribe", "translate"] = "transcribe"):
     """
     Synchronous function containing the blocking transcription loop.
     Designed to be run in a separate thread via asyncio.to_thread.
@@ -435,6 +438,8 @@ def _transcribe_loop_sync(model: WhisperModel, audio_path: str, video_id: str, b
         # --- Core Blocking Call ---
         segments_gen, info = model.transcribe(
             audio_path,
+            language=target_language,
+            task=task,
             beam_size=1, # Optimized for speed (higher beam_size might increase accuracy but slow down)
             best_of=1,   # Keep only the single best hypothesis
             temperature=0.0, # Deterministic output
@@ -552,7 +557,7 @@ def _transcribe_loop_sync(model: WhisperModel, audio_path: str, video_id: str, b
         return None, None, None
 
 
-async def transcribe_audio(audio_path: str, status_queue: asyncio.Queue, transcription_queue: asyncio.Queue, youtube_video_url: str):
+async def transcribe_audio(audio_path: str, status_queue: asyncio.Queue, transcription_queue: asyncio.Queue, youtube_video_url: str, target_language: Optional[str] = None, task: Literal["transcribe", "translate"] = "transcribe"):
     """
     Asynchronously manages the transcription of an audio file using faster-whisper.
     Runs the blocking transcription process in a separate thread.
@@ -600,7 +605,9 @@ async def transcribe_audio(audio_path: str, status_queue: asyncio.Queue, transcr
             base_url,
             status_queue, # Pass the queues
             transcription_queue,
-            loop # Pass the event loop
+            loop, # Pass the event loop
+            target_language,
+            task
         )
 
         logger.info(f"Transcription thread completed for: {audio_path}")
@@ -619,6 +626,8 @@ async def transcribe_audio(audio_path: str, status_queue: asyncio.Queue, transcr
 
         # Assemble the final markdown text from parts collected in the thread
         title_md = f"# Transcription for Video: [{video_id}]({base_url})\n\n"
+        title_md += f"**Detected Language:** {language_info.get('language', 'N/A')}\n"
+        title_md += f"**Task:** {task.capitalize()}\n\n"
         table_header_md = "| Timestamp Link | Video ID | Seg ID | Start | End | Text |\n"
         table_separator_md = "|---|---|---|---|---|---|\n"
         full_text = title_md + table_header_md + table_separator_md + "".join(full_text_parts)
@@ -657,7 +666,7 @@ async def transcribe_audio(audio_path: str, status_queue: asyncio.Queue, transcr
         raise e
 
 # Groq transcription implementation
-async def process_audio_with_groq(audio_path: str, status_queue: asyncio.Queue, transcription_queue: asyncio.Queue, youtube_video_url: str):
+async def process_audio_with_groq(audio_path: str, status_queue: asyncio.Queue, transcription_queue: asyncio.Queue, youtube_video_url: str, target_language: Optional[str] = None, task: Literal["transcribe", "translate"] = "transcribe"):
     """
     Process audio using the Groq API in chunks to avoid rate limits and provide a better user experience.
     """
@@ -769,13 +778,23 @@ async def process_audio_with_groq(audio_path: str, status_queue: asyncio.Queue, 
                 # Process chunk with Groq API
                 with open(chunk_path, 'rb') as audio_chunk_file:
                     try:
-                        # Call Groq API for transcription
-                        response = client.audio.transcriptions.create(
-                            file=audio_chunk_file,
-                            model="whisper-large-v3",
-                            response_format="verbose_json",
-                            timestamp_granularities=["segment"]
-                        )
+                        # Set up args
+                        groq_args = {
+                            "file": audio_chunk_file,
+                            "model": "whisper-large-v3",
+                            "response_format": "verbose_json"
+                        }
+                        # Cloud translations endpoint natively handles the translation to English.
+                        # It doesn't accept language param in translations, only in transcriptions.
+                        if task == "translate":
+                            # Call translations API (always translates to English)
+                            response = client.audio.translations.create(**groq_args)
+                        else:
+                            if target_language:
+                                groq_args["language"] = target_language
+                            groq_args["timestamp_granularities"] = ["segment"]
+                            # Call transcriptions API
+                            response = client.audio.transcriptions.create(**groq_args)
 
                         # Process the response
                         if hasattr(response, 'segments') and response.segments:
@@ -792,8 +811,12 @@ async def process_audio_with_groq(audio_path: str, status_queue: asyncio.Queue, 
                                 segment_text = segment.text.strip()
 
                                 # Adjust timestamps to account for chunk position
-                                start_time_secs = segment.start + (chunk_start_ms / 1000)
-                                end_time_secs = segment.end + (chunk_start_ms / 1000)
+                                # Note: the translations endpoint might not return segments or timestamps reliably
+                                # like the transcriptions endpoint does. Fallbacks are required.
+                                start = segment.start if hasattr(segment, 'start') else 0.0
+                                end = segment.end if hasattr(segment, 'end') else (start + 5.0)
+                                start_time_secs = start + (chunk_start_ms / 1000)
+                                end_time_secs = end + (chunk_start_ms / 1000)
 
                                 # Format timestamps
                                 start_time_fmt = format_timestamp(start_time_secs)
@@ -885,7 +908,12 @@ async def process_audio_with_groq(audio_path: str, status_queue: asyncio.Queue, 
             logger.info(f"Sent transcription_complete message for Groq transcription")
 
             # Join full text parts
-            full_text = ''.join(full_text_parts)
+            title_md = f"# Transcription for Video: [{video_id}]({base_url})\n\n"
+            title_md += f"**Requested Target Language:** {target_language or 'Auto'}\n"
+            title_md += f"**Task:** {task.capitalize()}\n\n"
+            table_header_md = "| Timestamp Link | Video ID | Seg ID | Start | End | Text |\n"
+            table_separator_md = "|---|---|---|---|---|---|\n"
+            full_text = title_md + table_header_md + table_separator_md + ''.join(full_text_parts)
 
             # Clean up temporary file if created
             if audio_format != 'mp3':
@@ -1068,11 +1096,13 @@ async def process_video(
                 # The transcribe_audio_from_registry should return a dict like:
                 # {"text": "full transcript", "segments": [{"start": S, "end": E, "text": T, "speaker": S}...]}
                 # or None on failure.
+                target_language = model_config.get("target_language")
+                task = model_config.get("task", "transcribe")
                 registry_response = await registry_service.transcribe_audio( # Call the method on the instance
                     model_id=transcription_model_id,
                     audio_data=audio_data_bytes,
-                    # Potentially pass other kwargs like language if supported by LiteLLM endpoint
-                    # For diarization, the registry function or LiteLLM should handle it if model supports
+                    language=target_language,
+                    task=task
                 )
 
                 if registry_response and "segments" in registry_response and "text" in registry_response:
@@ -1112,7 +1142,11 @@ async def process_video(
                         full_text_parts_temp.append(formatted_text_part)
                     
                     # Assemble full_text for markdown
+                    target_language = model_config.get("target_language")
+                    task = model_config.get("task", "transcribe")
                     title_md_header = f"# Transcription for Video: [{video_id_for_md}]({base_url_for_md})\n\n"
+                    title_md_header += f"**Requested Target Language:** {target_language or 'Auto'}\n"
+                    title_md_header += f"**Task:** {task.capitalize()}\n\n"
                     table_header_md_content = "| Timestamp Link | Video ID | Seg ID | Start | End | Text |\n"
                     table_separator_md_content = "|---|---|---|---|---|---|\n"
                     full_text = title_md_header + table_header_md_content + table_separator_md_content + "".join(full_text_parts_temp)
@@ -1133,8 +1167,10 @@ async def process_video(
                     segments = None # Indicate failure
                     full_text = None
             else: # Local Faster Whisper
+                target_language = model_config.get("target_language")
+                task = model_config.get("task", "transcribe")
                 segments, full_text = await transcribe_audio( # This is the original local transcribe_audio
-                    actual_audio_path, status_queue, transcription_queue, youtube_video_url
+                    actual_audio_path, status_queue, transcription_queue, youtube_video_url, target_language=target_language, task=task
                 )
 
             transcription_duration = time.time() - transcription_start_time
