@@ -909,7 +909,7 @@ async def process_audio_with_groq(audio_path: str, status_queue: asyncio.Queue, 
 
             # Join full text parts
             title_md = f"# Transcription for Video: [{video_id}]({base_url})\n\n"
-            title_md += f"**Detected Language:** {target_language or 'Auto'}\n"
+            title_md += f"**Requested Target Language:** {target_language or 'Auto'}\n"
             title_md += f"**Task:** {task.capitalize()}\n\n"
             table_header_md = "| Timestamp Link | Video ID | Seg ID | Start | End | Text |\n"
             table_separator_md = "|---|---|---|---|---|---|\n"
@@ -1145,7 +1145,7 @@ async def process_video(
                     target_language = model_config.get("target_language")
                     task = model_config.get("task", "transcribe")
                     title_md_header = f"# Transcription for Video: [{video_id_for_md}]({base_url_for_md})\n\n"
-                    title_md_header += f"**Detected Language:** {target_language or 'Auto'}\n"
+                    title_md_header += f"**Requested Target Language:** {target_language or 'Auto'}\n"
                     title_md_header += f"**Task:** {task.capitalize()}\n\n"
                     table_header_md_content = "| Timestamp Link | Video ID | Seg ID | Start | End | Text |\n"
                     table_separator_md_content = "|---|---|---|---|---|---|\n"

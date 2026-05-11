@@ -118,7 +118,7 @@ import shutil
 import functools
 import urllib.parse
 from datetime import datetime, timedelta, timezone  # Added timezone
-from typing import List, Dict, Any, Optional, Union, Tuple
+from typing import List, Dict, Any, Optional, Union, Tuple, Literal
 from pathlib import Path
 import time
 import sys
@@ -678,7 +678,16 @@ class VideoRequest(BaseModel):
     transcription_model: str = "faster-whisper"
     use_groq: Optional[bool] = None
     target_language: Optional[str] = None
-    task: str = "transcribe"
+    task: Literal["transcribe", "translate"] = "transcribe"
+
+    @field_validator("target_language")
+    @classmethod
+    def validate_target_language_bcp47(cls, v):
+        if v is None:
+            return v
+        if not re.fullmatch(r"^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$", v):
+            raise ValueError("target_language must be a valid BCP-47 language tag")
+        return v.lower()
 
     @field_validator("youtube_video_url")
     def validate_youtube_url(cls, v):
