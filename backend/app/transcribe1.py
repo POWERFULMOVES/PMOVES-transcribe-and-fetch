@@ -422,7 +422,8 @@ def extract_video_id(youtube_url: str) -> str:
 # --- Transcription Functions ---
 
 def _transcribe_loop_sync(model: WhisperModel, audio_path: str, video_id: str, base_url: str,
-                         status_queue_sync: asyncio.Queue, transcription_queue_sync: asyncio.Queue, loop: asyncio.AbstractEventLoop):
+                         status_queue_sync: asyncio.Queue, transcription_queue_sync: asyncio.Queue, loop: asyncio.AbstractEventLoop,
+                         target_language: Optional[str] = None, task: Literal["transcribe", "translate"] = "transcribe"):
     """
     Synchronous function containing the blocking transcription loop.
     Designed to be run in a separate thread via asyncio.to_thread.
@@ -437,6 +438,8 @@ def _transcribe_loop_sync(model: WhisperModel, audio_path: str, video_id: str, b
         # --- Core Blocking Call ---
         segments_gen, info = model.transcribe(
             audio_path,
+            language=target_language,
+            task=task,
             beam_size=1, # Optimized for speed (higher beam_size might increase accuracy but slow down)
             best_of=1,   # Keep only the single best hypothesis
             temperature=0.0, # Deterministic output
@@ -554,7 +557,7 @@ def _transcribe_loop_sync(model: WhisperModel, audio_path: str, video_id: str, b
         return None, None, None
 
 
-async def transcribe_audio(audio_path: str, status_queue: asyncio.Queue, transcription_queue: asyncio.Queue, youtube_video_url: str):
+async def transcribe_audio(audio_path: str, status_queue: asyncio.Queue, transcription_queue: asyncio.Queue, youtube_video_url: str, target_language: Optional[str] = None, task: Literal["transcribe", "translate"] = "transcribe"):
     """
     Asynchronously manages the transcription of an audio file using faster-whisper.
     Runs the blocking transcription process in a separate thread.
@@ -602,7 +605,9 @@ async def transcribe_audio(audio_path: str, status_queue: asyncio.Queue, transcr
             base_url,
             status_queue, # Pass the queues
             transcription_queue,
-            loop # Pass the event loop
+            loop, # Pass the event loop
+            target_language,
+            task
         )
 
         logger.info(f"Transcription thread completed for: {audio_path}")
@@ -621,6 +626,8 @@ async def transcribe_audio(audio_path: str, status_queue: asyncio.Queue, transcr
 
         # Assemble the final markdown text from parts collected in the thread
         title_md = f"# Transcription for Video: [{video_id}]({base_url})\n\n"
+        title_md += f"**Detected Language:** {language_info.get('language', 'N/A')}\n"
+        title_md += f"**Task:** {task.capitalize()}\n\n"
         table_header_md = "| Timestamp Link | Video ID | Seg ID | Start | End | Text |\n"
         table_separator_md = "|---|---|---|---|---|---|\n"
         full_text = title_md + table_header_md + table_separator_md + "".join(full_text_parts)
