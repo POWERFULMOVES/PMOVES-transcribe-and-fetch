@@ -666,7 +666,7 @@ async def transcribe_audio(audio_path: str, status_queue: asyncio.Queue, transcr
         raise e
 
 # Groq transcription implementation
-async def process_audio_with_groq(audio_path: str, status_queue: asyncio.Queue, transcription_queue: asyncio.Queue, youtube_video_url: str):
+async def process_audio_with_groq(audio_path: str, status_queue: asyncio.Queue, transcription_queue: asyncio.Queue, youtube_video_url: str, target_language: Optional[str] = None, task: Literal["transcribe", "translate"] = "transcribe"):
     """
     Process audio using the Groq API in chunks to avoid rate limits and provide a better user experience.
     """
@@ -778,13 +778,23 @@ async def process_audio_with_groq(audio_path: str, status_queue: asyncio.Queue, 
                 # Process chunk with Groq API
                 with open(chunk_path, 'rb') as audio_chunk_file:
                     try:
-                        # Call Groq API for transcription
-                        response = client.audio.transcriptions.create(
-                            file=audio_chunk_file,
-                            model="whisper-large-v3",
-                            response_format="verbose_json",
-                            timestamp_granularities=["segment"]
-                        )
+                        # Set up args
+                        groq_args = {
+                            "file": audio_chunk_file,
+                            "model": "whisper-large-v3",
+                            "response_format": "verbose_json"
+                        }
+                        # Cloud translations endpoint natively handles the translation to English.
+                        # It doesn't accept language param in translations, only in transcriptions.
+                        if task == "translate":
+                            # Call translations API (always translates to English)
+                            response = client.audio.translations.create(**groq_args)
+                        else:
+                            if target_language:
+                                groq_args["language"] = target_language
+                            groq_args["timestamp_granularities"] = ["segment"]
+                            # Call transcriptions API
+                            response = client.audio.transcriptions.create(**groq_args)
 
                         # Process the response
                         if hasattr(response, 'segments') and response.segments:
@@ -801,8 +811,12 @@ async def process_audio_with_groq(audio_path: str, status_queue: asyncio.Queue, 
                                 segment_text = segment.text.strip()
 
                                 # Adjust timestamps to account for chunk position
-                                start_time_secs = segment.start + (chunk_start_ms / 1000)
-                                end_time_secs = segment.end + (chunk_start_ms / 1000)
+                                # Note: the translations endpoint might not return segments or timestamps reliably
+                                # like the transcriptions endpoint does. Fallbacks are required.
+                                start = segment.start if hasattr(segment, 'start') else 0.0
+                                end = segment.end if hasattr(segment, 'end') else (start + 5.0)
+                                start_time_secs = start + (chunk_start_ms / 1000)
+                                end_time_secs = end + (chunk_start_ms / 1000)
 
                                 # Format timestamps
                                 start_time_fmt = format_timestamp(start_time_secs)
@@ -894,7 +908,12 @@ async def process_audio_with_groq(audio_path: str, status_queue: asyncio.Queue, 
             logger.info(f"Sent transcription_complete message for Groq transcription")
 
             # Join full text parts
-            full_text = ''.join(full_text_parts)
+            title_md = f"# Transcription for Video: [{video_id}]({base_url})\n\n"
+            title_md += f"**Detected Language:** {target_language or 'Auto'}\n"
+            title_md += f"**Task:** {task.capitalize()}\n\n"
+            table_header_md = "| Timestamp Link | Video ID | Seg ID | Start | End | Text |\n"
+            table_separator_md = "|---|---|---|---|---|---|\n"
+            full_text = title_md + table_header_md + table_separator_md + ''.join(full_text_parts)
 
             # Clean up temporary file if created
             if audio_format != 'mp3':
