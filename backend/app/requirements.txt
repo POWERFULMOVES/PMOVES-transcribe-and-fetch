@@ -61,7 +61,7 @@ openpyxl==3.1.5
 packaging==24.2
 pandas==2.2.3
 pdfkit==1.0.0
-pillow==10.3.0
+pillow==12.2.0
 postgrest==0.18.0
 propcache==0.2.0
 protobuf==5.29.6
@@ -78,13 +78,13 @@ pyreadline3==3.5.4
 python-dateutil==2.9.0.post0
 python-frontmatter==1.1.0
 python-markdown-math==0.8
-python-multipart==0.0.20
+python-multipart==0.0.27
 pytz==2024.2
 PyYAML==6.0.2
 realtime==2.0.6
 regex==2024.11.6
 reportlab==4.2.5
-requests==2.32.4
+requests==2.33.0
 rich==13.9.4
 setuptools>=69.0.0
 six==1.16.0
@@ -103,7 +103,7 @@ tokenizers==0.21.0
 tqdm==4.67.1
 typing-extensions==4.12.2
 tzdata==2024.2
-urllib3==2.6.3
+urllib3==2.7.0
 uvicorn==0.32.1
 weasyprint==63.0
 webencodings==0.5.1
@@ -112,9 +112,9 @@ XlsxWriter==3.2.0
 yarl==1.18.0
 yt-dlp==2025.5.28.232948.dev0
 zopfli==0.2.3.post1
-pytest==8.3.2
+pytest==9.0.3
 pytest-asyncio==0.23.7
-python-dotenv==1.0.1
+python-dotenv==1.2.2
 torch==2.8.0
 torchvision==0.19.0
 torchaudio==2.4.0
