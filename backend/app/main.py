@@ -689,6 +689,17 @@ class VideoRequest(BaseModel):
             raise ValueError("target_language must be a valid BCP-47 language tag")
         return v.lower()
 
+    @field_validator("task")
+    def validate_task(cls, v):
+        """Constrain task to 'transcribe' or 'translate' with lowercase normalization."""
+        normalized = v.strip().lower()
+        valid_tasks = ["transcribe", "translate"]
+        if normalized not in valid_tasks:
+            raise ValueError(
+                f"Invalid task '{v}'. Must be one of: {valid_tasks}"
+            )
+        return normalized
+
     @field_validator("youtube_video_url")
     def validate_youtube_url(cls, v):
         youtube_regex = r"^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.?be)\/.+$"

@@ -665,10 +665,15 @@ async def transcribe_audio(audio_path: str, status_queue: asyncio.Queue, transcr
         # Re-raise so process_video knows this step failed critically
         raise e
 
-# Groq transcription implementation
-async def process_audio_with_groq(audio_path: str, status_queue: asyncio.Queue, transcription_queue: asyncio.Queue, youtube_video_url: str, target_language: Optional[str] = None, task: Literal["transcribe", "translate"] = "transcribe"):
+# Cloud transcription implementation (provider-agnostic)
+async def process_audio_with_cloud_api(audio_path: str, status_queue: asyncio.Queue, transcription_queue: asyncio.Queue, youtube_video_url: str, target_language: Optional[str] = None, task: Literal["transcribe", "translate"] = "transcribe"):
     """
-    Process audio using the Groq API in chunks to avoid rate limits and provide a better user experience.
+    Process audio using a configurable cloud API provider (OpenAI-compatible endpoint).
+
+    Supports Groq, Ollama, MiniMax, Alibaba Qwen, and any OpenAI-compatible transcription API.
+    Provider is configured via CLOUD_API_BASE_URL and CLOUD_API_KEY environment variables.
+    Falls back to Groq defaults (GROQ_API_KEY + api.groq.com) for backwards compatibility.
+    Audio is processed in 5-minute chunks to avoid rate limits.
     """
     try:
         # Extract video ID from YouTube URL
@@ -683,30 +688,32 @@ async def process_audio_with_groq(audio_path: str, status_queue: asyncio.Queue, 
         base_url = f"https://www.youtube.com/watch?v={video_id}"
 
         # Send status update
-        await status_queue.put(json.dumps({"type": "status", "content": "Preparing audio for Groq transcription...", "timestamp": datetime.now().isoformat()}))
+        await status_queue.put(json.dumps({"type": "status", "content": "Preparing audio for cloud transcription...", "timestamp": datetime.now().isoformat()}))
 
-        # Import required modules for Groq transcription
+        # Import required modules for cloud transcription
         try:
             from openai import OpenAI
             import os
             from pydub import AudioSegment
             import tempfile
         except ImportError as e:
-            error_msg = f"Missing required modules for Groq transcription: {e}"
+            error_msg = f"Missing required modules for cloud transcription: {e}"
             logger.error(error_msg)
             await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
             return None, None
 
-        # Check if GROQ_API_KEY is set
-        groq_api_key = os.getenv("GROQ_API_KEY")
-        if not groq_api_key:
-            error_msg = "GROQ_API_KEY environment variable not set"
+        # Configure cloud API provider (provider-agnostic with Groq fallback)
+        cloud_api_key = os.getenv("CLOUD_API_KEY") or os.getenv("GROQ_API_KEY")
+        cloud_base_url = os.getenv("CLOUD_API_BASE_URL", "https://api.groq.com/openai/v1")
+        if not cloud_api_key:
+            error_msg = "CLOUD_API_KEY (or GROQ_API_KEY) environment variable not set"
             logger.error(error_msg)
             await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
             return None, None
 
-        # Initialize Groq client
-        client = OpenAI(api_key=groq_api_key, base_url="https://api.groq.com/openai/v1")
+        # Initialize cloud API client
+        client = OpenAI(api_key=cloud_api_key, base_url=cloud_base_url)
+        logger.info(f"Cloud API client initialized: {cloud_base_url}")
 
         # Convert audio to MP3 format if needed
         audio_format = audio_path.split('.')[-1].lower()
