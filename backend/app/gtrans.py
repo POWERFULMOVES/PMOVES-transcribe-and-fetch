@@ -623,18 +623,21 @@ async def transcribe_audio(audio_path: str, status_queue: asyncio.Queue, transcr
         # Re-raise so process_video knows this step failed critically
         raise e
 
-# Defined function for Groq transcription (currently a placeholder)
-async def process_audio_with_groq(audio_path: str, status_queue: asyncio.Queue, transcription_queue: asyncio.Queue, youtube_video_url: str):
+# Defined function for cloud transcription (currently a placeholder)
+async def process_audio_with_cloud_api(audio_path: str, status_queue: asyncio.Queue, transcription_queue: asyncio.Queue, youtube_video_url: str):
     """
-    Placeholder for processing audio using the Groq API.
+    Placeholder for processing audio using a configurable cloud API provider.
+
+    Provider-agnostic: supports Groq, Ollama, MiniMax, Alibaba Qwen, etc.
+    Configure via CLOUD_API_BASE_URL and CLOUD_API_KEY environment variables.
     Currently NOT IMPLEMENTED.
     """
-    error_msg = "Groq transcription pathway is defined but not yet implemented."
+    error_msg = "Cloud transcription pathway is defined but not yet implemented."
     logger.error(error_msg)
     console.print(f"[bold red]Error: {error_msg}[/bold red]")
     # Send error message to frontend via queue
     await status_queue.put(json.dumps({"type": "error", "content": error_msg}))
-    logger.info(f"QUEUE PUT (Error): Groq not implemented")
+    logger.info(f"QUEUE PUT (Error): Cloud transcription not implemented")
     # Return None, None to indicate failure, consistent with transcribe_audio's failure case
     return None, None
 
@@ -785,8 +788,8 @@ async def process_video(
 
         try:
             if use_groq:
-                # Call the placeholder Groq function
-                segments, full_text = await process_audio_with_groq(
+                # Call the placeholder cloud transcription function
+                segments, full_text = await process_audio_with_cloud_api(
                     actual_audio_path, status_queue, transcription_queue, youtube_video_url
                 )
             else:
