@@ -12,6 +12,6 @@ fastapi==0.104.1
 uvicorn[standard]==0.24.0
 
 # Additional utilities
-python-dotenv==1.0.0
+python-dotenv==1.2.2
 pydantic==2.5.0
 httpx>=0.24.0  # For HTTP requests 
