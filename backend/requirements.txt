@@ -8,7 +8,7 @@ aiohappyeyeballs==2.6.1
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   aiohttp
-aiohttp==3.13.4
+aiohttp==3.14.0
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   crawl4ai
@@ -105,7 +105,7 @@ coverage==7.13.1
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   pytest-cov
-crawl4ai==0.6.2
+crawl4ai==0.8.0
     # via pmoves-transcribe-and-fetch (pyproject.toml)
 cryptography==46.0.3
     # via
@@ -238,7 +238,7 @@ hyperframe==6.1.0
     #   h2
 hypothesis==6.150.0
     # via pmoves-transcribe-and-fetch (pyproject.toml)
-idna==3.11
+idna==3.15
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   anyio
@@ -271,7 +271,7 @@ litellm==1.80.12
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   crawl4ai
-lxml==5.4.0
+lxml==6.1.0
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   crawl4ai
@@ -310,7 +310,7 @@ networkx==3.6.1
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   torch
-nltk==3.9.2
+nltk==3.9.4
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   crawl4ai
@@ -358,7 +358,7 @@ pandas==2.3.3
     # via pmoves-transcribe-and-fetch (pyproject.toml)
 pdfkit==1.0.0
     # via pmoves-transcribe-and-fetch (pyproject.toml)
-pillow==10.4.0
+pillow==12.2.0
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   crawl4ai
@@ -478,7 +478,7 @@ python-dateutil==2.9.0.post0
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   pandas
     #   strictyaml
-python-dotenv==1.1.0
+python-dotenv==1.2.2
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   crawl4ai
@@ -487,7 +487,7 @@ python-frontmatter==1.1.0
     # via pmoves-transcribe-and-fetch (pyproject.toml)
 python-markdown-math==0.9
     # via pmoves-transcribe-and-fetch (pyproject.toml)
-python-multipart==0.0.21
+python-multipart==0.0.27
     # via pmoves-transcribe-and-fetch (pyproject.toml)
 pytz==2025.2
     # via
@@ -520,7 +520,7 @@ regex==2025.11.3
     #   transformers
 reportlab==4.4.7
     # via pmoves-transcribe-and-fetch (pyproject.toml)
-requests==2.32.4
+requests==2.33.0
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   crawl4ai
@@ -679,7 +679,7 @@ tzdata==2025.3
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   pandas
-urllib3==2.6.3
+urllib3==2.7.0
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   requests
