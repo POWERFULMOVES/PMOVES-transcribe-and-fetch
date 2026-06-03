@@ -1,5 +1,5 @@
 # Core Pipecat with all capabilities
-pipecat-ai[anthropic,assemblyai,aws,azure,cartesia,cerebras,deepseek,daily,deepgram,elevenlabs,fal,fireworks,fish,gladia,google,grok,groq,koala,lmnt,local,nim,noisereduce,openai,qwen,remote-smart-turn,silero,simli,soundfile,tavus,together,websocket,whisper]==0.0.68
+pipecat-ai[anthropic,assemblyai,aws,azure,cartesia,cerebras,deepseek,daily,deepgram,elevenlabs,fal,fireworks,fish,gladia,google,grok,groq,koala,lmnt,local,nim,noisereduce,openai,qwen,remote-smart-turn,silero,simli,soundfile,tavus,together,websocket,whisper]==1.2.0
 
 # FastAPI for service endpoints
 fastapi
@@ -16,7 +16,7 @@ realtime
 # Environment and configuration
 python-dotenv
 pydantic
-python-jose[cryptography]==3.3.0
+python-jose[cryptography]==3.4.0
 
 # A2A protocol support (will be imported conditionally)
 # google-a2a-python  # Not available in PyPI, will be handled conditionally
