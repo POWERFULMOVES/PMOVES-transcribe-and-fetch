@@ -15,7 +15,7 @@ dependencies = [
     "groq",
     "litellm",
     "pydantic",
-    "aiohttp>=3.13.4",
+    "aiohttp>=3.14.0",
     "playwright",
     "beautifulsoup4",
     "lxml",
