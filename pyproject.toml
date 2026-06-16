@@ -15,7 +15,7 @@ dependencies = [
     "groq",
     "litellm",
     "pydantic",
-    "aiohttp>=3.13.4",
+    "aiohttp>=3.14.1",
     "playwright",
     "beautifulsoup4",
     "lxml",
@@ -186,7 +186,7 @@ dependencies = [
     "hypothesis",
     "pytest-mock",
     "pytest-xdist",
-    "pyjwt>=2.10.1",
+    "pyjwt>=2.13.0",
 ]
 
 [project.optional-dependencies]
