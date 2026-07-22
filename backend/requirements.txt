@@ -358,7 +358,7 @@ pandas==2.3.3
     # via pmoves-transcribe-and-fetch (pyproject.toml)
 pdfkit==1.0.0
     # via pmoves-transcribe-and-fetch (pyproject.toml)
-pillow==10.4.0
+pillow==12.3.0
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   crawl4ai
@@ -547,7 +547,7 @@ scipy==1.16.3
     #   scikit-learn
 selenium==4.39.0
     # via pmoves-transcribe-and-fetch (pyproject.toml)
-setuptools==80.9.0
+setuptools==83.0.0
     # via
     #   ctranslate2
     #   torch
