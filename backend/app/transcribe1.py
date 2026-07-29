@@ -1068,11 +1068,12 @@ async def process_video(
                 # The transcribe_audio_from_registry should return a dict like:
                 # {"text": "full transcript", "segments": [{"start": S, "end": E, "text": T, "speaker": S}...]}
                 # or None on failure.
-                registry_response = await registry_service.transcribe_audio( # Call the method on the instance
-                    model_id=transcription_model_id,
-                    audio_data=audio_data_bytes,
-                    # Potentially pass other kwargs like language if supported by LiteLLM endpoint
-                    # For diarization, the registry function or LiteLLM should handle it if model supports
+                registry_response = await registry_service.transcribe_audio_advanced(
+                    model_alias=transcription_model_id,
+                    file_name=os.path.basename(actual_audio_path),
+                    file_data=audio_data_bytes,
+                    content_type="audio/m4a",
+                    response_format="verbose_json",
                 )
 
                 if registry_response and "segments" in registry_response and "text" in registry_response:
