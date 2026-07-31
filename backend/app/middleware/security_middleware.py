@@ -45,6 +45,8 @@ EXEMPT_PATHS = [
     "/api/list-workspace",
     "/test-event-loop-policy",
     "/",
+    "/fetch-content",
+    "/fetch",
     "/process-video/",
 ]
 

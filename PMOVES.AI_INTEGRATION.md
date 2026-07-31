@@ -1,39 +1,26 @@
-# PMOVES.AI Integration Dossier
+# PMOVES.AI Integration
 
-_Last updated: 2026-04-04_
+## Service Description
 
-## Module
-- Name: PMOVES-transcribe-and-fetch
-- Path: PMOVES-transcribe-and-fetch
+This submodule (`PMOVES-transcribe-and-fetch`) acts as the primary service for extracting context from web URLs (using Jina.ai, Crawl4AI) and handling multi-provider media transcription. 
 
-## Purpose in PMOVES.AI
-- Media transcription pipeline with content fetch capabilities.
+## Agentic Topology Mapping
 
-## PMOVES Overlay Surface
-- pmoves-integrations/ overlay path (if used): _TBD_
-- Compose/profile wiring: _TBD_
-- Env/secret inputs: _TBD_
-- Auth/JWT requirements: _TBD_
+- **Tier 4 (Worker)**: Handles `Extract Worker` and `LangExtract` operations.
+- **Tier 5 (Media)**: Ingests `PMOVES.YT` (YouTube) URLs, transcodes with FFmpeg, and applies Whisper/Groq/Deepgram for transcription.
+- **Tier 6 (Agent Bridge)**: Exposes `TranscribeAgent` and `MultimodalAgent` to the Pipecat orchestration layer.
 
-## Contracts and Topics
-- NATS subjects (if any): _TBD_
-- Supabase schema/tables touched (if any): _TBD_
-- MCP endpoints/skills (if any): _TBD_
+## Holographic Integration
 
-## Boot Order and Health
-- Bring-up dependency order: _TBD_
-- Health endpoints: _TBD_
-- Smoke targets: _TBD_
+The output from this service (especially Markdown files and Obsidian-flavored text) is embedded into the **Geometry Bus** via CGP (Consciousness Geometry Protocol). These events are subsequently consumed by `pmoves/services/a2ui-renderer` to visualize the extracted knowledge graphs.
 
-## Hardening Notes
-- Image pinning / provenance: _TBD_
-- Secrets source (*_FILE / vault / GH env): _TBD_
-- Network/security policy constraints: _TBD_
+## Model Configuration
 
-## Source Documentation
-- Upstream docs entrypoint: README.md
-- PMOVES docs index reference: pmoves/docs/SUBMODULE_DOCS_DOSSIER.md
+It natively supports local and cloud models:
+- **Transcription**: OpenAI (Whisper), Groq (Whisper large), Deepgram (Nova-2), Local (Whisper.cpp/Torch).
+- **Multimodal extraction**: Support for HuggingFace / Local multimodal layers (including configurations for `ollama/gemma3` and Gemma 4 iterations) for local vision processing.
 
-## Owner / Audit
-- Owning lane: _TBD_
-- Last integration audit run: 2026-04-04
+## Security
+
+- Validates file headers and blocks private IP fetches.
+- Requires `SUPABASE_URL` and `SUPABASE_SERVICE_KEY` for history tracking.

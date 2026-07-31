@@ -1,6 +1,9 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   output: 'standalone',
+  experimental: {
+    forceSwcTransforms: true,
+  },
   eslint: {
     ignoreDuringBuilds: true,
   },
@@ -25,6 +28,7 @@ const nextConfig = {
     ]
   },
   images: {
+    domains: ['i.ytimg.com', 'img.youtube.com'],
     remotePatterns: [
       {
         protocol: 'https',
