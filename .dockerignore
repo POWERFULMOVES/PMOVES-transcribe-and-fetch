@@ -1,23 +1,26 @@
-# Keep Docker build context small
-node_modules
-.next
-.git
-.github
-docs
-monitoring
-fixes
-output
-mp4
-csv
-excel
-md
-pdf
-*.md
+# Default deny: keep CI build contexts small and deterministic.
+*
+
+# Frontend build inputs
+!Dockerfile
+!package.json
+!package-lock.json
+!next.config.js
+!postcss.config.js
+!postcss.config.mjs
+!tailwind.config.js
+!components.json
+!jsconfig.json
+!src/**
+!components/**
+!public/**
+!font/**
+
+# Backend build inputs
+!backend/Dockerfile
 !backend/app/**
-*.ipynb
-__pycache__
-*.pyc
-.env*
-secrets/
-venv/
-.uv/
+!pyproject.toml
+!uv.lock
+
+# Optional shared env sample used by some build-time code paths
+!.env.example

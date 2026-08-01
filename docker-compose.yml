@@ -73,6 +73,14 @@ services:
     healthcheck:
       <<: *healthcheck-default
       test: ["CMD", "curl", "-f", "http://localhost:${TRANSCRIBE_BACKEND_INTERNAL_PORT:-8000}/healthz"]
+    # GPU support for Whisper transcription (requires NVIDIA Container Toolkit)
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     networks:
       transcribe_api:
         aliases:

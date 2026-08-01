@@ -20,7 +20,7 @@ export default function RootLayout({ children }) {
           <div className="relative flex h-screen w-full overflow-hidden bg-background">
               {/* Fixed Sidebar */}
               <Sidebar />
-              
+
               {/* Main Content Area */}
               <div className="flex flex-1 flex-col overflow-hidden">
                   <Header />
@@ -31,7 +31,7 @@ export default function RootLayout({ children }) {
                   </main>
               </div>
           </div>
-          <Toaster />
+          <Toaster position="top-right" richColors closeButton />
         </ThemeProvider>
       </body>
     </html>

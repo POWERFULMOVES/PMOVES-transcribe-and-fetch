@@ -1,4 +1,4 @@
-# Backend Dockerfile - Hardened
+# Backend Dockerfile - Hardened with GPU Support
 FROM python:3.12-slim AS builder
 
 WORKDIR /app
@@ -17,23 +17,39 @@ COPY pyproject.toml uv.lock ./
 # Sync dependencies to system python (since we are in a container)
 RUN uv sync --frozen --no-cache
 
-# Runtime stage
-FROM python:3.12-slim
+# Lightweight PR target to validate backend source packaging without heavy GPU deps.
+FROM python:3.12-slim AS ci-smoke
 
 WORKDIR /app
+COPY backend/app ./app
+RUN python -m compileall -q -x '(^|/)(tests|test_).*' app
+
+# Runtime stage
+FROM python:3.12-slim AS runtime
+
+WORKDIR /app
+
+# Install runtime dependencies: curl (healthcheck), ffmpeg (yt-dlp video processing)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    curl \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create non-root user
 RUN groupadd -g 65532 nonroot && \
     useradd -u 65532 -g 65532 -m -s /bin/bash nonroot
 
 # Copy virtualenv from builder
-COPY --from=builder --chown=65532:65532 /app/.venv /app/.venv
+COPY --from=builder /app/.venv /app/.venv
 
 # Add virtualenv to PATH
 ENV PATH="/app/.venv/bin:$PATH"
 
 # Copy application code
-COPY --chown=65532:65532 backend/app ./app
+COPY backend/app ./app
+
+# Set ownership
+RUN chown -R nonroot:nonroot /app
 
 # Switch to non-root user
 USER 65532:65532
