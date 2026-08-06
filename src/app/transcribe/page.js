@@ -100,8 +100,8 @@ const StatusUpdates = ({ updates, model }) => {
         <div className="space-y-2">
             {uniqueUpdates.map((update, index) => (
                 <div key={index} className="text-sm flex items-start">
-                    <span className={`mr-2 ${model === 'groq' ? "text-blue-600 dark:text-blue-400" : "text-green-600 dark:text-green-400"}`}>
-                        {model === 'groq' ? '☁️' : '💻'}
+                    <span className={`mr-2 ${model !== 'faster-whisper' ? "text-blue-600 dark:text-blue-400" : "text-green-600 dark:text-green-400"}`}>
+                        {model !== 'faster-whisper' ? '☁️' : '💻'}
                     </span>
                     <span className="flex-1">
                       {typeof update === 'object' && update !== null ?
@@ -394,7 +394,7 @@ export default function TranscribePage() {
             obsidian_dir: state.obsidianDir,
             output_folder: state.outputFolder || 'output',
             transcription_model: state.transcriptionModel || "faster-whisper",
-            use_groq: state.transcriptionModel === 'groq'
+            use_groq: state.transcriptionModel !== 'faster-whisper'
         };
 
         dispatch({ type: ACTIONS.SET_LOADING, payload: true });

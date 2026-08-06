@@ -2,12 +2,20 @@ import React from 'react';
 
 // TODO: Consider moving these to a shared utils file
 const TRANSCRIPTION_STYLES = {
+  cloud: {
+    icon: '☁️',
+    color: 'blue',
+    border: 'blue-200',
+    content_color: 'blue-700',
+    title: 'Cloud Transcription (LiteLLM)',
+    hover: 'hover:bg-blue-50 dark:hover:bg-blue-900/20'
+  },
   groq: {
     icon: '☁️',
     color: 'blue',
     border: 'blue-200',
     content_color: 'blue-700',
-    title: 'Groq Cloud Transcription',
+    title: 'Cloud Transcription (LiteLLM)',
     hover: 'hover:bg-blue-50 dark:hover:bg-blue-900/20'
   },
   'faster-whisper': {

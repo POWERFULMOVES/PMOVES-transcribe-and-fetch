@@ -167,11 +167,8 @@ except ImportError:
     OpenAI_APIConnectionError = None
     OpenAI_AuthenticationError = None
 
-try:
-    from groq import Groq, AsyncGroq  # Added AsyncGroq
-except ImportError:
-    Groq = None
-    AsyncGroq = None
+# Groq SDK removed — transcription routes through LLMRegistryService → LiteLLM proxy
+# which handles all providers (Groq, Ollama, NIM, OpenAI, etc.) via config.yaml
 
 try:
     from rich.console import Console
@@ -293,17 +290,10 @@ if AsyncOpenAI and openai_api_key:
 elif AsyncOpenAI:
     logger.warning("OPENAI_API_KEY not set. OpenAI client not initialized.")
 
-# Groq (Async)
-groq_api_key = os.getenv("GROQ_API_KEY")
-groq_client = None
-if AsyncGroq and groq_api_key:
-    try:
-        groq_client = AsyncGroq(api_key=groq_api_key)
-        logger.info("Async Groq client initialized.")
-    except Exception as e:
-        logger.error(f"Failed to initialize Async Groq client: {e}", exc_info=True)
-elif AsyncGroq:
-    logger.warning("GROQ_API_KEY not set. Groq client not initialized.")
+# Cloud transcription handled by LLMRegistryService → LiteLLM proxy.
+# The registry discovers all available models from the LiteLLM proxy config
+# and routes /v1/audio/transcriptions to the correct provider backend.
+# No direct provider clients needed here.
 
 
 # --- Local/Project Imports ---
@@ -715,30 +705,27 @@ class VideoRequest(BaseModel):
             "faster-whisper",
             "groq",
         ]
-        if v.lower() not in valid_models and not v.lower().startswith("groq/"):
-            raise ValueError(
-                f"Invalid transcription model. Use 'faster-whisper', 'groq', or specific 'groq/model-name'."
-            )
-        return v.lower()
+        v_lower = v.lower()
+        # Accept faster-whisper, groq (legacy), or any LiteLLM model alias
+        # (e.g. "openai-whisper-1", "hf-whisper-audio", "groq/llama3-70b-8192")
+        if v_lower in valid_models:
+            return v_lower
+        if "/" in v_lower or "-" in v_lower:
+            return v_lower
+        return v_lower
 
     from pydantic import model_validator
 
     @model_validator(mode="after")
-    def check_and_set_use_groq(self) -> "VideoRequest":
+    def check_and_set_use_cloud(self) -> "VideoRequest":
         model_name = self.transcription_model
-        is_groq_model = model_name == "groq" or model_name.startswith("groq/")
+        is_local = model_name in ("faster-whisper", "local")
+        is_cloud = not is_local
 
-        if self.use_groq is not None and self.use_groq != is_groq_model:
-            logger.warning(
-                f"Provided 'use_groq' ({self.use_groq}) contradicts model '{model_name}'. Overriding based on model."
-            )
+        if self.use_groq is not None:
+            is_cloud = self.use_groq or is_cloud
 
-        self.use_groq = is_groq_model
-
-        if self.use_groq and groq_client is None:
-            raise ValueError(
-                "Groq transcription model selected, but Groq client is not available/configured."
-            )
+        self.use_groq = is_cloud  # backward compat field name
 
         return self
 

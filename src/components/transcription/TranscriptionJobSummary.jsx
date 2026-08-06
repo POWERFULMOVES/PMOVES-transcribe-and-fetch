@@ -3,7 +3,8 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Clock, Cloud, Server } from 'lucide-react'; // Assuming lucide-react for icons
 
 const TRANSCRIPTION_STYLES = {
-  groq: { name: 'Groq Cloud', icon: Cloud, default: true },
+  cloud: { name: 'Cloud (LiteLLM)', icon: Cloud, default: true },
+  groq: { name: 'Cloud (LiteLLM)', icon: Cloud }, // backward compat
   'faster-whisper': { name: 'Local GPU (Faster Whisper)', icon: Server },
 };
  

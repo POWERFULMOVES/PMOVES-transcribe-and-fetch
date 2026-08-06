@@ -9,7 +9,7 @@ from rich.console import Console
 import os
 from openai import AsyncOpenAI, OpenAI
 from fastapi import HTTPException
-from groq import Groq
+# Groq import removed — search analysis routes through LLMRegistryService/LiteLLM proxy
 
 # Add PMOVES Supabase directory to path
 PMOVES_DIR = Path(__file__).parent.parent.parent / "PMOVES Supabase"
@@ -35,8 +35,7 @@ class VectorSearcher:
         try:
             # Initialize OpenAI client for embeddings
             self.openai_client = OpenAI()
-            # Initialize Groq client for alternative processing
-            self.groq_client = Groq()
+            # LLM analysis routes through LLMRegistryService → LiteLLM proxy
             logger.info("VectorSearcher initialized successfully")
         except Exception as e:
             logger.error(f"Error initializing VectorSearcher: {str(e)}")

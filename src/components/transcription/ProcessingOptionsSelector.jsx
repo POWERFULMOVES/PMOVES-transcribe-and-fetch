@@ -18,12 +18,12 @@ const PROCESSING_OPTIONS = [
     tooltipContent: 'Utilizes the Faster Whisper model on your computer\'s GPU. This option keeps all data local and can be very fast if you have a powerful GPU. No internet connection is needed for processing after model download.',
   },
   {
-    id: 'groq',
-    value: 'groq',
+    id: 'cloud',
+    value: 'cloud',
     icon: '☁️',
-    title: 'Cloud AI (Groq)',
-    description: 'Fast transcription using Groq\'s cloud API. May be quicker for some, offloads GPU work. Requires backend API key.',
-    tooltipContent: 'Sends audio data to Groq\'s cloud API for transcription. This can be faster if your local GPU is not powerful or if you want to offload processing. Requires a Groq API key configured in the backend and an active internet connection.',
+    title: 'Cloud (via LiteLLM)',
+    description: 'Transcription routed through the LiteLLM proxy — uses whichever audio model is configured (Groq, OpenAI Whisper, HuggingFace, etc.).',
+    tooltipContent: 'Routes through the LLMRegistryService to the LiteLLM proxy, which dispatches to the configured audio transcription backend. Add or change providers in litellm_proxy_config/config.yaml — no code changes needed.',
   },
 ];
 
