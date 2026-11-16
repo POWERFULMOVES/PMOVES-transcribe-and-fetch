@@ -310,7 +310,7 @@ networkx==3.6.1
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   torch
-nltk==3.10.0
+nltk==3.10.4
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   crawl4ai
@@ -358,7 +358,7 @@ pandas==2.3.3
     # via pmoves-transcribe-and-fetch (pyproject.toml)
 pdfkit==1.0.0
     # via pmoves-transcribe-and-fetch (pyproject.toml)
-pillow==12.3.0
+pillow==13.0.0
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   crawl4ai
@@ -571,7 +571,7 @@ sortedcontainers==2.4.0
     #   hypothesis
     #   pyiceberg
     #   trio
-soupsieve==2.8.4
+soupsieve==4.0
     # via beautifulsoup4
 sse-starlette==3.1.2
     # via pmoves-transcribe-and-fetch (pyproject.toml)
@@ -631,7 +631,7 @@ tokenizers==0.22.2
     #   faster-whisper
     #   litellm
     #   transformers
-torch==2.8.0
+torch==2.15.0
     # via
     #   pmoves-transcribe-and-fetch (pyproject.toml)
     #   torchaudio
