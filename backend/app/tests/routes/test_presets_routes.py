@@ -281,4 +281,3 @@ def test_get_preset_invalid_uuid_format(client: TestClient):
     response = client.get("/api/presets/this-is-not-a-uuid-and-not-a-name")
     assert response.status_code == 404 # Will be treated as a name, and not found.
     mock_execute.assert_called_once() # Verifies it went to the DB
-```

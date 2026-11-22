@@ -362,4 +362,3 @@ async def test_invalid_strategy_definition_in_preset(httpx_mock):
         # Check for status message indicating configuration error from preset
         assert any("Error applying strategy definition from preset" in r.get("message", "") and r.get("type") == "status" for r in results)
 
-```
